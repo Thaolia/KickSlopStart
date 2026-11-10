@@ -2257,6 +2257,12 @@ differs.
     point was minor when e < 4m − 2M (ONE_DOT), and the start pixel's COMPLEMENT pre-inversion is skipped since
     it lies before the ClipRect. Lines with M ≥ $4000 keep the walk. `tests/lineclip_probe.sh`: same plane
     fingerprints as the previous ROM, 1,348 ticks against 1,767.
+  **Block sizes as on 1.3 (2026-11-10)**: `hnd_open` (`src/dos/handler.s`) no longer refuses a partition whose
+  DosEnvec says de_SizeBlock ≠ 128 or de_SectorPerBlock ≠ 1. 1.3 always transfers 512 bytes at key × 512
+  (rom-filesystem §8.7): de_SectorPerBlock is ignored, a device with larger sectors refuses the read of block 0, so
+  the disk type is "BAD" ("Unreadable Disk" in Info, "Not a DOS disk / in unit  n" on access) as on 1.3, where the
+  old refusal left the device closed and the partition looked empty ("No disk present"). de_SizeBlock ≠ 128 on a
+  512-byte device sets the byte `HC_BADBS`, and `hnd_mount` then never accepts the root (type "NDOS").
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

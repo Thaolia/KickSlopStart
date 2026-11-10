@@ -80,7 +80,8 @@ HC_INHIB        EQU HC_MOUNTED+1     ; byte: ACTION_INHIBIT in progress
 HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
 HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
 HC_WPROT        EQU HC_INOK+1        ; byte: the disk was write-protected when it was mounted (TD_PROTSTATUS)
-HC_IOPORT       EQU HC_WPROT+1+1     ; reply port of the device requests (MP_SIZE, even)
+HC_BADBS        EQU HC_WPROT+1       ; byte: de_SizeBlock is not 128 longs: the root block never passes (rom-filesystem §8.7)
+HC_IOPORT       EQU HC_BADBS+1       ; reply port of the device requests (MP_SIZE, even)
 HC_FLUSHMSG     EQU HC_IOPORT+36     ; APTR: Message of an ACTION_FLUSH held until the write-back | 0
 HC_SIZE         EQU HC_FLUSHMSG+4
 ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
@@ -933,13 +934,12 @@ hnd_fssm:
 ; fssm_Unit and fssm_Flags of the DeviceNode's FileSysStartupMsg; geometry from its environment (DosEnvec): blocks
 ; = (de_HighCyl - de_LowCyl + 1) * de_Surfaces * de_BlocksPerTrack, partition offset = de_LowCyl cylinders, first
 ; key = de_Reserved, root = (blocks - 1 + reserved) / 2 (DD: 880). No FileSysStartupMsg: trackdisk unit 0, DD
-; geometry. Only 512-byte blocks are served (de_SizeBlock 128 longs, one sector per block): otherwise the device is
-; not opened and the partition is never examined (no disk). Requests that the device queues are waited for on
-; HC_IOPORT. Preserves d2-d7/a2-a6.
+; geometry. Every transfer is 512 bytes at key x 512, as on 1.3 (rom-filesystem §8.7): de_SectorPerBlock is ignored,
+; a device with larger sectors refuses block 0 (unreadable disk), and de_SizeBlock other than 128 sets HC_BADBS (the
+; root never passes). Requests that the device queues are waited for on HC_IOPORT. Preserves d2-d7/a2-a6.
 DE_TABLESIZE    EQU 0                ; struct DosEnvec (dos/filehandler.h)
 DE_SIZEBLOCK    EQU 4
 DE_SURFACES     EQU 12
-DE_SECPERBLK    EQU 16
 DE_BPT          EQU 20
 DE_RESERVED     EQU 24
 DE_LOWCYL       EQU 36
@@ -988,10 +988,8 @@ hnd_open:
                 move.l  d0,a4                         ; a4 = DosEnvec
                 cmp.l   #DE_HIGHCYL/4,DE_TABLESIZE(a4)
                 blo.s   .op_open                      ; no geometry in it: DD
-                cmp.l   #OFS_BSIZE/4,DE_SIZEBLOCK(a4)
-                bne     .op_ret                       ; blocks other than 512 bytes: refused
-                cmp.l   #1,DE_SECPERBLK(a4)
-                bne     .op_ret
+                cmp.l   #OFS_BSIZE/4,DE_SIZEBLOCK(a4) ; 1.3 still transfers 512 bytes at key x 512 (de_SectorPerBlock
+                sne     HC_BADBS(a3)                  ; ignored); a device with larger sectors refuses block 0
                 move.l  DE_SURFACES(a4),d0
                 mulu    DE_BPT+2(a4),d0
                 move.l  d0,d4                         ; d4 = blocks per cylinder
@@ -1199,6 +1197,8 @@ hnd_mount:
                 cmp.l   #DT_DOS,d2
                 bne     .mo_type
                 move.l  #DT_NDOS,d2
+                tst.b   HC_BADBS(a3)
+                bne     .mo_type
                 move.l  HC_GEO+GEO_ROOT(a3),d0
                 move.l  a3,-(sp)
                 lea     HC_TDIO(a3),a3

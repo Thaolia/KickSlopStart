@@ -1589,6 +1589,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Block sizes other than 512 bytes (2026-11-10)**: the analysis track's probe of the real 1.3 (rom-filesystem
+  §8.7) shows that it never mounts a 1024- or 2048-byte-block partition: every transfer is 512 bytes at key × 512.
+  So no variable block size here: the handler now opens the device anyway and gives the same failure (ARCHITECTURE
+  "Block sizes as on 1.3"). Checked under Amiberry with an xdftool `bs=1024` hardfile (`hardfile2` block size
+  1024): "Not a DOS disk / in unit  0" requester (screenshot looked at), Dir "Could not get information for DH0:" /
+  "not a valid DOS disk", Info "DH0: Unreadable Disk", image unchanged; the previous ROM showed "No disk Present".
   **C7 and C10 leftovers (2026-11-10)**: REMAINING-WORK C7, C10; ARCHITECTURE "File system and graphics
   leftovers". New probes: `tests/bigfile_probe.sh` (33.6 MB file on a 40 MiB hardfile: Examine, Seek+Read past
   65,535 blocks, in-place write; BIGFILE OK, the previous ROM failed), `tests/fhmove_probe.sh` (three drives, data
@@ -1600,7 +1606,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   writeback_probe DF1 bitmap moved 881 -> 1429, DH0, OFS CHECK OK, 66 identical files; hdfs_probe 40 MiB OK;
   clipblit_probe 0; gtext_probe identical to HEAD; gline_probe identical to HEAD apart from lost serial
   characters and L7 DMACONR $43F0 (BBUSY still set on return, which §8 expects; HEAD gave $03F0). prepush-check
-  (dev) FAIL=0, Lemmings menu looked at. Left: 512-byte blocks only, FINDINPUT handles read-only, Cancel on the
+  (dev) FAIL=0, Lemmings menu looked at. Left: FINDINPUT handles read-only, Cancel on the
   unit requester, vp_DyOffset in VSprite VSTART, patterned lines by the CPU.
   **Caesar title glitches, seek masking (2026-11-10)**: user report after v0.2.40 ("video glitches after the language
   choice" in Caesar). Reproduced under Amiberry with 50 captures at 1 Hz after the language click: about a third

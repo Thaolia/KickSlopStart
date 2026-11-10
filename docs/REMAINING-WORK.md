@@ -201,8 +201,14 @@ bitmap block moves to a newly allocated block at the write-back, the old one fre
 the handler that opened it, as on 1.3 (disk-change §2.4.1): every access waits behind "Please replace volume /
 <name> / in unit  n" naming that handler's unit, even while another drive holds the volume, and resumes once the disk
 is back in that drive (`tests/fhmove_probe.sh`). Until then a refused READ/WRITE/SEEK (Res1 = -1) never reached the
-requester and failed at once with 218. Left in the file system:
-- only 512-byte blocks (1.3 reads `de_SizeBlock`; every OFS offset, buffer and table size here assumes 128 longs);
+requester and failed at once with 218. Block sizes: 1.3 only ever transfers 512 bytes at key × 512 (rom-filesystem
+§8.7, probed 2026-11-10), so a partition of 1024- or 2048-byte sectors is "Unreadable Disk" / "Not a DOS disk" there
+and here; until then this handler refused to open such a device and the partition looked empty ("No disk present").
+Left in the file system:
+- de_SizeBlock other than 128 on a 512-byte device: the root is refused as not a DOS disk, while 1.3 reports
+  "Error validating disk / Key n checksum error" (§8.7, only reachable with a patched environment);
+- the handler of a hard-disk partition starts on first use, so the first `Info` after boot leaves DH0: out; on 1.3
+  the partition is examined at boot (§8.6 "at boot: Info Validating") [to confirm with a probe];
 - a FINDINPUT (MODE_OLDFILE) handle is read-only (WRITE -> 212), while rom-filesystem §5.1 says 1.3 accepts writes
   on it;
 - Cancel on the "in unit  n" requester fails the access at once; 1.3 shows the requester once more first, and a

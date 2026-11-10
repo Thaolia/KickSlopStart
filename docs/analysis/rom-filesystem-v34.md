@@ -73,6 +73,10 @@
 15. Validation failures (mount): "Error validating disk" / volume / "Key n …" then "Disk structure corrupt" /
     "Use DISKDOCTOR to correct it"; a bad bitmap checksum on a disk flagged valid ends the same way (no rebuild,
     no read-only fallback). Texts, Retry/Cancel and who prints what: §2.5. [O]
+16. **Only 512-byte blocks work.** Every transfer is 512 bytes at offset key × 512 whatever `de_SizeBlock` and
+    `de_SectorPerBlock` say. On a 1024- or 2048-byte-sector partition the first read is refused by the device:
+    Info "Unreadable Disk", any access "Not a DOS disk / in unit  0"; with 512-byte sectors and SizeBlock ≠ 128
+    the root fails as "Key n checksum error". Nothing is ever written. [O, O-inj] §8.7
 
 ### 0.2 Method
 
@@ -786,6 +790,64 @@ Consequences for a compatible implementation:
 - files placed beyond the 25th bitmap block by another system are still listed by 1.3 after a validation;
   reading them should work since header and data keys are only range-checked against the volume size [D].
 
+### 8.7 Block sizes other than 512 bytes [O, O-inj, 2026-11-10]
+
+**Result: the 1.3 ROM file system cannot use a partition whose blocks are not 512 bytes.** It never mounts
+such a volume, so it never reads a file from it and never writes to it. Every transfer it makes is **one
+512-byte request at byte offset key × 512**, whatever the DosEnvec says; `de_SizeBlock` is not used for the
+transfer, `de_SectorPerBlock` is not used at all. No layout rule for 1024- or 2048-byte blocks (data bytes per
+data block, hash table size, bitmap bits per block, pointers per header or extension block) can therefore be
+observed from 1.3: it writes nothing on such a partition.
+
+**Setup.** Amiberry `uaehf` hardfiles, no RDB (so dos runs the ROM file system, as in §8.6), `hardfile2` line
+with 32 blocks per track, 1 surface, 2 reserved blocks; Workbench 1.3.3 copy in DF0: whose startup-sequence ran
+Info, Dir, Type, Copy, MakeDir, Rename, Delete, Relabel with output to `SER:`. Test images made with xdftool
+(`create size=10Mi bs=1024 + format Work ofs`, then a 3,300-byte text file, a 120,000-byte and a 300,000-byte
+file, a subdirectory with a file, two more small files); a 2048-byte variant the same way. Device requests were
+seen with a debugger breakpoint on the `uaehf` device's BeginIO from power-on (command, length, offset, calling
+task). DosEnvec contents were read from the DH0: DosList node (FileSysStartupMsg → environment). Each image was
+compared byte for byte with its original after the run.
+
+**What the emulator gives the partition [U + O].** With the 6th `hardfile2` field (block size) set to 1024,
+`uaehf` builds the environment with `de_SizeBlock` = block size / 4 (read back in the running system:
+**SizeBlock 256**, SectorPerBlock 1, BlocksPerTrack 32, Surfaces 1, Reserved 2, LowCyl 0, HighCyl 319,
+NumBuffers 50, DosType `DOS\0`, TableSize 16); 2048 gives SizeBlock 512. `uaehf` then accepts only transfers
+whose offset and length are multiples of that block size; anything else is refused with `IOERR_BADLENGTH`
+(Amiberry `hardfile.cpp`; its log shows "unaligned access" for the request below). A `hardfile2` line has no
+SectorPerBlock field (it stays 1).
+
+**Runs.**
+
+| Partition (as seen by the file system) | Device requests, in order | Result |
+|---|---|---|
+| 512-byte control (SizeBlock 128, 20,480 blocks) | TD_REMOVE, TD_CHANGESTATE (File System process); CMD_READ 512 at offset 0, then the root (key 10,240), then the bitmap blocks, each 512 bytes at key × 512 ("Validator" process); TD_PROTSTATUS; CMD_UPDATE, TD_MOTOR | mounts, Info "Read/Write Work" |
+| **1024-byte device, SizeBlock 256**, xdftool 1024 image | TD_REMOVE, TD_CHANGESTATE, then **one CMD_READ of 512 bytes at offset 0** (refused by the device, see above), TD_PROTSTATUS, CMD_UPDATE, TD_MOTOR; **the root is never read** | Info: "**DH0: Unreadable Disk**" (no requester); `Dir DH0:` → requester "**Not a DOS disk / in unit  0**" (Retry / Cancel); after Cancel (seen on the 2048 run), Dir prints "Could not get information for DH0:" and the error text "not a valid DOS disk" (the fault text of 225). Volume not mounted, no volume name. Image unchanged. |
+| **2048-byte device, SizeBlock 512**, xdftool 2048 image | identical (512-byte read at offset 0 refused) | identical texts; image unchanged |
+| 512-byte device, xdftool **1024** image, environment patched in memory **before the file system started** to SizeBlock 256, HighCyl 319 (so the geometry is that of the 1024-byte layout) [O-inj] | block 0 then the root, **512 bytes at key 5,120 × 512** (= the middle of the 1024-byte block 2,560, empty in that image) | requester "**Error validating disk** / **Key 5120 checksum error**" (two lines, no volume name line); image unchanged |
+| 512-byte device, ordinary 512-byte image, SizeBlock patched to 256 (other fields unchanged) [O-inj] | block 0, root **512 bytes at key 10,240 × 512** | "**Error validating disk** / **Key 10240 checksum error**" although that root is a valid 512-byte root |
+| 512-byte device, xdftool 1024 image, SizeBlock 128, **SectorPerBlock patched to 2** [O-inj] | block 0, root 512 bytes at key 10,240 × 512 (= the first half of the 1024-byte root) | "Error validating disk / Key 10240 checksum error" — SectorPerBlock changed neither the root key, nor the offset, nor the length |
+
+**Rules that follow.**
+- The root key comes from the environment geometry alone: (Reserved + (HighCyl − LowCyl + 1) × Surfaces ×
+  BlocksPerTrack − 1) / 2, rounded down (5,120 with HighCyl 319; 10,240 with HighCyl 639), the same rule as on a
+  floppy; SectorPerBlock does not enter it [O].
+- Transfer: always 512 bytes, byte offset = key × 512, one block per request (as in §1.4) [O].
+- `de_SizeBlock` is read (changing it alone turns a valid 512-byte root into a checksum error), so some in-memory
+  check uses it: most likely the checksum (or the position of the root's last longs) is taken over SizeBlock
+  longs while only 512 bytes were read, so the second half is whatever follows the 512-byte buffer in memory [?].
+  An attempt to plant the second half of a real 1024-byte root after the buffer during the run failed (the
+  debugger refused the memory write at that moment), so which check fails is not established.
+- A device whose sectors are larger than 512 bytes refuses the very first request, and the file system reports
+  the partition as unreadable / not a DOS disk instead of an I/O error, with the same texts as an all-zero disk
+  (V33). The effect of Retry on that requester was not established (a key press sent as Amiga-V brought the
+  same requester back, but whether it was taken as Retry is not certain) [?].
+- No requester appears during the boot itself, as in §2.5 and §8.6: the failure is only visible through Info
+  ("Unreadable Disk") until a command touches DH0:.
+- Not run, because nothing mounts: reads, writes, the validator on a flag-0 partition, `Relabel`. A
+  2.0-era file system (FFS, or OFS in the 2.0 ROM) uses longs − 56 hash slots and so on; 1.3 has no such
+  behaviour to copy, and a 1.3-compatible implementation only needs to reproduce the failure (or may choose to
+  support larger blocks as an extension, which no 1.3 program can rely on).
+
 ---
 
 ## 9. Error codes (Result2) by case
@@ -913,6 +975,8 @@ Each line: the command typed, the packet that was rewritten, and the reply.
   it overruns memory (§8.6) [?].
 - Validator requesters during the boot: pending invisibly or skipped (§2.5) [?].
 - Rejected CMD_UPDATE / TD_MOTOR on a hard-disk driver (§1.4) [?].
+- Which in-memory check uses `de_SizeBlock` when it is not 128 (checksum span over SizeBlock longs, or the
+  position of the block's last fields) (§8.7) [?].
 
 ---
 
@@ -939,3 +1003,7 @@ Review of 2026-11-04; §0.1 items 11 and 13–15, §1.4, §2.5, §8.3 (last para
   BeginIO and on exec ReplyMsg; their addresses are not given). Validator texts are quoted as seen on screen;
   the ones not seen are texts of the Workbench `L:Disk-Validator` file, not of the ROM. Timings are frame
   counts of the emulator, block numbers are those of the test images.
+- [x] 2026-11-10 (§0.1 item 16, §8.7): device requests seen with a breakpoint on the emulator device's BeginIO,
+  DosEnvec fields read and patched in RAM with the debugger (no ROM address, no buffer address given); texts as
+  seen on screen and in the serial log; test images made with xdftool. The emulator's alignment rule is cited
+  from Amiberry source [U].
