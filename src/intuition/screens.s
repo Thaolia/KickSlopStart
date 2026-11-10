@@ -119,7 +119,6 @@ WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD: nesting of it_unclip
 WDX_XMSG        EQU WDX_CLIPNEST+2   ; messages allocated when the pool is all in use (IM_SPECIALLINK chain)
 WDX_SYSGAD      EQU WDX_XMSG+4       ; up to 5 system Gadgets (wn_mksysgads)
 WDX_SIZE        EQU WDX_SYSGAD+5*GG_SIZEOF
-WD_TBARH        EQU 11               ; BorderTop of a titled window: WBorTop 2 + screen font 8 + 1 (intuition-gzz §1; bar on lines 0-9, line 10 blank)
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
 ; CUSTOMBITMAP), the default palette (32 colors, including those of the pointer), draws the title bar (except
@@ -1257,8 +1256,9 @@ intuition_GetScreenData:
         rts
 
 ; OpenWindow(newwindow a0) -> d0 = Window | 0. Screen: nw_Screen if nw_Type = CUSTOMSCREEN, otherwise the Workbench
-; (opened if needed). Position/size brought into the screen; borders according to the flags (BORDERLESS: none;
-; title/system gadgets: 10-line bar; WINDOWSIZING: right border of 18, or bottom of 9 if SIZEBBOTTOM).
+; (opened if needed). Position/size brought into the screen; BORDERLESS omits base borders, while explicitly
+; requested titles/system gadgets still enlarge and decorate them. WINDOWSIZING: right border of 18,
+; or bottom of 9 if SIZEBBOTTOM.
 ; RPort = own RastPort (screen BitMap, layer at the window bounds). The border is drawn, the interior
 ; cleared in pen 0, and the window becomes the active window.
 intuition_OpenWindow:
@@ -1366,18 +1366,22 @@ intuition_OpenWindow:
         ; borders
         move.l  WD_FLAGS(a3),d1
         btst    #11,d1               ; BORDERLESS
-        bne.s   .ow_bord
+        bne.s   .ow_title
         move.b  SC_WBORLEFT(a4),WD_BORDERLEFT(a3)
         move.b  SC_WBORRIGHT(a4),WD_BORDERRIGHT(a3)
         move.b  SC_WBORTOP(a4),WD_BORDERTOP(a3)
         move.b  SC_WBORBOTTOM(a4),WD_BORDERBOTTOM(a3)
+.ow_title:
         tst.l   WD_TITLE(a3)
         bne.s   .ow_tbar
         move.l  d1,d0
         and.l   #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE,d0
         beq.s   .ow_notbar
 .ow_tbar:
-        move.b  #WD_TBARH,WD_BORDERTOP(a3)
+        move.l  SC_FONT(a4),a0       ; explicit titles/gadgets also decorate a BORDERLESS window
+        move.w  ta_YSize(a0),d0
+        addq.w  #1,d0
+        add.b   d0,WD_BORDERTOP(a3)
 .ow_notbar:
         btst    #0,d1                ; WINDOWSIZING
         beq.s   .ow_bord
@@ -1668,7 +1672,7 @@ wn_brp:
 ; wn_border(a3 = Window, a5 = IntuitionBase): full border (spec intuition-frame-v34 §2). Except BORDERLESS: left,
 ; right and bottom borders cleared in pen 0, outline in BlockPen (sides of BorderLeft/2 pixels at both edges,
 ; top and bottom lines), title bar background down to BorderTop-2, title and pattern (wn_titlebar). Then the
-; application gadgets, the system gadgets on top (wn_sysgads), and the veil if the window is not active. Drawing state
+; application gadgets, the system gadgets on top (also when BORDERLESS), and the veil if the window is not active. Drawing state
 ; given back to the clients: JAM2, pens 1/0. Clobbers d0-d7/a0/a1/a6.
 wn_border:
         bsr     it_unclip
@@ -1676,8 +1680,6 @@ wn_border:
         bra     it_reclip
 wn_border_nc:
         move.l  IB_GFXBASE(a5),a6
-        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS
-        bne     .df_gad
         bsr     wn_brp
         moveq   #JAM1,d0
         jsr     LVO_SETDRMD(a6)
@@ -1685,6 +1687,8 @@ wn_border_nc:
         subq.w  #1,d4                ; d4 = W - 1
         move.w  WD_HEIGHT(a3),d5
         subq.w  #1,d5                ; d5 = H - 1
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS suppresses the outline, not explicit decorations
+        bne     .df_tb
         moveq   #0,d0
         bsr     .df_pen
         moveq   #0,d6
@@ -1750,6 +1754,9 @@ wn_border_nc:
         move.w  d5,d3
         bsr     .df_fill
 .df_tb:
+        moveq   #0,d0
+        move.b  WD_BLOCKPEN(a3),d0
+        bsr     .df_pen
         moveq   #0,d3
         move.b  WD_BORDERTOP(a3),d3
         subq.w  #2,d3                ; background down to BorderTop - 2 (the next line stays in pen 0)
@@ -1761,8 +1768,6 @@ wn_border_nc:
         bsr     wn_titlebar
 .df_gad:
         bsr     gad_drawall          ; application gadgets, redrawn with the border
-        btst    #3,WD_FLAGS+2(a3)    ; system gadgets (except BORDERLESS) at the head of the list: drawn last
-        bne.s   .df_veil
         bsr     wn_sysgads
 .df_veil:
         btst    #5,WD_FLAGS+2(a3)    ; WINDOWACTIVE
@@ -4092,11 +4097,7 @@ it_dobutton:
         bsr     wn_scrtitle
         bsr     it_alive             ; both draw and may wait for a lock: the window may have been closed
         beq     .db_ret
-        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS: no system gadget
-        bne     .db_mb
-        cmp.b   #WD_TBARH,WD_BORDERTOP(a3)
-        bne.s   .db_size
-        cmp.w   #WD_TBARH,d3
+        cmp.w   #10,d3             ; system gadget boxes are ten lines high, including in BORDERLESS windows
         bge.s   .db_size
         bsr     wn_sysat             ; close / depth: box inverted, action on release
         beq.s   .db_ndepth

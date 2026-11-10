@@ -17,6 +17,22 @@ def cases():
     yield [8, 8, 16, 2048, 2, 2, 3, 0, 0, -8, -2, 40, 24, 0xCC, 32, 1024]
     for width in [520, 592, 632]:
         yield [80, 80, 16, 8192, 2, 2, 3, 0, 1, 0, 4, width, 20, 0xCC, 32, 4096]
+    for mt in range(0, 256, 16):
+        for phase in [0, 3, 15]:
+            yield [8, 8, 16, 16, 5, 5, 21, phase, 2, phase, 2, 40, 40, mt, 48, 2048]
+    for phase in range(16):
+        for sb, db, so, do in [(6, 40, 16, 8192), (7, 41, 17, 8193), (6, 40, 16, 8193)]:
+            yield [sb, db, so, do, 5, 5, 31, 0, 0, 16 + phase, 0, 40, 40, 0xC0, 40, 8192]
+    yield [8, 12, 16, 4096, 2, 2, 1, 16, 1, 7, 3, 33, 40, 0xCC, 48, 4096]
+    yield [8, 12, 16, 4096, 2, 2, 3, 8, 1, -8, 3, 48, 40, 0xC0, 48, 4096]
+    for height in [1024, 1025]:
+        yield [6, 12, 16, 16384, 2, 2, 3, 0, 0, 3, 0, 40, height, 0xC0, height, 16384]
+    for width in [1024, 1040]:
+        stride = (width + 7) // 8
+        yield [stride, stride, 16, 8192, 2, 2, 3, 0, 0, 0, 0, width, 8, 0xC0, 8, 8192]
+    # Four repeated copies/clears remain idempotent, so the same independent pixel oracle checks the timing runs.
+    yield [6, 40, 16, 8192, 5, 5, 31, 0, 0, 27, 0, 40, 40, 0xC0, 40, 8192]
+    yield [40, 40, 16, 16, 5, 5, 31, 27, 0, 27, 0, 40, 40, 0x20, 40, 8192]
     for so, do in [(16, 51232), (17, 51233), (16, 51233)]:
         yield [40, 40, so, do, 5, 5, 31, 0, 11, 0, 11, 296, 245, 0xCC, 256, 27648]
 
@@ -53,6 +69,8 @@ def main():
     print(f"COPYMIN_CASES EQU {len(data)}")
     print("copymin_cases:")
     for i, c in enumerate(data):
+        if i == len(data) - 5:
+            print("copymin_motion:")
         if i == len(data) - 3:
             print("copymin_large:")
         print("        dc.w " + ",".join(map(str, c)))

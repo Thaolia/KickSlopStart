@@ -1,5 +1,5 @@
 ; SPDX-License-Identifier: MIT
-; Native Boolean-minterm equivalence, aligned rectangle-copy correctness and curve-restore speed gate.
+; Native Boolean-minterm equivalence, rectangle-copy correctness and restore/animation speed gates.
                 include "exec.i"
                 include "graphics.i"
 BUFSIZE         EQU 110592
@@ -48,6 +48,12 @@ _start:
         addq.w  #1,api
         cmp.w   #3,api
         blo.s   .api
+        move.w  4(a4),d0
+        cmp.w   6(a4),d0
+        bne.s   .next
+        cmp.w   #3,api
+        beq.s   .api               ; same underlying planes also tested through one actual RastPort/BitMap
+.next:
         lea     36(a4),a4
         dbra    d7,.case
         lea     pixels_ok(pc),a0
@@ -58,6 +64,12 @@ _start:
         bsr     benchmark
         move.l  soft(pc),a3
         bsr     benchmark
+        lea     copymin_motion(pc),a4
+        move.w  #2,api
+        bsr     motion
+        lea     36(a4),a4
+        move.w  #3,api
+        bsr     motion
         move.l  4.w,a6
         lea     vbint(pc),a1
         moveq   #5,d0
@@ -169,6 +181,10 @@ copy:
 .clip:
         lea     srp(pc),a0
         lea     drp(pc),a1
+        cmp.w   #3,api
+        bne.s   .clip_call
+        move.l  a1,a0
+.clip_call:
         jsr     -552(a6)
         bra.s   .returned
 .bitmap:
@@ -248,6 +264,26 @@ benchmark:
         cmp.l   d0,d5              ; equivalent minterms must stay within25% under interrupt/bus variation
         bhi     fail
         rts
+motion:
+        move.l  chip(pc),a3
+        bsr     initialize
+        bsr     measure
+        move.l  d0,d6
+        bsr     check
+        lea     motion_timing(pc),a0
+        bsr     puts
+        moveq   #0,d0
+        move.w  26(a4),d0
+        bsr     hex
+        moveq   #' ',d0
+        bsr     putc
+        move.l  d6,d0
+        bsr     hex
+        moveq   #10,d0
+        bsr     putc
+        cmp.l   #1000,d6           ; four 40x40, five-plane updates: average below one PAL frame
+        bhs     fail
+        rts
 measure:
         bsr     now
         move.l  d0,d2
@@ -303,6 +339,7 @@ digits: dc.b "0123456789ABCDEF"
 gfxname: dc.b "graphics.library",0
 pixels_ok: dc.b "COPYMIN PIXELS OK",10,0
 timing: dc.b "COPYMIN RESTORE ",0
+motion_timing: dc.b "COPYMIN MOTION ",0
 ok: dc.b "COPYMIN OK",10,"COPYMIN END",10,0
 error: dc.b "COPYMIN FAIL",10,"COPYMIN END",10,0
         even
