@@ -701,7 +701,6 @@ gfx_MakeVPort:
         or.w    d0,d2                ; same bits in BPLCON0
         move.w  #BPLCON0-CUSTOM,(a1)+
         move.w  d2,(a1)+
-        bsr     gfx_ucopemit         ; user instructions (vp_UCopIns)
         move.w  vp_DHeight(a2),d0    ; bottom of the ViewPort: planes off
         moveq   #0,d1
         bsr     gfx_pwait
@@ -979,8 +978,8 @@ mv_horz:
         movem.l (sp)+,d5/a1
         rts
 
-; gfx_fragmst(vp a0) -> d0 = address in the displayed master list where MrgCop put the ViewPort's fragment (its
-; entry 1; the fragment's header), or 0 (not in the active View, hidden, or not merged). Clobbers a1.
+; gfx_fragmst(vp a0) -> d0 = address in the displayed master list of the ViewPort's first MOVEs (the fragment's
+; header, graphics.i), or 0 (not in the active View, hidden, or not merged). Clobbers a1.
 gfx_fragmst:
         move.l  gb_ActiView(a6),d0
         beq.s   .fm_ret
@@ -1061,10 +1060,9 @@ gfx_ScrollVPort:
 .sv_ret:
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
-; .sv_put(a1 = fragment's place in a hardware list, a3 = fragment): copies the settings MOVEs there, up to the
-; first colour; a1 is left on the first BPLxPTH MOVE. Clobbers d0/a0.
+; .sv_put(a1 = fragment's first MOVEs in a hardware list, a3 = fragment): copies the settings MOVEs there, up to
+; the first colour; a1 is left on the first BPLxPTH MOVE. Clobbers d0/a0.
 .sv_put:
-        lea     12(a1),a1
         lea     16(a3),a0
         moveq   #9-1,d0
 .sv_cs:
@@ -1082,48 +1080,6 @@ gfx_ScrollVPort:
 gfx_nullview:
         dcb.b   v_SIZEOF,0
         even
-
-; gfx_ucopemit(a1 = write pointer in the fragment, a2 = ViewPort, a3 = fragment): copies the instructions of
-; vp_UCopIns (the user's CMove/CWait) into the fragment, leaving room for the bottom WAIT, BPLCON0 and the end
-; marker. A WAIT stays relative to the top of the ViewPort (MrgCop adds the offsets); v >= 10000 = end (CEND).
-; Clobbers d0/d1/a0.
-gfx_ucopemit:
-        movem.l d2/a4,-(sp)
-        move.l  vp_UCopIns(a2),d0
-        beq.s   .ue_ret
-        move.l  d0,a0
-        move.l  ucl_FirstCopList(a0),d0
-        beq.s   .ue_ret
-        move.l  d0,a4
-        move.l  cl_CopIns(a4),a0
-        move.w  cl_Count(a4),d2      ; d2 = instructions
-        lea     GFX_FRAG_SIZE-5*4(a3),a4 ; a4 = limit (bottom WAIT, BPLCON0, end marker after it)
-.ue_lp:
-        subq.w  #1,d2
-        bmi.s   .ue_ret
-        move.l  a4,d0
-        sub.l   a1,d0
-        cmp.l   #12,d0               ; room for one instruction
-        blo.s   .ue_ret
-        move.w  ci_Word1(a0),d0
-        move.w  ci_Word2(a0),d1
-        tst.w   ci_OpCode(a0)
-        bne.s   .ue_wait
-        and.w   #$1FE,d0             ; register: offset within the custom registers
-        move.w  d0,(a1)+
-        move.w  d1,(a1)+
-        bra.s   .ue_nx
-.ue_wait:
-        cmp.w   #10000,d0
-        bge.s   .ue_ret              ; CEND
-        and.w   #$FE,d1              ; even horizontal position
-        bsr     gfx_pwait
-.ue_nx:
-        addq.l  #CI_SIZEOF,a0
-        bra.s   .ue_lp
-.ue_ret:
-        movem.l (sp)+,d2/a4
-        rts
 
 ; gfx_LoadRGB4(vp a0, colours a1, count d0): the first "count" colours ($0RGB) via SetRGB4.
 gfx_LoadRGB4:
@@ -1200,7 +1156,7 @@ gfx_SetRGB4:
         beq.s   .sr_ok               ; ViewPort not in the displayed view
         move.l  d0,a1
         add.l   d3,a1
-        move.w  d2,-2(a1)            ; master = fragment offset - 4 (no header there)
+        move.w  d2,-16+2(a1)         ; master = header + fragment offset - 16 (header, lead-in WAIT)
         move.l  a1,d0
         bsr     gfx_shfpos
         tst.l   d0
@@ -1276,43 +1232,67 @@ gfx_freecl:
         move.l  (sp)+,a2
         rts
 
-; UCopperListInit(ucl a0, count d0) -> d0 = CopList | 0: CopList of "count" instructions, current and first.
+; UCopperListInit(ucl a0, count d0) -> d0 = CopList | 0 (graphics-display §6): an existing FirstCopList is reused
+; with every block of its chain emptied, otherwise a CopList of "count" instructions; it becomes the current one.
 gfx_UCopperListInit:
-        movem.l d2/a2-a3/a6,-(sp)
+        move.l  a2,-(sp)
         move.l  a0,a2
+        move.l  ucl_FirstCopList(a2),d1
+        beq.s   .ui_new
+        move.l  d1,a0
+.ui_rst:
+        clr.w   cl_Count(a0)
+        move.l  cl_CopIns(a0),cl_CopPtr(a0)
+        move.l  cl_Next(a0),d0
+        move.l  d0,a0
+        bne.s   .ui_rst
+        move.l  d1,d0
+        bra.s   .ui_set
+.ui_new:
+        bsr.s   gfx_clalloc
+        tst.l   d0
+        beq.s   .ui_ret
+        move.l  d0,ucl_FirstCopList(a2)
+.ui_set:
+        move.l  d0,ucl_CopList(a2)
+.ui_ret:
+        move.l  (sp)+,a2
+        rts
+; gfx_clalloc(d0.w = instructions) -> d0 = new CopList (CopIns = CopPtr, MaxCount) | 0. Clobbers d1/a0/a1.
+gfx_clalloc:
+        movem.l d2/a2/a6,-(sp)
         move.w  d0,d2
         move.l  ($4).w,a6
         moveq   #CL_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .ui_ret
-        move.l  d0,a3
+        beq.s   .ca_ret
+        move.l  d0,a2
         moveq   #0,d0
         move.w  d2,d0
         mulu    #CI_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        bne.s   .ui_ok
-        move.l  a3,a1
+        bne.s   .ca_ok
+        move.l  a2,a1
         moveq   #CL_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
         moveq   #0,d0
-        bra.s   .ui_ret
-.ui_ok:
-        move.l  d0,cl_CopIns(a3)
-        move.l  d0,cl_CopPtr(a3)
-        move.w  d2,cl_MaxCount(a3)
-        move.l  a3,ucl_FirstCopList(a2)
-        move.l  a3,ucl_CopList(a2)
-        move.l  a3,d0
-.ui_ret:
-        movem.l (sp)+,d2/a2-a3/a6
+        bra.s   .ca_ret
+.ca_ok:
+        move.l  d0,cl_CopIns(a2)
+        move.l  d0,cl_CopPtr(a2)
+        move.w  d2,cl_MaxCount(a2)
+        move.l  a2,d0
+.ca_ret:
+        movem.l (sp)+,d2/a2/a6
         rts
 
-; CMove(ucl a1, register d0, value d1) / CWait(ucl a1, v d0, h d1): write the current instruction; CBump(ucl a1)
-; moves to the next one. List full: instruction ignored.
+; CMove(ucl a1, register d0, value d1) / CWait(ucl a1, v d0, h d1): write the current instruction without advancing
+; (no current CopList: UCopperListInit(ucl, 16) first); CBump(ucl a1) moves to the next one, a full block going on
+; to the next one of its chain (16 instructions, reused or allocated). No memory: the instruction is ignored.
 gfx_CMove:
         movem.l d2-d3,-(sp)
         moveq   #0,d2                ; COPPER_MOVE
@@ -1321,7 +1301,18 @@ gfx_CWait:
         movem.l d2-d3,-(sp)
         moveq   #1,d2                ; COPPER_WAIT
 gfx_cput:
-        move.l  ucl_CopList(a1),a0
+        move.l  ucl_CopList(a1),d3
+        bne.s   .cp_have
+        movem.l d0-d1/a1,-(sp)
+        move.l  a1,a0
+        moveq   #16,d0
+        bsr     gfx_UCopperListInit
+        move.l  d0,d3
+        movem.l (sp)+,d0-d1/a1
+        tst.l   d3
+        beq.s   .cp_ret
+.cp_have:
+        move.l  d3,a0
         move.w  cl_Count(a0),d3
         cmp.w   cl_MaxCount(a0),d3
         bhs.s   .cp_ret
@@ -1333,47 +1324,101 @@ gfx_cput:
         movem.l (sp)+,d2-d3
         rts
 gfx_CBump:
-        move.l  ucl_CopList(a1),a0
+        move.l  ucl_CopList(a1),d0
+        beq.s   .cb_ret
+        move.l  d0,a0
         move.w  cl_Count(a0),d0
         cmp.w   cl_MaxCount(a0),d0
-        bhs.s   .cb_ret
+        bhs.s   .cb_ret              ; (its next block could not be allocated)
         addq.w  #1,cl_Count(a0)
         addq.l  #CI_SIZEOF,cl_CopPtr(a0)
+        addq.w  #1,d0
+        cmp.w   cl_MaxCount(a0),d0
+        blo.s   .cb_ret
+        move.l  cl_Next(a0),d0
+        bne.s   .cb_on
+        movem.l a0-a1,-(sp)
+        moveq   #16,d0
+        bsr     gfx_clalloc
+        movem.l (sp)+,a0-a1
+        tst.l   d0
+        beq.s   .cb_ret
+        move.l  d0,cl_Next(a0)
+.cb_on:
+        move.l  d0,ucl_CopList(a1)
 .cb_ret:
         rts
 
-; VSprites: a ViewPort's vp_SprIns stream (DrawGList) is interleaved with its fragment, each of its segments (one
-; pseudo-WAIT and its MOVEs) going before the first fragment WAIT on a later line.
-; gfx_MrgCop(view a1): builds v_LOFCprList (master, chip RAM, layout in graphics.i): the sprite pointers, then the
-; fragment of each ViewPort that is not VP_HIDE, by increasing DyOffset (chain order on a tie; ViewPorts do not
-; overlap: intuition leaves empty lines between screens), then the end WAIT (spec graphics-display §5). Pseudo-WAITs
-; become WAITs on View.DyOffset + vp.DyOffset + v, capped at MaxDisplayRow - 1; the first line past 255 is preceded
-; by WAIT $FFDF. Each fragment's header receives where it landed. The list is reused if it is big enough,
-; otherwise freed and reallocated. Gated by M4C2_NO_MRGCOP (RED): no fragment -> blank screen.
-; A LACE ViewPort's lines are interlaced: (vp.DyOffset + v) / 2. Interlaced View (§5.1-5.2): v_SHFCprList, created
-; or reused only then, is a copy of the long-frame list in which the plane pointers of each LACE ViewPort point one
-; row further; each list ends by loading COP2LC with the other one.
+; gfx_MrgCop(view a1): builds v_LOFCprList (master, chip RAM, layout in graphics.i) as on 1.3 (graphics-display §5):
+; the sprite pointers, then the streams of every ViewPort that is not VP_HIDE (its fragment, its VSprite stream
+; vp_SprIns, its UCopList read directly) merged by line: each stream's MOVEs up to its next WAIT go out together, then
+; the WAIT with the smallest key (vp.DyOffset + v [/2 for a LACE vp]) * 1024 + h, the stream examined first winning a
+; tie (streams are examined in the reverse order of the chain: bottom ViewPort first, UCopList before VSprites before
+; the fragment). A WAIT lands on View.DyOffset + that line, capped at MaxDisplayRow - 1; the first line past 255 is
+; preceded by WAIT (255, $DE), or (255, last DDFSTRT) after a HIRES 4-plane BPLCON0 with DDFSTOP $D4; a WAIT equal to
+; the previous one is dropped. Each fragment's header receives where its first MOVEs landed. The list is reused if it
+; is big enough, otherwise freed and reallocated. Gated by M4C2_NO_MRGCOP (RED): no fragment -> blank screen.
+; Interlaced View (§5.1-5.2): v_SHFCprList, created or reused only then, is a copy of the long-frame list in which
+; the plane pointers of each LACE ViewPort point one row further; each list ends by loading COP2LC with the other one.
+MC_LAST  EQU -4                      ; last WAIT emitted (long)
+MC_CON0  EQU -6                      ; last BPLCON0, DDFSTRT, DDFSTOP emitted
+MC_DSTRT EQU -8
+MC_DSTOP EQU -10
+MC_NREC  EQU -12                     ; streams
+MC_CROSS EQU -14                     ; != 0: line 255 passed
+MC_RECS  EQU -18                     ; stream records
+MC_LIST  EQU -22                     ; the list (a3)
+MC_LOC   EQU 22
+; stream record
+R_PTR    EQU 0                       ; current instruction, 0 = stream over
+R_VP     EQU 4
+R_CL     EQU 8                       ; UCopList: current CopList; fragment: its header; VSprites: 0
+R_KIND   EQU 12                      ; 0 = fragment format, 1 = CopIns (UCopList)
+R_LEFT   EQU 14                      ; UCopList: instructions left in the current CopList
+R_SIZE   EQU 16
 gfx_MrgCop:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5                ; a5 = GfxBase
         move.l  a1,a2                ; a2 = View
         move.l  #GFX_MASTER_FIXED,d3 ; d3 = size of the block
+        moveq   #0,d4                ; d4 = streams
         move.l  v_ViewPort(a2),a0
 .mc_cnt:
         move.l  a0,d0
         beq.s   .mc_sized
         move.l  vp_DspIns(a0),d0
-        beq.s   .mc_cn
+        beq.s   .mc_c1
         move.l  d0,a1
         clr.l   (a1)                 ; header: not merged
+.mc_c1:
         move.w  vp_Modes(a0),d0
         and.w   #VP_HIDE,d0
         bne.s   .mc_cn
+        tst.l   vp_DspIns(a0)
+        beq.s   .mc_c2
+        addq.w  #1,d4
         add.l   #GFX_FRAG_SIZE-4,d3
-        move.l  vp_SprIns(a0),d0     ; + its VSprite stream
+.mc_c2:
+        move.l  vp_SprIns(a0),d0
+        beq.s   .mc_c3
+        move.l  d0,a1
+        addq.w  #1,d4
+        add.l   4(a1),d3
+.mc_c3:
+        move.l  vp_UCopIns(a0),d0
         beq.s   .mc_cn
         move.l  d0,a1
-        add.l   4(a1),d3
+        move.l  ucl_FirstCopList(a1),d0
+        beq.s   .mc_cn
+        addq.w  #1,d4
+.mc_ccl:
+        move.l  d0,a1
+        moveq   #0,d0
+        move.w  cl_Count(a1),d0
+        lsl.l   #3,d0                ; 8 bytes per instruction at most (two WAITs past line 255)
+        add.l   d0,d3
+        move.l  cl_Next(a1),d0
+        bne.s   .mc_ccl
 .mc_cn:
         move.l  vp_Next(a0),a0
         bra.s   .mc_cnt
@@ -1399,113 +1444,246 @@ gfx_MrgCop:
         move.l  a3,a4                ; a4 = write pointer
         bsr     gfx_sprmoves         ; at the head: SPR0PT..SPR7PT (rewritten by LoadView/ChangeSprite)
                 ifeq    M4C2_NO_MRGCOP
-        moveq   #0,d7                ; d7 != 0: line 255 already passed
         move.w  gb_MaxDisplayRow(a5),d6
         subq.w  #1,d6                ; d6 = last line a WAIT may name
-.mc_pick:
-        sub.l   a1,a1                ; a1 = not yet merged ViewPort with the smallest DyOffset
+        link    a6,#-MC_LOC
+        move.l  a3,MC_LIST(a6)
+        clr.l   MC_LAST(a6)
+        clr.l   MC_DSTOP(a6)         ; MC_DSTOP, MC_DSTRT
+        clr.w   MC_CON0(a6)
+        clr.w   MC_CROSS(a6)
+        move.w  d4,MC_NREC(a6)
+        moveq   #0,d0
+        move.w  d4,d0
+        lsl.l   #4,d0                ; R_SIZE per stream
+        sub.l   d0,sp
+        move.l  sp,MC_RECS(a6)
+        move.l  sp,a1                ; records in chain order: fragment, VSprites, UCopList
         move.l  v_ViewPort(a2),a0
-.mc_scan:
+.mc_fill:
         move.l  a0,d0
-        beq.s   .mc_picked
-        move.l  vp_DspIns(a0),d0
-        beq.s   .mc_sn
-        move.l  d0,a6
-        tst.l   (a6)
-        bne.s   .mc_sn               ; already merged
+        beq.s   .mc_loop
         move.w  vp_Modes(a0),d0
         and.w   #VP_HIDE,d0
-        bne.s   .mc_sn
-        cmpa.w  #0,a1
-        beq.s   .mc_take
-        move.w  vp_DyOffset(a0),d0
-        cmp.w   vp_DyOffset(a1),d0
-        bge.s   .mc_sn
-.mc_take:
-        move.l  a0,a1
-.mc_sn:
-        move.l  vp_Next(a0),a0
-        bra.s   .mc_scan
-.mc_picked:
-        cmpa.w  #0,a1
-        beq     .mc_end
-        move.l  vp_DspIns(a1),a0
-        move.l  a4,(a0)+             ; header = where this fragment lands
-        move.w  vp_DyOffset(a1),d5
-        move.w  v_DyOffset(a2),d4
-        sub.l   a6,a6
-        move.l  vp_SprIns(a1),d0
-        beq.s   .mc_tr
+        bne.s   .mc_fn
+        move.l  vp_DspIns(a0),d0
+        beq.s   .mc_f2
+        move.l  d0,R_CL(a1)
+        addq.l  #4,d0
+        bsr     .mc_rec
+.mc_f2:
+        move.l  vp_SprIns(a0),d0
+        beq.s   .mc_f3
+        clr.l   R_CL(a1)
         add.l   #GFX_SPRI_HDR,d0
-        move.l  d0,a6                ; a6 = VSprite stream (DrawGList) | 0
-.mc_tr:
+        bsr     .mc_rec
+.mc_f3:
+        move.l  vp_UCopIns(a0),d0
+        beq.s   .mc_fn
+        move.l  d0,a3
+        move.l  ucl_FirstCopList(a3),d0
+        beq.s   .mc_fn
+        move.l  d0,a3
+        move.l  a3,R_CL(a1)
+        move.l  cl_CopIns(a3),R_PTR(a1)
+        move.l  a0,R_VP(a1)
+        move.w  #1,R_KIND(a1)
+        move.w  cl_Count(a3),R_LEFT(a1)
+        lea     R_SIZE(a1),a1
+.mc_fn:
+        move.l  vp_Next(a0),a0
+        bra.s   .mc_fill
+.mc_loop:                            ; 1. each stream's MOVEs up to its next WAIT
+        move.l  MC_RECS(a6),a3
+        move.w  MC_NREC(a6),d5
+        bra.s   .mc_m_nx
+.mc_m:
+        move.l  R_PTR(a3),d0
+        beq.s   .mc_m_adv
+        move.l  d0,a0
+        tst.w   R_KIND(a3)
+        bne.s   .mc_mu
+.mc_ms:
+        cmp.w   #GFX_PSEUDO,(a0)
+        beq.s   .mc_mse
         move.w  (a0)+,d0
         move.w  (a0)+,d1
-        cmp.w   #GFX_PSEUDO,d0
-        beq.s   .mc_ps
-        move.w  d0,(a4)+             ; MOVE: copied
-        move.w  d1,(a4)+
-        bra.s   .mc_tr
-.mc_ps:                              ; d7 bit 31: inside a VSprite segment
-        btst    #31,d7
-        bne.s   .mc_sback
-        cmp.w   #GFX_PEND,d1
-        beq     .mc_pick             ; (VSprite segments past the bottom are dropped)
-        cmpa.w  #0,a6
-        beq.s   .mc_wt
-        cmp.w   #GFX_PEND,2(a6)
-        beq.s   .mc_wt
-        cmp.w   2(a6),d1
-        ble.s   .mc_wt               ; the next VSprite segment is not above this WAIT
-        subq.l  #4,a0                ; the fragment resumes at this WAIT
-        exg     a0,a6
-        addq.l  #2,a0
-        move.w  (a0)+,d1             ; the segment's line
-        bset    #31,d7
-        bra.s   .mc_wt
-.mc_sback:                           ; next segment or end of the stream: back to the fragment
-        subq.l  #4,a0
-        exg     a0,a6
-        bclr    #31,d7
-        bra.s   .mc_tr
-.mc_wt:
-        add.w   d5,d1
-        btst    #2,vp_Modes+1(a1)
-        beq.s   .mc_nl
-        asr.w   #1,d1                ; interlaced lines -> lines
-.mc_nl:
-        add.w   d4,d1                ; absolute line
+        bsr     .mc_move
+        bra.s   .mc_ms
+.mc_mse:
+        cmp.w   #GFX_PEND,2(a0)
+        bne.s   .mc_mst
+.mc_mend:
+        sub.l   a0,a0                ; end of the stream
+.mc_mst:
+        move.l  a0,R_PTR(a3)
+.mc_m_adv:
+        lea     R_SIZE(a3),a3
+.mc_m_nx:
+        dbra    d5,.mc_m
+        bra.s   .mc_pick
+.mc_mu:
+        tst.w   R_LEFT(a3)
+        bne.s   .mc_mu1
+        move.l  R_CL(a3),a1          ; this CopList is over: the next one of the chain
+        move.l  cl_Next(a1),d0
+        beq.s   .mc_mend
+        move.l  d0,a1
+        move.l  a1,R_CL(a3)
+        move.l  cl_CopIns(a1),a0
+        move.w  cl_Count(a1),R_LEFT(a3)
+        bra.s   .mc_mu
+.mc_mu1:
+        tst.w   ci_OpCode(a0)
+        bne.s   .mc_muw
+        move.w  ci_Word1(a0),d0
+        and.w   #$1FE,d0
+        move.w  ci_Word2(a0),d1
+        bsr     .mc_move
+        addq.l  #CI_SIZEOF,a0
+        subq.w  #1,R_LEFT(a3)
+        bra.s   .mc_mu
+.mc_muw:
+        cmp.w   #10000,ci_Word1(a0)
+        bge.s   .mc_mend             ; CEND
+        bra.s   .mc_mst
+.mc_pick:                            ; 2. the WAIT with the smallest key, last record first
+        move.w  MC_NREC(a6),d5
+        moveq   #0,d0
+        move.w  d5,d0
+        lsl.l   #4,d0
+        move.l  MC_RECS(a6),a3
+        add.l   d0,a3
+        moveq   #0,d7                ; d7 = chosen record
+        bra.s   .mc_p_nx
+.mc_p:
+        lea     -R_SIZE(a3),a3
+        move.l  R_PTR(a3),d0
+        beq.s   .mc_p_nx
+        move.l  d0,a0
+        bsr     .mc_wpos
+        ext.l   d0
+        asl.l   #8,d0
+        asl.l   #2,d0
+        and.l   #$FFFF,d1
+        add.l   d1,d0                ; key
+        tst.l   d7
+        beq.s   .mc_take
+        cmp.l   d4,d0
+        bge.s   .mc_p_nx
+.mc_take:
+        move.l  a3,d7
+        move.l  d0,d4                ; d4 = smallest key
+.mc_p_nx:
+        dbra    d5,.mc_p
+        tst.l   d7
+        beq     .mc_done
+        move.l  d7,a3                ; 3. its WAIT
+        move.l  R_PTR(a3),a0
+        bsr     .mc_wpos
+        add.w   v_DyOffset(a2),d0    ; absolute line
         bpl.s   .mc_lo
-        moveq   #0,d1
+        moveq   #0,d0
 .mc_lo:
-        cmp.w   d6,d1
+        cmp.w   d6,d0
         ble.s   .mc_hi
-        move.w  d6,d1
+        move.w  d6,d0
 .mc_hi:
-        move.w  (a0),d2              ; horizontal position
-        addq.l  #8,a0                ; past the position and no-op entries
-        and.w   #$FE,d2
-        or.w    #1,d2
-        moveq   #2,d3                ; no-ops that complete the 3 entries
-        cmp.w   #255,d1
+        and.w   #$FE,d1
+        or.w    #1,d1
+        cmp.w   #255,d0
         ble.s   .mc_w
-        sub.w   #256,d1              ; past line 255, lines are named modulo 256
-        tst.b   d7
+        sub.w   #256,d0              ; past line 255, lines are named modulo 256
+        tst.w   MC_CROSS(a6)
         bne.s   .mc_w
-        st      d7
-        move.l  #$FFDFFFFE,(a4)+     ; the first time: wait for the end of line 255
-        moveq   #1,d3
+        st      MC_CROSS(a6)
+        move.w  #$DE,d2              ; the first time: wait for the end of line 255
+        move.w  MC_CON0(a6),d3
+        and.w   #$F000,d3
+        cmp.w   #$C000,d3
+        bne.s   .mc_hx
+        cmp.w   #$D4,MC_DSTOP(a6)
+        bne.s   .mc_hx
+        move.w  MC_DSTRT(a6),d2      ; HIRES 4 planes up to $D4: no copper cycle at $DE
+.mc_hx:
+        and.w   #$FE,d2
+        or.w    #$FF01,d2
+        swap    d2
+        move.w  #$FFFE,d2
+        move.l  d2,(a4)+
+        move.l  d2,MC_LAST(a6)
 .mc_w:
-        lsl.w   #8,d1
-        or.w    d2,d1
+        lsl.w   #8,d0
+        or.w    d1,d0
+        swap    d0
+        move.w  #$FFFE,d0
+        cmp.l   MC_LAST(a6),d0
+        beq.s   .mc_same             ; the same WAIT again: dropped
+        move.l  d0,(a4)+
+        move.l  d0,MC_LAST(a6)
+.mc_same:
+        tst.w   R_KIND(a3)
+        bne.s   .mc_au
+        lea     12(a0),a0            ; past the 3 entries of the pseudo-WAIT
+        move.l  a0,R_PTR(a3)
+        move.l  R_CL(a3),d0
+        beq     .mc_loop
+        clr.l   R_CL(a3)
+        move.l  d0,a1
+        move.l  a4,(a1)              ; fragment header: where its first MOVEs land
+        bra     .mc_loop
+.mc_au:
+        addq.l  #CI_SIZEOF,a0
+        move.l  a0,R_PTR(a3)
+        subq.w  #1,R_LEFT(a3)
+        bra     .mc_loop
+; .mc_rec(a0 = vp, a1 = record, d0 = first entry of a fragment-format stream; R_CL set): fills it, a1 to the next.
+.mc_rec:
+        move.l  d0,R_PTR(a1)
+        move.l  a0,R_VP(a1)
+        clr.l   R_KIND(a1)           ; R_KIND, R_LEFT
+        lea     R_SIZE(a1),a1
+        rts
+; .mc_wpos(a0 = current WAIT, a3 = record) -> d0.w = vp.DyOffset + line [/2 for a LACE vp], d1.w = h. Clobbers a1.
+.mc_wpos:
+        tst.w   R_KIND(a3)
+        bne.s   .wp_u
+        move.w  2(a0),d0
+        move.w  4(a0),d1
+        bra.s   .wp_c
+.wp_u:
+        move.w  ci_Word1(a0),d0
+        move.w  ci_Word2(a0),d1
+.wp_c:
+        move.l  R_VP(a3),a1
+        add.w   vp_DyOffset(a1),d0
+        btst    #2,vp_Modes+1(a1)
+        beq.s   .wp_r
+        asr.w   #1,d0                ; interlaced lines -> lines
+.wp_r:
+        rts
+; .mc_move(d0.w = register offset, d1.w = value): emits the MOVE, noting BPLCON0/DDFSTRT/DDFSTOP for line 255.
+.mc_move:
+        move.w  d0,(a4)+
         move.w  d1,(a4)+
-        move.w  #$FFFE,(a4)+
-.mc_nop:
-        move.l  #GFX_NOP<<16,(a4)+
-        subq.w  #1,d3
-        bne.s   .mc_nop
-        bra     .mc_tr
-.mc_end:
+        cmp.w   #BPLCON0-CUSTOM,d0
+        bne.s   .mv_ds
+        move.w  d1,MC_CON0(a6)
+        rts
+.mv_ds:
+        cmp.w   #DDFSTRT-CUSTOM,d0
+        bne.s   .mv_de
+        move.w  d1,MC_DSTRT(a6)
+        rts
+.mv_de:
+        cmp.w   #DDFSTOP-CUSTOM,d0
+        bne.s   .mv_r
+        move.w  d1,MC_DSTOP(a6)
+.mv_r:
+        rts
+.mc_done:
+        move.l  MC_LIST(a6),a3
+        unlk    a6
                 endc
         btst    #2,v_Modes+1(a2)
         beq.s   .mc_fin
@@ -1580,7 +1758,7 @@ gfx_mkshf:
         sub.l   a3,d0
         add.l   d6,d0
         move.l  d0,a0
-        lea     12+9*4(a0),a0        ; past the lead-in WAIT and the 9 settings MOVEs: BPLxPTH/L pairs
+        lea     9*4(a0),a0           ; past the 9 settings MOVEs: BPLxPTH/L pairs
         move.l  a1,-(sp)
         bsr     gfx_shfplanes
         move.l  (sp)+,a1

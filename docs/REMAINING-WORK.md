@@ -160,14 +160,16 @@ NextSelect chain, MENUTOGGLED, MutualExclude, drag-selection with the left butto
 (intuition-input-menus §3.6-§3.9), checked with `tests/menucat.s` against the §5 vectors (steps 3-5). Left: the
 working flags are not reset when a window is activated (only when a menu opens).
 
-### C4. Display — [doc], M–L (window and colours done 2026-11-10)
+### C4. Display — done 2026-11-10
 
 - DIW/DDF, fine scroll, clipping, modulos and the colour count (ncol, SPRITES colours) follow graphics-display
-  §4.2-4.4: done 2026-11-10 (`tests/mvport_probe.sh`, the 13 probed rows equal).
+  §4.2-4.4 (`tests/mvport_probe.sh`, the 13 probed rows equal).
+- MrgCop merges the streams of all ViewPorts by line (fragment, VSprites, UCopList read directly), with the §5.2 tie
+  rule, the line-255 crossing and repeated WAITs dropped (`tests/mrgcop_probe.sh`, nine cases of §5.2-5.4 and §7.3).
+- The insert-disk picture shows its middle 216 lines on NTSC, logo whole.
 - The pointer counts interlaced lines since the high-resolution pointer units (2026-11-09, v0.2.35).
-- Left: MrgCop copies fragments whole instead of interleaving their WAITs by line.
-- Left: the 272-line insert-disk picture is cut on NTSC.
-- Source: PLAN "HAM/dual playfield", "Issue #19"; custom-chips §7.0.
+- Left, small: MrgCop rebuilds the lists even when no ViewPort has a CopList (1.3 then leaves the old lists alone,
+  §5.1); ClrIns is not merged (we never build one).
 
 ### C5. exec scheduling — [src] partly, S–M
 
@@ -373,8 +375,8 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 ## Suggested order
 
-1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
-   paths before cutting).
-2. **C4, the rest** (MrgCop interleaving fragments by line; the insert-disk picture on NTSC).
-A5, A6, C1, C2, C3, C4 (window, colours), C5 (main part), C6, C7 (main part), C8, C9 and the ADF sweep are done;
+1. **The S-sized leftovers** (C5, C7, C10-C14), one subsystem at a time.
+2. **The analysis-side gaps** (A7-A10, D1-D4), each through an analysis agent first.
+
+A5, A6, C1, C2, C3, C4, C5 (main part), C6, C7 (main part), C8, C9 and the ADF sweep are done;
 D1/D3 are specified.

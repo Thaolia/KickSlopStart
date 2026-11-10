@@ -8,6 +8,16 @@ copper fragment; `tests/mvport_check.py` decodes DIWSTRT/DIWSTOP, DDFSTRT/DDFSTO
 pointers, the BPLCON0 at the top of the ViewPort, the number of colours and the lead-in line, and compares them with
 the spec. Success: `MVPORT OK`.
 
+## MrgCop merge probe
+
+`tests/mrgcop_probe.sh <out_dir> [rom]` runs `tests/mrgcop_probe.s` (CLI command, our ROM under Amiberry): nine Views
+of one or two ViewPorts (the lists of `docs/analysis/graphics-display-v34.md` §5.3, line 255 crossed at $DE and,
+HIRES 4 planes with DDFSTOP $D4, at DDFSTRT, a UCopList inside and below its ViewPort, stacked and contiguous
+ViewPorts of §5.4, an interlaced View, and one View shown with LoadView then patched by SetRGB4 and ScrollVPort) go
+through MakeVPort and MrgCop and their hardware lists are printed. `tests/mrgcop_check.py` cuts each list into WAITs
+and the MOVEs after them and compares them with the spec. Success: `OK: 9 cases ...`. A line damaged by lost serial
+characters is reported as such: run the probe again.
+
 ## Native rectangle-pen regression
 
 `make test-graphics-rectpens` (also included through the normal and quick Graphics groups) supplies per-plane

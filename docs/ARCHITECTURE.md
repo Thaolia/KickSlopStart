@@ -1704,8 +1704,8 @@ differs.
     kbd_cook, CSI sequences for the arrows, F1-F10 and Help (Shift variants), 0 on a release, -1 if the buffer is
     too short.
   - **graphics**: LoadRGB4 (−192); user copper lists **UCopperListInit** (−594), **CMove**, **CWait**, **CBump**
-    (−372/−378/−366); MakeVPort copies `vp_UCopIns` at the end of the fragment (WAIT brought back to the real line, crossing of
-    line 255, CEND), FreeVPortCopLists frees them. Monkey places a COP1LC/COPJMP1 jump there to its own lists.
+    (−372/−378/−366); MakeVPort copied `vp_UCopIns` at the end of the fragment (WAIT brought back to the real line, crossing
+    of line 255, CEND; MrgCop reads it directly since 2026-11-10), FreeVPortCopLists frees them. Monkey places a COP1LC/COPJMP1 jump there to its own lists.
     **Blitter DMA active from init**: a program that saves then restores DMACON (defjam intro) otherwise turned it off
     for good, and the game's first WaitBlit never returned.
   - **OFS**: direct Seek through the block tables of the header and of the extension blocks (block pos/488), instead of
@@ -2174,7 +2174,26 @@ differs.
   of 15 characters (the column right of the logo). README image `assets/boot_screen/insert_disk.png` is an Amiberry
   capture; its logo area equals the generated reference pixel for pixel. The dev ROM's D3 test clients (d3c-d3j
   but d3g, which reads no file) are created only when `td_disk_present` finds a floppy, so the dev ROM booted
-  without a disk reaches this screen too instead of stopping on the "No disk present" requester.
+  without a disk reaches this screen too instead of stopping on the "No disk present" requester. On NTSC
+  (`DISPF_NTSC`) the ViewPort shows the middle 216 of the 272 lines (`GFX_BOOT_NTSC_H`, RyOffset 28): the logo stays
+  whole with 8 spare lines above and below it, where the full height ran past MaxDisplayRow and lost its bottom.
+  **MrgCop merges by line (2026-11-10)**: REMAINING-WORK C4, graphics-display §5.2. `gfx_MrgCop` keeps one record
+  per stream on its stack (fragment, VSprite stream, UCopList, added in chain order) and repeats: emit every
+  stream's MOVEs up to its next WAIT, then the WAIT with the smallest key (vp.DyOffset + v [/2 LACE]) × 1024 + h,
+  examining the records from the last one (bottom ViewPort first, UCopList before VSprites before the fragment) so
+  ties go to the stream added last. The 3-entry pseudo-WAITs now give one WAIT, none when it repeats the previous
+  WAIT (no padding NOPs: the MOVEs after a WAIT run two copper slots earlier, as on 1.3); line 255 is crossed with
+  WAIT (255, $DE), or (255, last DDFSTRT) after a HIRES 4-plane BPLCON0 with DDFSTOP $D4. The UCopList is no longer
+  copied into the fragment by MakeVPort: MrgCop reads `vp_UCopIns` (its CopLists in chain order, CEND = end), so a
+  user WAIT below its ViewPort lands where its line says and a UCopList set after MakeVPort is taken at the next
+  MrgCop (§6). CMove/CWait make a 16-instruction CopList when there is none, CBump goes on to a following block of
+  16 when one is full, UCopperListInit reuses FirstCopList and empties its chain. A fragment's header now points at
+  its first MOVEs in the master (the lead-in WAIT has no fixed size any more): ScrollVPort, SetRGB4 and the
+  short-frame plane patch address them from there. Contiguous ViewPorts (§5.4) give `9001 0100 1200 0100 0200` as
+  on 1.3. Fragments lose the 64 reserved UCopList entries (768 bytes of chip RAM less per ViewPort).
+  `tests/mrgcop_probe.sh` checks nine cases against §5.2-5.4 and §7.3 (lists of §5.3, line 255 at $DE and at
+  DDFSTRT, UCopList inside and below its ViewPort, stacked and contiguous ViewPorts, interlace, SetRGB4 and
+  ScrollVPort on the shown list): all equal; the previous ROM failed five of them.
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes
@@ -2267,13 +2286,12 @@ differs.
     other control bytes are ignored. The READ returns as soon as its buffer is full (a key typed past it was echoed
     and lost before). Echo goes through `con_echo` (serial mirror, window, screen). `conwin.s` gained Ctrl-X too.
   - Stacked ViewPorts (issue #19, graphics-display §4.3/§5): a fragment holds MOVEs and 3-entry pseudo-WAITs
-    relative to the top of its ViewPort (lead-in L0 with planes off, top + BPLCON0 on, user instructions, bottom +
-    BPLCON0 off; DIW open from line 5 to $140) plus a header where MrgCop records where it landed. MrgCop sorts
-    the non-hidden ViewPorts by DyOffset, turns the pseudo-WAITs into WAITs on View.DyOffset + vp.DyOffset + v
-    (WAIT $FFDF before the first line past 255, capped at MaxDisplayRow - 1) and sizes the master list to the
+    relative to the top of its ViewPort (lead-in L0 with planes off, top + BPLCON0 on, bottom + BPLCON0 off; DIW
+    open from line 5 to $140) plus a header where MrgCop records where it landed. MrgCop turns the pseudo-WAITs into
+    WAITs on View.DyOffset + vp.DyOffset + v (capped at MaxDisplayRow - 1) and sizes the master list to the
     ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
-    header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
-    not interleaved by line (ViewPorts do not overlap).
+    header. Our internal Views (boot screen) now carry InitView's offsets. Since 2026-11-10 the streams of all
+    ViewPorts are merged by line (see "MrgCop merges by line").
   - Hardware sprites (custom-chips §4.1): GetSprite/FreeSprite use the public GfxBase SpriteReserved byte (pick -1
     = first free from 0; intuition takes 0 for the pointer); GfxBase->SimpleSprites points to gb_SprSS. MoveSprite
     halves x for a HIRES ViewPort and y for a LACE one, adds the ViewPort's then the active View's offsets, clamps
@@ -2287,7 +2305,7 @@ differs.
     (layout in graphics.i) holds, in the fragment format, a segment on the line before the top at copper position
     $40 (SPRxPOS, SPRxCTL, SPRxPT = ImageData, and the pair's colours 17+4p.. when they change) and one on the VSTOP
     line zeroing POS/CTL so the words after the image never re-arm the sprite. MrgCop interleaves that stream with
-    the fragment by line (d7 bit 31 = inside a VSprite segment); FreeVPortCopLists frees it. The VSprites show after
+    the other streams by line; FreeVPortCopLists frees it. The VSprites show after
     MrgCop + LoadView, as on 1.3. Test: tests/vsprite_test.s.
   - HAM and dual playfield (graphics-display §4.2-§4.4): MakeVPort (local frame MV_*) puts HIRES, HAM and DUALPF
     of vp.Modes into BPLCON0 and PFBA into BPLCON2; the depth is capped at 5 unless HAM, DUALPF or EXTRA_HALFBRITE

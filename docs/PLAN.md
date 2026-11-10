@@ -1016,8 +1016,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   depth gadgets work (real Gadget structures with their Images, act on release). Interlaced screens are displayed
   (short-frame copper list, View LACE when a LACE screen is visible), dragged and clicked
   (`tests/lace_test.s`). Open: the pointer moves in non-interlaced lines (1.3 MouseY is in interlaced lines);
-  MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less
-  free memory (copper fragments are 1,032 bytes).
+  MrgCop copies fragments whole instead of interleaving their WAITs by line (done 2026-11-10); the boot desktop has
+  1,128 bytes less free memory (copper fragments are 1,032 bytes; 264 since 2026-11-10).
   **IDCMP (2026-11-03)**: ACTIVEWINDOW/INACTIVEWINDOW, MENUDOWN/MENUUP for RMBTRAP windows, VANILLAKEY; PPShow
   now closes on the right button or a key. MENUVERIFY (MENUHOT/MENUCANCEL, MENUWAITING, MENUUP), SIZEVERIFY,
   REQVERIFY with the DMRequest double click (bar only on the first press), DELTAMOVE, the dead-key history, the
@@ -1589,6 +1589,15 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **MrgCop by line, insert-disk screen on NTSC (2026-11-10)**: REMAINING-WORK C4 completed; ARCHITECTURE "MrgCop
+  merges by line". `tests/mrgcop_probe.sh` (CLI probe printing the merged lists, `tests/mrgcop_check.py`): nine
+  cases equal to graphics-display §5.2-5.4 and §7.3 in three runs (one other run lost serial characters, now
+  reported as such); the previous ROM failed five (padding NOPs, line 255 at $DE in HIRES 4 planes, UCopList
+  dropped, contiguous ViewPorts out of order, UCopList WAIT below its ViewPort). `tests/mvport_probe.sh` 13/13;
+  `tests/vsprite_test.s` capture identical to the previous ROM pixel for pixel; `gels_probe` and `iwin_probe`
+  identical but for free memory (+1,536 bytes) and addresses; Workbench 1.3.3 drawer, Shell and `dir`; Deluxe Paint
+  III format chooser; OctaMED stops on its intro screen with both ROMs. prepush-check (dev) FAIL=0, Lemmings menu
+  looked at. Insert-disk screen PAL unchanged, NTSC (`-s ntsc=true`) logo whole with the text and version (looked at).
   **Shell stack margin 1024 (2026-11-10)**: REMAINING-WORK A6. `CP_STKEXTRA` 2048 -> 1024 after measuring the
   high-water marks with the `$ABABABAB` fill read through `monitor tasks` + gdb dumps: NEWCON 668 / Background CLI
   516 / RAM 260 bytes on the 68000 side, after a Shell session with a "No disk present" requester (`dir df1:`), `type`,

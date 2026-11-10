@@ -69,6 +69,7 @@ GFX_BOOT_W        EQU 352                       ; display width (overscan)
 GFX_BOOT_H        EQU 272                       ; display height (overscan)
 GFX_BOOT_DX       EQU -16                       ; vp_DxOffset / vp_DyOffset of the overscan ViewPort
 GFX_BOOT_DY       EQU -8
+GFX_BOOT_NTSC_H   EQU 216                       ; NTSC: the middle 216 lines (logo whole, 8 spare lines each side)
 GFX_BOOT_BYTES    EQU GFX_BOOT_W/8              ; 44 bytes per row
 GFX_BOOT_PLANE_SZ EQU GFX_BOOT_BYTES*GFX_BOOT_H ; 11968 bytes (one plane)
 GFX_BOOT_PLANES_SZ EQU GFX_BOOT_PLANE_SZ*GFX_BOOT_DEPTH  ; 47872 bytes (4 contiguous planes in chip RAM)
@@ -284,22 +285,23 @@ DMAF_SPRITE  EQU $0020
 ; --- Sizes of the generated copper lists (chip RAM) ---
 ; A ViewPort fragment (vp_DspIns, built by MakeVPort) is a list of 2-word entries: copper MOVEs (register offset,
 ; value) and pseudo-entries that MrgCop translates (graphics-display-v34 §4.3, §5.2):
-;   entry 0          header: master-list address of the translated fragment (written by MrgCop, 0 = not merged)
+;   entry 0          header: master-list address of the first MOVE after the fragment's lead-in WAIT (written by
+;                    MrgCop, 0 = not merged); the MOVEs up to the next WAIT follow there in fragment order, so a
+;                    MOVE at offset o of the fragment (o >= 16) lands at header + o - 16
 ;   $FFFF,v / h,0 / NOP   WAIT(v, h), v relative to the top of the ViewPort (View.DyOffset + vp.DyOffset + v);
-;                    MrgCop turns the 3 entries into [WAIT, NOP, NOP] or, at the first line past 255,
-;                    [WAIT $FFDF, WAIT, NOP] (3 entries both ways: master offsets = fragment offsets - 4)
+;                    MrgCop emits one WAIT for the 3 entries (two at the first line past 255, none when it repeats
+;                    the previous WAIT)
 ;   $FFFF,$8000      end of the fragment (not copied)
-; Worst case: header, L0 wait, 9 + 2*6 planes + 32 colours MOVEs, top wait + BPLCON0, GFX_UCOPMAX user instructions
-; as waits, bottom wait + BPLCON0, end.
+; Worst case: header, L0 wait, 9 + 2*6 planes + 32 colours MOVEs, top wait + BPLCON0, bottom wait + BPLCON0, end.
+; The user's vp_UCopIns is not copied into the fragment: MrgCop reads it directly.
 GFX_PSEUDO     EQU $FFFF          ; word 0 of a pseudo-entry
 GFX_PEND       EQU $8000          ; word 1 of the end marker
 GFX_NOP        EQU $01FE          ; copper no-op register (MOVE to $1FE)
 ; VSprite copper block (vp_SprIns, built by DrawGList, PUBLIC): +0 its allocated size (long), +4 the bytes it
 ; takes in a hardware list (long), +8 a stream in the fragment format (pseudo-WAITs relative to the top of the
-; ViewPort and MOVEs), ended by the GFX_PEND marker. MrgCop interleaves it with the fragment by line.
+; ViewPort and MOVEs), ended by the GFX_PEND marker. MrgCop interleaves it with the other streams by line.
 GFX_SPRI_HDR   EQU 8
-GFX_UCOPMAX    EQU 64             ; user instructions (vp_UCopIns) kept in a fragment
-GFX_FRAG_ENTRIES EQU 1+3+53+4+GFX_UCOPMAX*3+4+1
+GFX_FRAG_ENTRIES EQU 1+3+53+4+4+1
 GFX_FRAG_WORDS EQU GFX_FRAG_ENTRIES*2
 ; struct UCopList / CopList / CopIns (graphics/copper.h)
 ucl_FirstCopList EQU 4
@@ -317,7 +319,7 @@ ci_Word2     EQU 4               ; DestData / HWaitPos
 CI_SIZEOF    EQU 6
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
 GFX_SPRCOP_SIZE EQU 8*2*4            ; SPR0PTH/L..SPR7PTH/L: 16 MOVEs added by MrgCop
-; Master list (v_LOFCprList) = SPRCOP + one translated fragment per merged ViewPort + (interlace) COP2LCH/L to the
+; Master list (v_LOFCprList) = SPRCOP + the streams of the ViewPorts merged by line + (interlace) COP2LCH/L to the
 ; other frame's list + final WAIT. Its chip block starts with its size in bytes (long), v_LOFCprList points just
 ; after it (FreeCprList reads it back). An interlaced View's v_SHFCprList has the same size and layout.
 GFX_MASTER_FIXED EQU 4+GFX_SPRCOP_SIZE+8+4

@@ -128,6 +128,11 @@ gfx_display_init:
         tst.l   d0
         beq     .gfx_nogfx                   ; no graphics.library -> no display
         move.l  d0,a5                        ; a5 = GfxBase
+        btst    #0,gb_DisplayFlags+1(a5)     ; DISPF_NTSC: 272 lines do not fit under MaxDisplayRow
+        beq.s   .gfx_rows
+        move.w  #GFX_BOOT_NTSC_H,GFX_O_VP+vp_DHeight(a2)
+        move.w  #(GFX_BOOT_H-GFX_BOOT_NTSC_H)/2,GFX_O_RASINFO+ri_RyOffset(a2)
+.gfx_rows:
         move.l  a5,a6
         bsr     gfx_boottext
         ; 4. MakeVPort(view,vp); MrgCop(view); LoadView(view) THROUGH THE JUMP TABLE
