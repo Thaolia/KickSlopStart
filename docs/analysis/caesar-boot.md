@@ -210,6 +210,24 @@ another.
 
 ---
 
+## 4. Screen after the language choice on the real 1.3 (black-box, 2026-11-10) [O ROM]
+
+Observed on the Commodore 1.3 ROM under Amiberry (A500, cycle-exact, 512 KB chip + 512 KB slow RAM), two
+runs, French chosen on the GB / F / D panel, screenshots of the emulated picture at 1 Hz and about 4-5 Hz.
+Times are from the left click on the F square.
+
+| Time after click | Screen |
+|---|---|
+| 0 to ~4.4 s | Language panel stays, unchanged (the F square shows as pressed); no fade. |
+| ~4.5 s | Cut to a fully black screen (one colour), no pointer. |
+| ~4.5 to ~10.2 s | Black (about 5.5 s). No partial picture, no bands, no plane being filled is ever visible. |
+| ~10.2 to ~11.2 s | The CAESAR title picture appears **complete in geometry at once** (lettering, bust, legionary, ground) and its colours ramp to the final palette in about 1 s. The first frames have strongly wrong colours (orange/cyan, then washed greens) with a grainy, noise-like texture inside the picture area (typical of a HAM picture under a palette that is not yet final); the CAESAR lettering already has its final gold colours. No horizontal bands, no tearing, no picture drawn top-down. |
+| ~11.2 to ~51 s | Clean CAESAR title with correct colours, static. |
+| ~52 s | Title cut; the French options panel ("argent initial", "Enfant", "Choisir nom", "Precharger un jeu", "Ok") appears dim, then at full brightness about 1 s later (short fade-in). |
+
+Consequence for an implementation: a grainy, wrongly coloured title for about one second is normal; banded or
+partially drawn pictures, or noise seen during the black period, are not shown by the real 1.3.
+
 ## Clean-room review
 
 - [x] No copied instruction sequence: library calls with LVO, hardware registers

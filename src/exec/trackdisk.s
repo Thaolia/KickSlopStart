@@ -874,13 +874,15 @@ td_position:
 ; cylinder 0 anyway, as before). Clobbers d2/d3.
 td_seek:
         clr.w   -(sp)                 ; result
-        ; CRITICAL SECTION of the seek: the step pulses write CIAB_PRB, and the MICROHZ source (CIA-B
+        ; CRITICAL SECTIONS of the seek: the step pulses write CIAB_PRB, and the MICROHZ source (CIA-B
         ; timer A, INT6) shares the SAME chip. An INT6 IRQ landing between the PRB writes of a step corrupts the
         ; head positioning -> the next read falls over (hang observed on a big seek towards a high
         ; block, e.g. "flt-intro" on the Lemmings disk; invisible as long as the boot only reads low blocks).
         ; Proven by bisection: a pure inter-step DELAY does NOT fix it (so not a settle defect), masking
-        ; the IRQs DOES (3/3). We mask only the SEEK (short); the downstream DMA polls INTREQR -> no IRQ needed.
-        jsr     LVO_DISABLE(a6)     ; a6 = SysBase; balanced by LVO_ENABLE at .rd_pend
+        ; the IRQs DOES (3/3). Only each pulse (about 0.3 ms) and the side selection are masked: the 3 ms
+        ; between steps and the 18 ms of settling stay interruptible. Masking the whole seek held the VBlank
+        ; past the start of the picture (21 ms for one cylinder): a game that rewrites its bitplane pointers in
+        ; its own level-3 handler (Caesar's title while it loads) showed garbled frames.
         ; --- seek to track d6 with CYLINDER TRACKING ---
         ; We remember the current cylinder (TDU_CYL, reliable iff TDU_CYLOK) and step the DELTA towards the target
         ; (IN if deeper, OUT if closer to 0) instead of recalibrating to zero on EVERY read. Recalibration
@@ -935,6 +937,7 @@ td_seek:
         move.w  d3,TDU_CYL(a0)      ; position = target
                 endc                ; RED SEEK_NOSTEP: no step (nor TDU_CYL update) -> stays in place
 .rd_side:
+        jsr     LVO_DISABLE(a6)
         move.b  d1,CIAB_PRB         ; side 0 (DSKSIDE=1, bit2=1; even track)
         btst    #0,d6
         beq.s   .rd_pend
@@ -942,7 +945,7 @@ td_seek:
         and.b   #~CIAF_DSKSIDE,d0
         move.b  d0,CIAB_PRB         ; side 1 (DSKSIDE=0, bit2=0; odd track)
 .rd_pend:
-        jsr     LVO_ENABLE(a6)      ; end of the seek critical section
+        jsr     LVO_ENABLE(a6)
         moveq   #0,d0
         move.w  (sp)+,d0
         rts
@@ -969,6 +972,7 @@ TD_SETTLE     EQU 7090              ; 18 ms
 ; d2 (step counter) and d3 (target cylinder). FS-UAE unchanged (same edge).
 TD_STEP_DLY   EQU $40               ; ~160 us wide (well above the drive minimum; << settle 82 ms)
 .rd_step_out:
+        jsr     LVO_DISABLE(a6)      ; the pulse's PRB writes are one critical section (a6 = SysBase)
         move.b  d1,CIAB_PRB         ; direc OUT (bit1=1), step=1: sets the direction
         bsr.s   .rd_stepdly         ; setup: direction stable before the step edge
         move.b  d1,d0
@@ -976,8 +980,9 @@ TD_STEP_DLY   EQU $40               ; ~160 us wide (well above the drive minimum
         move.b  d0,CIAB_PRB         ; step=0: falling edge = the step
         bsr.s   .rd_stepdly         ; holds /STEP low (pulse width)
         move.b  d1,CIAB_PRB         ; step=1: release
-        rts
+        jmp     LVO_ENABLE(a6)
 .rd_step_in:
+        jsr     LVO_DISABLE(a6)
         move.b  d1,d0
         subq.b  #CIAF_DSKDIREC,d0
         move.b  d0,CIAB_PRB         ; direc IN (bit1=0), step=1
@@ -989,7 +994,7 @@ TD_STEP_DLY   EQU $40               ; ~160 us wide (well above the drive minimum
         move.b  d1,d0
         subq.b  #CIAF_DSKDIREC,d0
         move.b  d0,CIAB_PRB         ; step=1
-        rts
+        jmp     LVO_ENABLE(a6)
 .rd_stepdly:
         move.l  #TD_STEP_DLY,d0
 .rd_sdloop:

@@ -2223,6 +2223,16 @@ differs.
   - trackdisk (C13): TD_FORMAT checks for a floppy like CMD_WRITE before anything is cached: 29 at once, where it
     used to cache the track as modified and fail at the write, leaving a dirty track behind
     (`tests/tdcode_probe.sh`, FORMAT-NODISK).
+  **Seek: only the step pulses are masked (2026-11-10)**: `td_seek` held Disable for the whole head move (3 ms per
+  step plus 18 ms of settling, more than a frame for a single cylinder). Caesar's title rewrites its bitplane
+  pointers from its own level-3 handler (hooked on the autovector) while the game loads; a seek delayed that
+  VBlank past the start of the picture, and the frame was fetched from stale pointers (garbled, shifted or
+  one-plane pictures, about one capture in three). Disable now covers each step pulse (~0.3 ms, the CIA-B PRB
+  writes that the INT6 race of 20b1e2f needs atomic) and the side selection only. Found with a GFXTRACE build
+  (`-DGFXTRACE=1`: GTRACE counters at $7E0-$7FF on LoadView, MrgCop, MakeVPort and it_remake, all still after the
+  language choice) and Amiberry watches on the custom registers (BPLxPT written by the game's handler every
+  frame, copper idle). The real 1.3 shows the title clean apart from a one-second palette ramp
+  (docs/analysis/caesar-boot.md §4); ours now does the same.
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

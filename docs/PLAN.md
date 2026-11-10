@@ -1589,6 +1589,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Caesar title glitches, seek masking (2026-11-10)**: user report after v0.2.40 ("video glitches after the language
+  choice" in Caesar). Reproduced under Amiberry with 50 captures at 1 Hz after the language click: about a third
+  garbled on v0.2.40, 3-5 on v0.2.39; the analysis track's probe of the real 1.3 shows none
+  (`docs/analysis/caesar-boot.md` §4). Cause: the whole seek under Disable (ARCHITECTURE "Seek: only the step
+  pulses are masked"). After the fix: one transitional frame (the 1.3 palette ramp), then a clean title;
+  prepush-check FAIL=0 with the Lemmings menu (whose flt-intro big seek exposed the INT6 race), writeback_probe
+  DF1 47.3 s / DH0 14.9 s with OFS CHECK OK and 66 identical files, tdcode_probe OK. WinUAE ADF suite on v0.2.40
+  (user request): 30 floppies, the same 10 without a DOS marker as for PR #27, every capture looked at.
   **S-sized leftovers (2026-11-10)**: REMAINING-WORK C5, C10-C13; ARCHITECTURE "S-sized leftovers". New probes, each
   failing on the previous ROM: `tests/sched_probe.sh` (SCHED OK), `tests/clipblit_probe.sh` (0 wrong pixels; 7,080
   before, 480 without the ClipRect sort), `tests/tdcode_probe.sh` (TD_FORMAT without a floppy 29, was 28). Unchanged:

@@ -120,6 +120,17 @@ EXEC_SVC     macro
 ; Exception frames inside exec are kept in the 68000 form {SR, PC}. On a 68010 or later the CPU adds a format word
 ; after the PC (format 0 for interrupts, TRAP and privilege violations): FRAME_IN removes it at the entry of such a
 ; handler, FRAME_OUT puts one back (format 0) before RTE. Both only change the CCR.
+; GFXTRACE=1 (trace build only, never dev or prod): GTRACE n (0-3) counts the calls of display routine n in the free
+; low RAM ($7E0 + 8n: count, then the caller's return address), read back with the debugger.
+                ifnd    GFXTRACE
+GFXTRACE        EQU 0
+                endc
+GTRACE       macro
+                ifne    GFXTRACE
+        addq.l  #1,$7E0+8*\1
+        move.l  (sp),$7E4+8*\1
+                endc
+             endm
 ; INT_ENTRY: first instructions of a level 1-6 autovector: with INTEN (bit 14) clear in INTENAR, plain RTE, nothing
 ; acknowledged and no schedule check (custom-chips-v34 §3.3).
 INT_ENTRY    macro

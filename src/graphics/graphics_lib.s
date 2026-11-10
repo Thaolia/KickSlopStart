@@ -447,6 +447,7 @@ MV_S1    EQU -40                     ; fine scrolls of the two playfields
 MV_S2    EQU -42
 MV_LOC   EQU 42
 gfx_MakeVPort:
+        GTRACE  2
         movem.l d2-d7/a2-a6,-(sp)
         link    a5,#-MV_LOC
         move.l  a0,MV_VIEW(a5)
@@ -1379,6 +1380,7 @@ R_KIND   EQU 12                      ; 0 = fragment format, 1 = CopIns (UCopList
 R_LEFT   EQU 14                      ; UCopList: instructions left in the current CopList
 R_SIZE   EQU 16
 gfx_MrgCop:
+        GTRACE  1
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5                ; a5 = GfxBase
         move.l  a1,a2                ; a2 = View
@@ -1802,6 +1804,7 @@ gfx_sprmoves:
 ; (no system list overwrites the caller's hardware set-up any more) and the CPU resets the display registers to
 ; the system defaults. A program that only loads COP1LC afterwards finds the copper running.
 gfx_LoadView:
+        GTRACE  0
         move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view (0 if NULL)
         move.l  a1,d0
         beq.s   .lv_null             ; NULL view -> stop the system display

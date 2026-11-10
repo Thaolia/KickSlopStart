@@ -836,6 +836,7 @@ intuition_RemakeDisplay:
 ; display (issues #22 and #25: screen drag garbage). Outside a screen drag, the pointer may not go above the
 ; highest visible screen (IB_YMIN, §5.3). No screen: display off. Preserves everything but d0/d1/a0/a1.
 it_remake:
+        GTRACE  3
         movem.l d2-d4/a2/a4/a6,-(sp)
         lea     IB_VIEWLORD(a5),a2
         move.l  IB_GFXBASE(a5),a6
