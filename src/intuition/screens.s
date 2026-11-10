@@ -2267,10 +2267,8 @@ it_sysup:
         sub.w   WD_TOPEDGE(a3),d3
         tst.w   d3
         bmi.s   .su_out
-        moveq   #0,d0
-        move.b  WD_BORDERTOP(a3),d0
-        cmp.w   d0,d3
-        bge.s   .su_out              ; outside the title bar
+        cmp.w   #10,d3              ; gadget boxes stay ten lines high even with a smaller title border
+        bge.s   .su_out
         bsr     wn_sysat
         beq.s   .su_out
         move.w  (sp)+,d1             ; pressed gadget

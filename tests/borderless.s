@@ -19,7 +19,8 @@ _start:
         jsr     LVO_OPENLIBRARY(a6)
         move.l  d0,intbase
         beq     fail
-        move.l  d0,a6
+open_screen:
+        move.l  intbase(pc),a6
         lea     new_screen(pc),a0
         jsr     -198(a6)
         move.l  d0,a4
@@ -105,6 +106,9 @@ next_case:
         bne     fail
         btst    #8,d7
         beq.s   .close
+        move.w  #4,click_y
+        bsr     click_close
+        move.w  #9,click_y         ; last gadget row is clickable even when BorderTop is only nine
         bsr     click_close
 .close:
         move.l  intbase(pc),a6
@@ -155,17 +159,21 @@ click_close:
         move.w  #-32000,event+IE_X
         move.w  #-32000,event+IE_Y
         bsr     inject
-        moveq   #10,d0             ; close gadget at screen (5,34), twice the mouse delta per pixel
+        moveq   #10,d0             ; close gadget at screen X=5, twice the mouse delta per pixel
         muls    prefs+PF_PTRTICKS,d0
         move.w  d0,event+IE_X
-        moveq   #68,d0
+        moveq   #0,d0
+        move.w  WD_TOPEDGE(a3),d0
+        add.w   click_y(pc),d0
+        add.w   d0,d0
         muls    prefs+PF_PTRTICKS,d0
         move.w  d0,event+IE_Y
         bsr     inject
         move.w  #7,stage
         cmp.w   #5,WD_MOUSEX(a3)
         bne     fail
-        cmp.w   #4,WD_MOUSEY(a3)
+        move.w  click_y(pc),d0
+        cmp.w   WD_MOUSEY(a3),d0
         bne     fail
         move.w  #8,stage
         clr.l   event+IE_X
@@ -212,6 +220,18 @@ success:
         move.l  intbase(pc),a6
         move.l  a4,a0
         jsr     -66(a6)
+        tst.w   screen_case
+        bne.s   .complete
+        addq.w  #1,screen_case
+        lea     attr8(pc),a0
+        move.l  a0,new_screen+NS_FONT
+        bra     open_screen       ; repeat with a font smaller than the ten-line system gadgets
+.complete:
+        move.l  4.w,a6
+        move.l  intbase(pc),a1
+        jsr     LVO_CLOSELIBRARY(a6)
+        move.l  gfxbase(pc),a1
+        jsr     LVO_CLOSELIBRARY(a6)
         lea     ok(pc),a0
         bsr.s   puts
         movem.l (sp)+,d2-d7/a2-a6
@@ -246,6 +266,11 @@ new_window:
         dc.w    0,0,0,0,CUSTOMSCREEN
 modes:  dc.l    0,WINDOWCLOSE,WINDOWCLOSE|BACKDROP,$80000000
 title:  dc.b    "Test bar",0
+fontname: dc.b  "topaz.font",0
+        even
+attr8:  dc.l    fontname
+        dc.w    8
+        dc.b    0,0
 gfxname: dc.b   "graphics.library",0
 intname: dc.b   "intuition.library",0
 inputname: dc.b "input.device",0
@@ -258,6 +283,8 @@ intbase: dc.l   0
 colours: dc.l   0
 closes: dc.w    0
 stage:  dc.w    0
+click_y: dc.w   0
+screen_case: dc.w 0
 io:     dcb.b   48,0
 event:  dcb.b   IE_SIZEOF,0
 prefs:  dcb.b   PF_SIZE,0

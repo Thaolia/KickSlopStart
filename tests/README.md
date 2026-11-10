@@ -134,7 +134,9 @@ Balls demo; the pre-fix ROM passes the pixel checks but fails the small-copy tim
 `make test-intuition-borderless` (included through normal and quick Intuition groups) opens plain, close-only and
 BACKDROP borderless windows. It checks zero base borders, the screen-font-based top border, independently reads
 back title/gadget pixels and untouched interior pixels, refreshes the frame, then injects a real press/release
-through input.device and requires exactly one CLOSEWINDOW message. The authored fixture also passes on official
+through input.device and requires exactly one CLOSEWINDOW message per click. The cases repeat with the default
+font and explicit Topaz 8, clicking both the middle and last row of the ten-line close gadget; this catches release
+hit testing incorrectly clipped to a shorter title border. The authored fixture also passes on official
 Kickstart 1.3. The pre-fix production ROM fails the decorated-window geometry check. Success requires
 `BORDERLESS OK` and `BORDERLESS END`; failure records the stage. Logs/screenshots are in `build/borderless-results/`.
 

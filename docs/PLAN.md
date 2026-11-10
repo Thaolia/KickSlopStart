@@ -5,7 +5,8 @@
 Graphics/Intuition compatibility update (2026-11-10): borderless windows retain explicitly requested title bars
 and system gadgets, including close-button input. BorderTop uses the screen's requested font height in bordered
 and borderless windows. This restores Fred Fish #1's Balls control strip. Native `test-intuition-borderless`,
-in normal and quick Intuition groups, checks geometry, title/gadget pixels, frame refresh and a real close click;
+in normal and quick Intuition groups, checks geometry, title/gadget pixels, frame refresh and real close clicks,
+including the last gadget row with Topaz 8's shorter border;
 the fixture also passes on Kickstart 1.3.
 
 Graphics performance update (2026-11-10): identical-pixel bitmap operations reduce their Boolean minterms before
