@@ -143,6 +143,46 @@ Effects, in the observed order (p = internal copy):
    - The bit is set by the init, cleared by the first OpenLibrary ⇒ in practice **a single**
      adjustment, the one from system-configuration; later SetPrefs calls (Preferences) no longer
      touch it [D].
+   - **[O probe] RowSizeChange +16, ColumnSizeChange +32** (2026-11-10). Black-box run of the real
+     1.3 ROM under Amiberry (A500 preset, cycle-exact, 512K chip + 512K slow) booting a Workbench
+     1.3.3 disk whose system-configuration differs from the stock one only by these two bytes
+     (wb_Width/wb_Height 0, ViewXOffset/ViewYOffset 0); control = unmodified disk. Public fields
+     read with gdb once the Workbench was up:
+
+     | Field | control | +16/+32 |
+     |---|---|---|
+     | GfxBase NormalDisplayRows / NormalDisplayColumns | 256 / 640 | **272 / 672** |
+     | Workbench Screen Width / Height (LeftEdge/TopEdge 0) | 640 / 256 | **672 / 272** |
+     | Screen BitMap BytesPerRow / Rows | 80 / 256 | **84 / 272** |
+     | Screen ViewPort DWidth / DHeight / DxOffset / DyOffset | 640/256/0/0 | **672/272/0/0** |
+     | ViewPort Modes | $C000 (HIRES + SPRITES) | $C000 (HIRES + SPRITES) |
+     | IntuitionBase ViewLord DxOffset / DyOffset | 129 / 44 | 129 / 44 (unchanged) |
+     | Copper list built for the View (register values written) | DIWSTRT $0581, DIWSTOP $40C1, DDFSTRT $003C, DDFSTOP $00D0, BPL1MOD $0000 | DIWSTRT $0581, **DIWSTOP $40D1**, DDFSTRT $003C, **DDFSTOP $00D4**, **BPL1MOD $0004** |
+     | Pointer limit (IB MouseX / MouseY after a large right/down move) | 639 / 511 | **671 / 543** |
+
+     So the whole adjustment goes through: the Workbench screen is really opened 672 × 272,
+     the display window and data fetch are simply widened to the right (the left
+     edge and the View offsets do not move: nothing is re-centred), and the pointer is clamped
+     to the enlarged screen.
+     **What is displayed** (emulator picture, 752 px wide, compared with the control): the
+     playfield starts at the same left position and is **cut at exactly the same right position
+     as the 640-pixel control**: only the first 640 hi-res columns are shown. The rightmost 32
+     columns (the title-bar front gadget and half of the back gadget, the right part of the
+     disk icons and their labels) are missing; in their place, and up to the picture edge, the
+     border colour (colour 0) is shown, so nothing looks wrong apart from the clipped gadgets
+     and icons. Nothing of the hidden columns wraps to the left edge. The pointer sprite,
+     however, **is** visible to the right of that cut, up to the picture edge (at MouseX 637-657
+     it was drawn over the colour-0 area), and disappears completely at MouseX 671.
+     Vertically, with the screen starting on the usual line, the last lines of the 272-line
+     screen fall past the end of the PAL frame: the pointer was still partly drawn with its
+     tip around screen line 264 and invisible from about line 267 (MouseY 535) down; screen
+     lines from about 266 onwards are not shown.
+     Uncertain: why the playfield stops at 640 columns although the copper list asks for 672
+     (likely the hardware limit of the OCS data fetch / horizontal beam, since the display
+     window is still open for sprites there) is deduced, not proven; it was seen under the
+     emulator only, not on real hardware or an ECS Agnus. The exact last visible line was
+     estimated from the pointer sprite, not from playfield content (the bottom of the Workbench
+     backdrop is empty).
 4. **Workbench screen** (first screen in the list whose Type & $F = WBENCHSCREEN), if it exists:
    Screen.Font (+$28) := &IB+$35C; SetFont(&Screen.RastPort, DefaultFont);
    SetSoftStyle(&Screen.RastPort, style of IB+$35C, $FF); SetFont(rastport of the title bar

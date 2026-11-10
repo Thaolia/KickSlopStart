@@ -247,7 +247,9 @@ intuition_OpenScreen:
         lea     SC_VIEWPORT(a3),a0
         move.w  d4,vp_DWidth(a0)
         move.w  d5,vp_DHeight(a0)
-        move.w  NS_VIEWMODES(a2),vp_Modes(a0)
+        move.w  NS_VIEWMODES(a2),d0  ; SPRITES forced: the pointer's colours 17-19 are loaded (intuition-screens §2,
+        or.w    #V_SPRITES,d0        ; graphics-display §4.3)
+        move.w  d0,vp_Modes(a0)
         lea     SCX_RASINFO(a3),a1
         move.l  a1,vp_RasInfo(a0)
         lea     SCX_COLORMAP(a3),a1

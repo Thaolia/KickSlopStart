@@ -4187,6 +4187,17 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         move.l  (sp)+,DN_NEXT(a0)
                 ifeq    PROD            ; PROD: D3 test clients (d3c..d3j read kickslop/D3DTest/bigseg/BigData,
                                         ; absent from a real Workbench disk) -> out of prod; the DF0: MOUNT above stays
+        ; D3g: client proving CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). pri 5. CurrentDir/Input
+        ; round-trip, then pr_COS = console FileHandle (fh_Type = DOS_CONPORT); Write(Output(), marker) -> the
+        ; "DOS WRITE OK" marker is emitted BY the Write via con_handler (proves all 4 at once).
+        lea     d3g_cname(pc),a0
+        lea     d3g_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        jsr     td_disk_present      ; the others read the test disk: without a floppy their Open would raise the
+        tst.l   d0                   ; "No disk present" requester and hold the boot (the insert-disk screen follows)
+        beq     .d3c_nodisk
         lea     d3c_cname(pc),a0
         lea     d3c_client(pc),a1
         moveq   #4,d0                ; client pri 4 (blocks on packets; below echo/OFS)
@@ -4215,14 +4226,6 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3g: client proving CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). pri 5. CurrentDir/Input
-        ; round-trip, then pr_COS = console FileHandle (fh_Type = DOS_CONPORT); Write(Output(), marker) -> the
-        ; "DOS WRITE OK" marker is emitted BY the Write via con_handler (proves all 4 at once).
-        lea     d3g_cname(pc),a0
-        lea     d3g_client(pc),a1
-        moveq   #5,d0
-        move.l  #D3_STK,d1
-        jsr     proc_create
         ; D3h: client proving the LoadSeg cap-bump. Loads "bigseg" (> 16 KB) via LoadSeg(-150) + executes it:
         ; the binary checks a sentinel at the end of its big DATA and emits "LOADSEG BIG OK" if everything was read.
         lea     d3h_cname(pc),a0
@@ -4245,6 +4248,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+.d3c_nodisk:
                 endc                    ; end of the D3 test clients (PROD=0)
         ; --- E1: serial console handler (pri 6, like the OFS handler). INFRASTRUCTURE -> created unconditionally.
         ; The shell (Initial CLI, F1) is NOT created here: it is GATED on a bootable disk (.m6r_booted branch).

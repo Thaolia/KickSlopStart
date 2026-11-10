@@ -110,6 +110,8 @@ gfx_display_init:
         ; ViewPort (overscan 352x272)
         move.w  #GFX_BOOT_W,GFX_O_VP+vp_DWidth(a2)
         move.w  #GFX_BOOT_H,GFX_O_VP+vp_DHeight(a2)
+        move.w  #GFX_BOOT_DX,GFX_O_VP+vp_DxOffset(a2)
+        move.w  #GFX_BOOT_DY,GFX_O_VP+vp_DyOffset(a2)
         lea     GFX_O_RASINFO(a2),a0
         move.l  a0,GFX_O_VP+vp_RasInfo(a2)
         lea     GFX_O_COLORMAP(a2),a0

@@ -48,9 +48,11 @@ ERR_GLOBIN      EQU 111              ; Result2 of globin when a global exceeds G
 ERR_BADTEMPLATE EQU 120              ; Result2 of rdargs on error
 ACTION_MORE_CACHE EQU 18
 WF_BUFSZ        EQU 128              ; local output buffer of writef & co (flushed when full and at the end)
-CP_STKEXTRA     EQU 2048             ; 68000 stack margin of processes created by createproc and of handlers: our
+CP_STKEXTRA     EQU 1024             ; 68000 stack margin of processes created by createproc and of handlers: our
                                      ; runtime used at most 868 bytes at the top of a process stack (Shell, Background
-                                     ; CLI and RAM handler under dir/list/copy/execute, 2026-11-09)
+                                     ; CLI and RAM handler under dir/list/copy/execute, 2026-11-09; NEWCON 668 and
+                                     ; Background CLI 516 in a longer Shell session with requesters, 2026-11-10), and
+                                     ; more than 1,500 bytes of the BCPL part stay untouched below it
 RC_STKEXTRA     EQU 2048             ; same margin for the stack of a command (runcommand): with 4096, at least
                                      ; 5,088 bytes of it were never touched over 38 commands (startup-sequence, dir
                                      ; all, list, copy, execute, ed..., 2026-11-09)

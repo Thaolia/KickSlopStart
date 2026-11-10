@@ -65,16 +65,15 @@ held" qualifier bits of mouse events are not set yet.
   PLAN "Boot time (2026-11-09)".
 - Clock's speed parity with 1.3 is still open (PLAN "Drawing acceleration").
 
-### A6. Memory — [src], M
+### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
-- **Shell cost:** opening a Shell from the Workbench takes 36,000 bytes here (40,304 before, 47,152 at the start of
-  2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2). Execute now runs C:Run on the calling process's stack,
-  as 1.3 does (PLAN "Run on the caller's stack"). What is left of the 2.5 KB gap is the 68000 margin of the two BCPL
-  processes, the Background CLI and the NEWCON handler (2 × 2,048): measured after a busy Shell session, the
-  Background CLI never touched 2,780 bytes of its 5,244, so the margin cannot go entirely; its worst paths
-  (requesters raised by the Shell itself) are still to be measured.
-- **Idle desktop:** 873,352 bytes free, **12,360 above** 1.3 (860,992) since the 4-slot track cache and the
-  smaller stack margin.
+- **Shell cost:** opening a Shell from the Workbench takes 33,896 bytes here (35,944 before, 47,152 at the start of
+  2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2): `CP_STKEXTRA` 2048 -> 1024 for the Background CLI and
+  the NEWCON handler (and every other BCPL process or handler). Their 68000 side used at most 668 (NEWCON) and 516
+  (Background CLI) bytes in a long Shell session with a "No disk present" requester, `Run`, `type`, `copy`,
+  `newshell`/`endcli` (868 at most in the 2026-11-09 measurement), and more than 1,500 bytes of their BCPL part stay
+  untouched under that. The remaining 416 bytes are not chased further.
+- **Idle desktop:** 1,024 bytes more than before (the RAM handler's stack): about 13,384 above 1.3 (860,992).
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
 ### A7. Workbench 1.2 Lines and Clock — [doc], S–M
@@ -161,13 +160,13 @@ NextSelect chain, MENUTOGGLED, MutualExclude, drag-selection with the left butto
 (intuition-input-menus §3.6-§3.9), checked with `tests/menucat.s` against the §5 vectors (steps 3-5). Left: the
 working flags are not reset when a window is activated (only when a menu opens).
 
-### C4. Display — [doc], M–L
+### C4. Display — [doc], M–L (window and colours done 2026-11-10)
 
-- DIW/DDF come from three fixed windows, so other DWidths and left/right clipping are ignored.
-- The colour count is min(Count, 32) instead of the ncol rule.
-- MrgCop copies fragments whole instead of interleaving their WAITs by line.
-- The pointer moves in non-interlaced lines on LACE screens.
-- The 272-line boot picture is cut on NTSC.
+- DIW/DDF, fine scroll, clipping, modulos and the colour count (ncol, SPRITES colours) follow graphics-display
+  §4.2-4.4: done 2026-11-10 (`tests/mvport_probe.sh`, the 13 probed rows equal).
+- The pointer counts interlaced lines since the high-resolution pointer units (2026-11-09, v0.2.35).
+- Left: MrgCop copies fragments whole instead of interleaving their WAITs by line.
+- Left: the 272-line insert-disk picture is cut on NTSC.
 - Source: PLAN "HAM/dual playfield", "Issue #19"; custom-chips §7.0.
 
 ### C5. exec scheduling — [src] partly, S–M
@@ -184,9 +183,9 @@ AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
 The strap runs in the initial task, in user mode with multitasking on, as on 1.3; a floppy inserted on the
 insert-disk screen gets a new attempt without a reset; a bootblock returning D0 ≠ 0 gets Alert $30000001 before
 the insert-disk screen (uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: shows that alert once per
-soft-kicked boot, as 1.3 would. Left (seen 2026-11-10): the dev ROM booted with no disk at all never reaches the
-insert-disk screen (no M6S marker, garbled serial output; the production ROM does), already before the new screen;
-its boot self-tests seem to expect a disk.
+soft-kicked boot, as 1.3 would. The dev ROM booted with no disk at all reaches the insert-disk screen too since
+2026-11-10: its D3 test clients, which read files of the test disk, are created only when a floppy is present
+(before, their Open raised the "No disk present" requester and held the boot).
 
 ### C7. Drives and file system — [src] partly, S
 
@@ -226,9 +225,10 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
   the RAWKEY / VANILLAKEY copies.
 - it_scrxy's TopEdge and the menu texts' character width: already handled (screen chosen by TopEdge since the stacked
   screens of 2026-11-03; menus in the screen font with the native `test-intuition-menufont` since PR #29).
-- Preferences: RowSizeChange applied once (system-configuration) to NormalDisplayRows and the pointer bound, done
-  2026-11-10 (Workbench screen 272 lines with +16). Left: ColumnSizeChange, which needs MakeVPort to open a
-  high-resolution window wider than 640 (the Workbench screen and the pointer already take NormalDisplayColumns).
+- Preferences: RowSizeChange and ColumnSizeChange applied once (system-configuration) to NormalDisplayRows/Columns,
+  the Workbench screen and the pointer bounds, done 2026-11-10 (+16/+32: screen 672 × 272, pointer to 671 × 543,
+  only 640 columns displayed with the default ViewXOffset; the real 1.3 shows the same, probed the same day:
+  intuition-prefs §3.3).
 
 ### C10. graphics leftovers — S each
 
@@ -375,7 +375,6 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
    paths before cutting).
-2. **C9, the last item** (Preferences ColumnSizeChange, with a wider high-resolution MakeVPort window).
-A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine, string gadgets, IDCMP ports,
-REFRESHWINDOW, activation messages) and the ADF sweep are done;
+2. **C4, the rest** (MrgCop interleaving fragments by line; the insert-disk picture on NTSC).
+A5, A6, C1, C2, C3, C4 (window, colours), C5 (main part), C6, C7 (main part), C8, C9 and the ADF sweep are done;
 D1/D3 are specified.

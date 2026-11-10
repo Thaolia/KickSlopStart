@@ -27,6 +27,12 @@ with gdb: **873,352** free (871,304 before; the RAM handler's stack), **12,360 a
 from the Workbench now takes 36,000 bytes (47,152, 43,096, then 40,304 before; 1.3: 33,480, newshell-memory-v34 §2).
 docs/PLAN.md "Shell stack margin (2026-11-09)", "Shell memory (2026-11-09)" and "Run on the caller's stack".
 
+**Update (2026-11-10): process stack margin 2048 -> 1024.** Opening a Shell from the Workbench (production ROM, sum
+of the MemHeaders with gdb, disk window open before and after): 33,896 bytes against 35,944 with 2048 (1.3: 33,480).
+At idle the RAM handler's stack gives 1,024 more. High-water marks with a pattern-filled stack: NEWCON 668 and
+Background CLI 516 bytes on the 68000 side after a long Shell session with a requester. docs/PLAN.md "Shell stack
+margin 1024 (2026-11-10)".
+
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
 RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 465,360 bytes free at idle against

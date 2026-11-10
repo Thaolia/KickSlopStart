@@ -1,5 +1,13 @@
 # Tests & test bench
 
+## MakeVPort window probe
+
+`tests/mvport_probe.sh <out_dir> [rom]` runs `tests/mvport_probe.s` (CLI command, our ROM under Amiberry): for each of
+the 13 probed configurations of `docs/analysis/graphics-display-v34.md` §4.4 it calls MakeVPort and prints the
+copper fragment; `tests/mvport_check.py` decodes DIWSTRT/DIWSTOP, DDFSTRT/DDFSTOP, BPLCON1, the modulos, the plane
+pointers, the BPLCON0 at the top of the ViewPort, the number of colours and the lead-in line, and compares them with
+the spec. Success: `MVPORT OK`.
+
 ## Native rectangle-pen regression
 
 `make test-graphics-rectpens` (also included through the normal and quick Graphics groups) supplies per-plane

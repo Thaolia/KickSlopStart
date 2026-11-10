@@ -417,8 +417,9 @@ GFX_COPINIT_END  EQU 8               ; offset of the final WAIT: the empty list 
 ; planes off - DIW (vertical window open from line 5 to $140, BPLCON0 cuts each ViewPort out), DDF, BPLCON0-2,
 ; modulos, one BPLxPT per plane, the colours -; then WAIT(top) + BPLCON0 on, the user instructions, WAIT(bottom) +
 ; BPLCON0 off. Lines are relative to the top of the ViewPort: MrgCop adds View.DyOffset + vp.DyOffset, so moving a
-; ViewPort only needs MrgCop. Horizontal window by mode: HIRES 640 px; low resolution 320 px, or overscan 352x272
-; (top 8 lines higher) if DWidth > 320. An existing fragment is reused.
+; ViewPort only needs MrgCop. Horizontal window from DWidth, vp.DxOffset, View.DxOffset and RxOffset (mv_horz, §4.4:
+; right and left clipping, fine scroll, fetch). Colours: ncol (§4.2), plus COLOR16.. with SPRITES. An existing
+; fragment is reused.
 ; Modes: BPLCON0 takes HIRES, HAM and DUALPF from vp.Modes, BPLCON2 takes PFBA. DUALPF with RasInfo->Next: playfield 1
 ; (RasInfo) feeds BPL1/3/5, playfield 2 (Next) BPL2/4/6, each with its own scroll (BPLCON1 low/high nibble), modulo
 ; and offset; the one that starts fetching later gets the common DDFSTRT and fetches one word more (§4.4). Depth
@@ -427,31 +428,27 @@ GFX_COPINIT_END  EQU 8               ; offset of the final WAIT: the empty list 
 ; View's LACE bit; with View and vp LACE the modulo skips the other field's line and MrgCop gives the short-frame
 ; list the plane pointers + BytesPerRow.
 MV_OFF   EQU -2                      ; BPLCON0 with the planes off
-MV_TOP   EQU -4                      ; top line of the ViewPort (relative)
-MV_DDF   EQU -6
+MV_DDF   EQU -4                      ; DDFSTRT
+MV_DDFE  EQU -6                      ; DDFSTOP
 MV_MOD1  EQU -8
 MV_MOD2  EQU -10
 MV_CON1  EQU -12                     ; BPLCON1
-MV_DIWE  EQU -14                     ; DIWSTOP
-MV_DEPTH EQU -16                     ; planes, both playfields
-MV_OFF1  EQU -20                     ; plane offsets
-MV_OFF2  EQU -24
-MV_BM2   EQU -28                     ; BitMap of playfield 2 | 0
-MV_XS    EQU -30                     ; horizontal shift x' = vp.DxOffset (halved in HIRES) + View.DxOffset - $81
-MV_DD    EQU -32                     ; DDFSTRT/DDFSTOP change for that shift
-MV_LOC   EQU 32
+MV_DIWS  EQU -14                     ; horizontal start and stop of the display window
+MV_DIWE  EQU -16
+MV_DEPTH EQU -18                     ; planes, both playfields
+MV_OFF1  EQU -22                     ; plane offsets
+MV_OFF2  EQU -26
+MV_BM2   EQU -30                     ; BitMap of playfield 2 | 0
+MV_VIEW  EQU -34
+MV_GFX   EQU -38                     ; GfxBase
+MV_S1    EQU -40                     ; fine scrolls of the two playfields
+MV_S2    EQU -42
+MV_LOC   EQU 42
 gfx_MakeVPort:
         movem.l d2-d7/a2-a6,-(sp)
         link    a5,#-MV_LOC
-        move.w  vp_DxOffset(a1),d0   ; horizontal position (spec graphics-display §4.4)
-        tst.w   vp_Modes(a1)
-        bpl.s   .mv_xl
-        asr.w   #1,d0
-.mv_xl:
-        add.w   v_DxOffset(a0),d0
-        sub.w   #$81,d0
-        move.w  d0,MV_XS(a5)
-        clr.w   MV_DD(a5)
+        move.l  a0,MV_VIEW(a5)
+        move.l  a6,MV_GFX(a5)
         move.w  v_Modes(a0),d0
         and.w   #V_LACE,d0
         or.w    #GFX_COLOR_BIT,d0
@@ -478,13 +475,8 @@ gfx_MakeVPort:
         move.l  d0,MV_BM2(a5)
         move.w  d1,MV_DEPTH(a5)
         lea     4(a3),a1             ; a1 = write pointer, after the header (0: not merged)
-        bsr     gfx_vpwin
-        move.w  d1,MV_DIWE(a5)
-        moveq   #0,d3
-        move.b  (a0),d3
-        sub.w   #$2C,d3
         moveq   #-1,d0               ; lead-in line L0: -2 with more than 4 planes (not DUALPF), or more than 3
-        move.w  MV_DEPTH(a5),d1      ; with SPRITES
+        move.w  MV_DEPTH(a5),d1      ; with SPRITES; doubled for a LACE vp
         cmp.w   #4,d1
         bls.s   .mv_l0s3
         btst    #2,vp_Modes(a2)      ; DUALPF ($0400)
@@ -497,89 +489,113 @@ gfx_MakeVPort:
 .mv_l0m2:
         moveq   #-2,d0
 .mv_l0:
-        add.w   d3,d0
         btst    #2,vp_Modes+1(a2)    ; LACE vp: interlaced lines
         beq.s   .mv_l0s
-        add.w   d3,d3
         add.w   d0,d0
 .mv_l0s:
-        move.w  d3,MV_TOP(a5)        ; 0; -8 in overscan; doubled if LACE
         moveq   #0,d1
         bsr     gfx_pwait
-        move.w  #DIWSTRT-CUSTOM,(a1)+
-        move.w  (a0)+,d0             ; a0 -> DDFSTRT entry of the window table
-        add.w   MV_XS(a5),d0
-        and.w   #$00FF,d0
-        or.w    #$0500,d0
-        move.w  d0,(a1)+
         move.l  a1,-(sp)
+        moveq   #0,d5                ; horizontal window of playfield 1 (with the scroll of playfield 2 for xmax)
+        tst.l   MV_BM2(a5)
+        beq.s   .mv_h1
         move.l  vp_RasInfo(a2),a1
-        bsr     gfx_scrollri         ; playfield 1
+        move.l  ri_Next(a1),a1
+        bsr     mv_sraw
+        move.w  d0,d5
+.mv_h1:
+        move.l  vp_RasInfo(a2),a1
+        bsr     mv_horz
         move.w  d0,MV_DDF(a5)
+        move.w  d1,MV_DDFE(a5)
+        move.w  d2,MV_S1(a5)
+        move.w  d2,MV_S2(a5)
+        move.w  d3,MV_DIWS(a5)
+        move.w  d4,MV_DIWE(a5)
+        move.l  d7,MV_OFF1(a5)
+        move.l  d7,MV_OFF2(a5)
+        move.l  MV_BM2(a5),d0
+        beq.s   .mv_fetch
+        move.l  vp_RasInfo(a2),a1    ; playfield 2
+        bsr     mv_sraw
+        move.w  d0,d5
+        move.l  ri_Next(a1),a1
+        move.l  a4,-(sp)
+        move.l  MV_BM2(a5),a4
+        bsr     mv_horz
+        move.l  (sp)+,a4
+        move.w  d2,MV_S2(a5)
+        move.l  d7,MV_OFF2(a5)
+        cmp.w   MV_S1(a5),d2
+        beq.s   .mv_same
+        subq.w  #1,MV_DIWE(a5)       ; different scrolls: one pixel less on the right
+.mv_same:
+        moveq   #2,d6                ; the playfield that starts fetching later fetches one word earlier
+        tst.w   vp_Modes(a2)
+        bpl.s   .mv_step
+        moveq   #4,d6
+.mv_step:
+        cmp.w   MV_DDF(a5),d0
+        beq.s   .mv_stop
+        bhi.s   .mv_pf2late
+        sub.l   d6,MV_OFF1(a5)
+        move.w  d0,MV_DDF(a5)
+        bra.s   .mv_stop
+.mv_pf2late:
+        sub.l   d6,MV_OFF2(a5)
+.mv_stop:
+        cmp.w   MV_DDFE(a5),d1
+        bls.s   .mv_fetch
+        move.w  d1,MV_DDFE(a5)
+.mv_fetch:
+        move.w  MV_DDFE(a5),d2       ; bytes fetched per line: HIRES ((STOP - STRT) / 2 + 6) & ~3, LORES
+        sub.w   MV_DDF(a5),d2        ; (STOP - STRT) / 4 + 2; modulo = BytesPerRow - that (§4.4 point 9)
+        tst.w   vp_Modes(a2)
+        bpl.s   .mv_flo
+        lsr.w   #1,d2
+        addq.w  #6,d2
+        and.w   #~3,d2
+        bra.s   .mv_fset
+.mv_flo:
+        lsr.w   #2,d2
+        addq.w  #2,d2
+.mv_fset:
+        move.w  bm_BytesPerRow(a4),d6
+        sub.w   d2,d6
         move.w  MV_OFF(a5),d0
         bsr     gfx_lacemod
         move.w  d6,MV_MOD1(a5)
         move.w  d6,MV_MOD2(a5)
-        swap    d6
-        move.w  d6,MV_CON1(a5)
-        move.l  d7,MV_OFF1(a5)
-        move.l  MV_BM2(a5),d1
-        beq.s   .mv_set
-        move.l  vp_RasInfo(a2),a1    ; playfield 2
-        move.l  ri_Next(a1),a1
+        move.l  MV_BM2(a5),d0
+        beq.s   .mv_con
         move.l  a4,-(sp)
-        move.l  d1,a4
-        bsr     gfx_scrollri
-        move.w  MV_OFF(a5),d1
-        exg     d0,d1
+        move.l  d0,a4
+        move.w  bm_BytesPerRow(a4),d6
+        sub.w   d2,d6
+        move.w  MV_OFF(a5),d0
         bsr     gfx_lacemod
-        move.l  (sp)+,a4
         move.w  d6,MV_MOD2(a5)
-        move.l  d7,MV_OFF2(a5)
-        swap    d6                   ; BPLCON1 = s1 | s2 << 4
-        and.w   #$00F0,d6
-        move.w  MV_CON1(a5),d2
-        and.w   #$000F,d2
-        or.w    d2,d6
-        move.w  d6,MV_CON1(a5)
-        lsr.w   #4,d6
-        cmp.b   d6,d2
-        beq.s   .mv_same
-        subq.w  #1,MV_DIWE(a5)       ; different scrolls: one pixel less on the right
-.mv_same:
-        moveq   #2,d2                ; one more word fetched by the later playfield
-        tst.w   vp_Modes(a2)
-        bpl.s   .mv_step
-        moveq   #4,d2
-.mv_step:
-        cmp.w   MV_DDF(a5),d1        ; d1 = DDFSTRT of playfield 2
-        beq.s   .mv_set
-        bhi.s   .mv_pf2late
-        move.w  d1,MV_DDF(a5)        ; playfield 1 starts later
-        sub.w   d2,MV_MOD1(a5)
-        sub.l   d2,MV_OFF1(a5)
-        bra.s   .mv_set
-.mv_pf2late:
-        sub.w   d2,MV_MOD2(a5)
-        sub.l   d2,MV_OFF2(a5)
-.mv_set:
-        move.w  MV_XS(a5),d0
-        beq.s   .mv_xs0
-        bsr     mv_hshift
-.mv_xs0:
+        move.l  (sp)+,a4
+.mv_con:
+        move.w  MV_S2(a5),d0         ; BPLCON1 = s1 | s2 << 4
+        lsl.w   #4,d0
+        or.w    MV_S1(a5),d0
+        move.w  d0,MV_CON1(a5)
         move.l  (sp)+,a1
+        move.w  #DIWSTRT-CUSTOM,(a1)+
+        move.w  MV_DIWS(a5),d0
+        and.w   #$00FF,d0
+        or.w    #$0500,d0
+        move.w  d0,(a1)+
         move.w  #DIWSTOP-CUSTOM,(a1)+
         move.w  MV_DIWE(a5),d0
-        add.w   MV_XS(a5),d0
         and.w   #$00FF,d0
         or.w    #$4000,d0
         move.w  d0,(a1)+
         move.w  #DDFSTRT-CUSTOM,(a1)+
         move.w  MV_DDF(a5),(a1)+
         move.w  #DDFSTOP-CUSTOM,(a1)+
-        move.w  2(a0),d0
-        add.w   MV_DD(a5),d0
-        move.w  d0,(a1)+
+        move.w  MV_DDFE(a5),(a1)+
         move.w  #BPLCON0-CUSTOM,(a1)+
         move.w  MV_OFF(a5),(a1)+     ; planes off until the top of the ViewPort
         move.w  #BPLCON1-CUSTOM,(a1)+
@@ -624,22 +640,56 @@ gfx_MakeVPort:
         addq.w  #1,d4
         bra.s   .mv_plane
 .mv_planes:
-        ; colours: cm_Count MOVEs COLOR00..COLOR(Count-1), at most 32
-        move.l  vp_ColorMap(a2),a0
-        move.w  cm_Count(a0),d4      ; d4 = number of colours
-        cmp.w   #32,d4
-        bls.s   .mv_ncol
-        moveq   #32,d4
+        ; colours (§4.2-4.3): ncol = 16 with HAM or DUALPF, otherwise 1 << min(depth, 5), emitted whatever Count is;
+        ; with SPRITES and fewer than 5 planes also COLOR16..COLOR(Count-1) (Count at most 32; 32 without ColorMap)
+        lea     gfx_defcolors(pc),a0
+        moveq   #32,d5               ; d5 = Count
+        move.l  vp_ColorMap(a2),d0
+        beq.s   .mv_ctab
+        move.l  d0,a0
+        move.w  cm_Count(a0),d5
+        cmp.w   #32,d5
+        bls.s   .mv_cnt
+        moveq   #32,d5
+.mv_cnt:
+        move.l  cm_ColorTable(a0),a0
+.mv_ctab:
+        move.l  a0,d2                ; d2 = colour table
+        moveq   #16,d4               ; d4 = ncol
+        move.w  vp_Modes(a2),d0
+        and.w   #V_HAM|V_DUALPF,d0
+        bne.s   .mv_ncol
+        move.w  MV_DEPTH(a5),d0
+        cmp.w   #5,d0
+        bls.s   .mv_nd
+        moveq   #5,d0
+.mv_nd:
+        moveq   #1,d4
+        lsl.w   d0,d4
 .mv_ncol:
-        move.l  cm_ColorTable(a0),a0 ; a0 = ColorTable
-        move.w  #COLOR00-CUSTOM,d3   ; d3 = offset of the current COLORxx register
-.mv_color:
+        move.w  #COLOR00-CUSTOM,d3
+        bsr.s   .mv_cols
+        btst    #6,vp_Modes(a2)      ; SPRITES: the sprite colours too
+        beq.s   .mv_cend
+        cmp.w   #5,MV_DEPTH(a5)
+        bhs.s   .mv_cend
+        move.w  d5,d4
+        sub.w   #16,d4
+        ble.s   .mv_cend
+        move.l  d2,a0
+        lea     32(a0),a0
+        move.w  #COLOR00-CUSTOM+32,d3
+        bsr.s   .mv_cols
+        bra.s   .mv_cend
+.mv_cols:                            ; d4 colours from (a0) into COLOR registers from d3
         move.w  d3,(a1)+
-        move.w  (a0)+,(a1)+          ; COLORxx = ColorTable[xx]
+        move.w  (a0)+,(a1)+
         addq.w  #2,d3
         subq.w  #1,d4
-        bne.s   .mv_color
-        move.w  MV_TOP(a5),d0        ; top of the ViewPort: planes on
+        bne.s   .mv_cols
+        rts
+.mv_cend:
+        moveq   #0,d0                ; top of the ViewPort: planes on
         moveq   #0,d1
         bsr     gfx_pwait
         move.w  MV_DEPTH(a5),d2
@@ -652,8 +702,7 @@ gfx_MakeVPort:
         move.w  #BPLCON0-CUSTOM,(a1)+
         move.w  d2,(a1)+
         bsr     gfx_ucopemit         ; user instructions (vp_UCopIns)
-        move.w  MV_TOP(a5),d0        ; bottom of the ViewPort: planes off
-        add.w   vp_DHeight(a2),d0
+        move.w  vp_DHeight(a2),d0    ; bottom of the ViewPort: planes off
         moveq   #0,d1
         bsr     gfx_pwait
         move.w  #BPLCON0-CUSTOM,(a1)+
@@ -781,126 +830,153 @@ gfx_pwait:
         clr.w   (a1)+
         rts
 
-; mv_hshift(d0 = x' != 0, a2 = vp, a5 = MakeVPort frame): the display window moves by x' (low-resolution pixels):
-; DDFSTRT/DDFSTOP by (x' >> 1) & ~7 (HIRES ~3), the rest by the fine scroll, s := (x' & m) + s with m = 15 (HIRES
-; 7); past m it wraps and the extra word fetched for the RasInfo scroll is no longer needed (spec graphics-display
-; §4.4 steps 3-6). With two playfields each scroll wraps and the common fetch is kept. Clobbers d0-d3.
-mv_hshift:
-        moveq   #15,d2               ; d2 = m
-        moveq   #-8,d1
+; mv_sraw(a1 = RasInfo, a2 = vp) -> d0.w = fine scroll the RasInfo asks for: (-RxOffset) & 15, in HIRES
+; (-(RxOffset >> 1)) & 7 (spec graphics-display §4.4 point 1). Preserves the rest.
+mv_sraw:
+        move.w  ri_RxOffset(a1),d0
         tst.w   vp_Modes(a2)
-        bpl.s   .hs_lo
-        moveq   #7,d2
-        moveq   #-4,d1
-.hs_lo:
-        move.w  d0,d3
+        bpl.s   .sr_lo
+        asr.w   #1,d0
+        neg.w   d0
+        and.w   #7,d0
+        rts
+.sr_lo:
+        neg.w   d0
+        and.w   #15,d0
+        rts
+
+; mv_horz(a1 = RasInfo, a2 = vp, a4 = its BitMap, a5 = MakeVPort frame, d5.w = scroll of the other playfield | 0)
+; -> d0 = DDFSTRT, d1 = DDFSTOP, d2 = fine scroll, d3/d4 = horizontal start/stop of the display window, d7 = plane
+; offset (spec graphics-display §4.4 points 1-10: w, x and rx halved in HIRES; right clipping at MaxDisplayColumn,
+; 10 earlier with a scroll; the shift of the window folded into the fine scroll; one more word fetched for a scroll;
+; left clipping at MinDisplayColumn / 2 by moving the start right and starting again; DDFSTOP capped at $D8, $D4 in
+; HIRES). Clobbers d6/a0.
+mv_horz:
+        movem.l d5/a1,-(sp)
+        lea     -6(sp),sp            ; w, x, rx before halving (moved by the left clipping)
+        move.w  vp_DWidth(a2),(sp)
+        move.w  vp_DxOffset(a2),2(sp)
+        move.w  ri_RxOffset(a1),4(sp)
+.hz_again:
+        move.w  (sp),d4              ; d4 = w
+        move.w  2(sp),d3             ; d3 = x
+        move.w  4(sp),d1             ; d1 = rx
+        moveq   #15,d6               ; d6 = m
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_lo
+        asr.w   #1,d4
         asr.w   #1,d3
-        and.w   d1,d3
-        move.w  d3,MV_DD(a5)
-        add.w   d3,MV_DDF(a5)
-        and.w   d2,d0                ; d0 = x' & m
-        move.w  MV_CON1(a5),d1
-        and.w   #15,d1               ; d1 = scroll of playfield 1
-        move.w  d1,d3
-        add.w   d0,d3
-        cmp.w   d2,d3
-        bls.s   .hs_s1
-        and.w   d2,d3
-        tst.l   MV_BM2(a5)
-        bne.s   .hs_s1
-        tst.w   d1                   ; the RasInfo scroll's extra word is given back
-        beq.s   .hs_s1
-        addq.w  #8,MV_DDF(a5)
-        addq.w  #2,MV_MOD1(a5)
-        tst.w   vp_Modes(a2)
-        bpl.s   .hs_s1
-        addq.w  #2,MV_MOD1(a5)
-        addq.l  #2,MV_OFF1(a5)
-.hs_s1:
-        tst.l   MV_BM2(a5)
-        bne.s   .hs_dpf
-        move.w  MV_MOD1(a5),MV_MOD2(a5)
-        move.w  d3,d1
-        lsl.w   #4,d1
-        or.w    d3,d1
-        move.w  d1,MV_CON1(a5)
-        rts
-.hs_dpf:
-        move.w  MV_CON1(a5),d1
-        lsr.w   #4,d1
-        and.w   #15,d1
-        add.w   d0,d1
-        and.w   d2,d1
-        lsl.w   #4,d1
-        or.w    d3,d1
-        move.w  d1,MV_CON1(a5)
-        rts
-
-; gfx_vpwin(vp a2) -> a0 = window table (DIWSTRT, DDFSTRT, DDFSTOP, bytes fetched per row), d1 = DIWSTOP whose
-; low byte is the horizontal stop. HIRES 640 px; low resolution 320 px, or overscan 352x272 if DWidth > 320.
-gfx_vpwin:
-        lea     gfx_win_over(pc),a0
-        move.w  #GFX_DIWSTOP,d1
-        tst.w   vp_Modes(a2)
-        bpl.s   .vw_lo
-        lea     gfx_win_hires(pc),a0
-        bra.s   .vw_std
-.vw_lo:
-        cmp.w   #320,vp_DWidth(a2)
-        bhi.s   .vw_ret
-        lea     gfx_win_lores(pc),a0
-.vw_std:
-        move.w  #$00C1,d1
-.vw_ret:
-        rts
-
-; gfx_scrollri(a0 = DDFSTRT entry of the window table, a1 = RasInfo, a2 = vp, a4 = its BitMap) -> d0.w = DDFSTRT,
-; d6 = BPLCON1 (high word) : modulo (low word), d7.l = plane offset. RxOffset/RyOffset as in graphics-display §4.4:
-; offset = RyOffset * BytesPerRow + 2 * (rx >> 4) (HIRES: rx halved, >> 3); a fine scroll s = (-rx) & 15 (7 in
-; HIRES) fetches one more word: DDFSTRT - 8, modulo - 2 (HIRES - 4, offset - 2), BPLCON1 = s | s << 4.
-gfx_scrollri:
-        movem.l d1-d2/a1,-(sp)
-        move.w  bm_BytesPerRow(a4),d7
-        muls    ri_RyOffset(a1),d7
-        move.w  bm_BytesPerRow(a4),d6
-        sub.w   4(a0),d6
-        move.w  (a0),d0
-        move.w  ri_RxOffset(a1),d1
-        tst.w   vp_Modes(a2)
-        bmi.s   .sp_hi
-        move.w  d1,d2
-        asr.w   #4,d2
-        add.w   d2,d2
-        ext.l   d2
-        add.l   d2,d7
-        neg.w   d1
-        and.w   #15,d1
-        beq.s   .sp_set
-        subq.w  #8,d0
-        subq.w  #2,d6
-        bra.s   .sp_fine
-.sp_hi:
         asr.w   #1,d1
+        moveq   #7,d6
+.hz_lo:
         move.w  d1,d2
-        asr.w   #3,d2
-        add.w   d2,d2
-        ext.l   d2
-        add.l   d2,d7
-        neg.w   d1
-        and.w   #7,d1
-        beq.s   .sp_set
+        neg.w   d2
+        and.w   d6,d2                ; d2 = s
+        move.l  MV_GFX(a5),a0
+        move.w  gb_MaxDisplayColumn(a0),d0
+        tst.w   d2
+        bne.s   .hz_sx
+        tst.w   d5
+        beq.s   .hz_xm
+.hz_sx:
+        sub.w   #10,d0               ; xmax
+.hz_xm:
+        move.l  MV_VIEW(a5),a0
+        add.w   v_DxOffset(a0),d3    ; d3 = x on the screen
+        move.w  d3,d7
+        add.w   d4,d7
+        cmp.w   d0,d7
+        ble.s   .hz_w
+        move.w  d0,d4                ; right clipping
+        sub.w   d3,d4
+.hz_w:
+        moveq   #0,d5
+        tst.w   d2
+        sne     d5                   ; d5 = S (one more word fetched)
+        move.w  bm_BytesPerRow(a4),d7 ; offset = RyOffset x BytesPerRow + 2 x (rx >> 4, >> 3 in HIRES)
+        muls    ri_RyOffset(a1),d7
+        move.w  d1,d0
+        asr.w   #4,d0
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_ox
+        move.w  d1,d0
+        asr.w   #3,d0
+.hz_ox:
+        add.w   d0,d0
+        ext.l   d0
+        add.l   d0,d7
+        sub.w   #$81,d3              ; d3 = x'
+        move.w  d3,d0                ; s += x' & m; past m it wraps and the extra word is not needed
+        and.w   d6,d0
+        add.w   d0,d2
+        cmp.w   d6,d2
+        bls.s   .hz_s
+        and.w   d6,d2
+        moveq   #0,d5
+.hz_s:
+        moveq   #$38,d0              ; d0 = B
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_b
+        moveq   #$3C,d0
+.hz_b:
+        tst.b   d5
+        beq.s   .hz_bs
         subq.w  #8,d0
-        subq.w  #4,d6
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_bs
         subq.l  #2,d7
-.sp_fine:
-        move.w  d1,d2
-        lsl.w   #4,d2
-        or.w    d2,d1
-.sp_set:
-        swap    d6
-        move.w  d1,d6
-        swap    d6
-        movem.l (sp)+,d1-d2/a1
+.hz_bs:
+        move.w  d3,d5                ; DDFSTRT = B + ((x' >> 1) & ~7, ~3 in HIRES)
+        asr.w   #1,d5
+        and.w   #~7,d5
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_st
+        move.w  d3,d5
+        asr.w   #1,d5
+        and.w   #~3,d5
+.hz_st:
+        add.w   d5,d0
+        move.l  MV_GFX(a5),a0
+        move.w  gb_MinDisplayColumn(a0),d5
+        lsr.w   #1,d5
+        cmp.w   d5,d0
+        bge.s   .hz_stop
+        sub.w   d0,d5                ; left clipping: d = 2 x gap (x 2 again in HIRES), then again
+        add.w   d5,d5
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_d
+        add.w   d5,d5
+.hz_d:
+        add.w   d5,4(sp)
+        add.w   d5,2(sp)
+        sub.w   d5,(sp)
+        bra     .hz_again
+.hz_stop:
+        move.w  d4,d5                ; DDFSTOP = (((w + 15) >> 1) & ~7) + DDFSTRT - (rx & m ? 0 : 8)
+        add.w   #15,d5
+        asr.w   #1,d5
+        and.w   #~7,d5
+        add.w   d0,d5
+        and.w   d6,d1
+        bne.s   .hz_e
+        subq.w  #8,d5
+.hz_e:
+        cmp.w   #$D8,d5
+        ble.s   .hz_e1
+        move.w  #$D8,d5
+.hz_e1:
+        tst.w   vp_Modes(a2)
+        bpl.s   .hz_e2
+        subq.w  #4,d5
+        cmp.w   #$D4,d5
+        ble.s   .hz_e2
+        move.w  #$D4,d5
+.hz_e2:
+        move.w  d5,d1
+        add.w   #$81,d3              ; display window: x, x + w
+        add.w   d3,d4
+        lea     6(sp),sp
+        movem.l (sp)+,d5/a1
         rts
 
 ; gfx_fragmst(vp a0) -> d0 = address in the displayed master list where MrgCop put the ViewPort's fragment (its
@@ -1139,15 +1215,6 @@ gfx_SetRGB4:
 .sr_ret:
         movem.l (sp)+,d2-d3
         rts
-
-; PAL display windows: DIWSTRT, DDFSTRT, DDFSTOP, bytes fetched per row (DIWSTOP: fixed in overscan, otherwise
-; computed from DHeight)
-gfx_win_over:
-        dc.w    GFX_DIWSTRT,GFX_DDFSTRT,GFX_DDFSTOP,GFX_BOOT_BYTES
-gfx_win_lores:
-        dc.w    $2C81,$0038,$00D0,40
-gfx_win_hires:
-        dc.w    $2C81,$003C,$00D4,80
 
 ; gfx_FreeVPortCopLists(vp a0): frees the ViewPort's copper fragment (vp_DspIns := 0).
 gfx_FreeVPortCopLists:

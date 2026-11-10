@@ -1580,13 +1580,33 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   its ghost pattern outside the 7 cleared cells, as the spec's screenshot. `tests/iwin_probe.sh` unchanged but for
   addresses. prepush-check (dev) FAIL=0 twice (one earlier run under heavy host load missed the Lemmings menu, a
   direct rerun and two later runs showed it).
+  **Generic MakeVPort window, ColumnSizeChange (2026-11-10)**: REMAINING-WORK C4 and the last C9 item; ARCHITECTURE
+  "Generic MakeVPort window and colours". `tests/mvport_probe.sh` (CLI probe printing the fragment of each §4.4 row,
+  `tests/mvport_check.py` decoding it): the 13 rows equal the 1.3 vectors (previous ROM: 9 rows differed). Insert-disk
+  screen identical to its reference pixel for pixel; Workbench + Shell + `dir` identical to the previous capture,
+  pointer colours included; Deluxe Paint III format chooser and OctaMED's start screen identical to the previous
+  ROM; SysInfo identical but for its clock detection line. prepush-check FAIL=0 (one run took the E3 marker after the
+  wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
+  543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
+  screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Shell stack margin 1024 (2026-11-10)**: REMAINING-WORK A6. `CP_STKEXTRA` 2048 -> 1024 after measuring the
+  high-water marks with the `$ABABABAB` fill read through `monitor tasks` + gdb dumps: NEWCON 668 / Background CLI
+  516 / RAM 260 bytes on the 68000 side, after a Shell session with a "No disk present" requester (`dir df1:`), `type`,
+  `list`, `run list`, `run type`, `copy`/`delete` in RAM:, `newshell` and `endcli`. Shell cost 35,944 -> 33,896
+  (1.3: 33,480), idle +1,024. prepush-check FAIL=0 (Lemmings menu looked at), writeback_probe (DF1 47.2 s, DH0 13.7 s,
+  both OFS CHECK OK, 66 files identical), concmd_probe identical to the previous ROM, Shell opened (screenshot).
   **Insert-disk screen (2026-11-10)**: ARCHITECTURE "Insert-disk screen: KSS logo and build number" (user request:
   their SVG logo, "Insert disk in DF0:", the build number). Production ROM without a disk under Amiberry: markers M6R
   STRAP OK / M6S BOOTSCR OK, logo, text and `v0.2.37-dirty` on screen (looked at); a 24-character version wraps onto
   a second line; inserting the Workbench 1.3.3 disk then boots it to the desktop; the ID field is filled in the prod
   ROM and the soft-kick image; prepush-check (dev) FAIL=0, Lemmings menu looked at. The dev ROM without any disk does
-  not reach the insert-disk screen, before this change as well (HEAD dev ROM tested the same way): its self-tests
-  expect a disk; open.
+  not reach the insert-disk screen, before this change as well (HEAD dev ROM tested the same way): its D3 test
+  clients opened files of the test disk and the "No disk present" requester held the boot; fixed the same day (the
+  clients that read the disk start only with a floppy present): dev ROM without a disk shows the screen (M6R STRAP OK,
+  M6S BOOTSCR OK, M6R WIRED OK, screenshot looked at), prepush-check FAIL=0 with the disk clients' markers.
+  prepush-check now takes the Lemmings capture 90 s after the click instead of 60 s: the menu appears 32-35 s after
+  it (four timed runs, older and new dev ROMs alike) but one run in a few took longer and the capture showed the
+  loading CLI window.
   **C9: menu messages, Preferences rows (2026-11-10)**: ARCHITECTURE "Menu and verification messages, Preferences
   rows". `tests/imenu_probe.s` against the 1.3 log of the same probe: identical line by line except real tick times
   and the addresses of RAWKEY / VANILLAKEY copies (MENU Jazz/Beat lines included). A Workbench 1.3.3 copy whose
