@@ -560,6 +560,8 @@ timer_initfunc:
         jsr     newlist
         move.l  (sp)+,d0             ; base
         move.l  d0,VBL_SVCDATA       ; data = device base (also read by timer_micro_service)
+        move.w  #16,EB_QUANTUM(a6)   ; exec's 16-frame quantum belongs to timer.device (timer-v34 §2)
+        move.w  #16,EB_ELAPSED(a6)
         ; M7f: timer_vblank becomes a SERVER of the VERTB chain (replaces the old VBL_SVC hook).
         ; struct Interrupt in reserved low RAM (AddIntServer Enqueues it). pri 0: after sched_server(20).
         move.b  #0,TIMER_VBL_INT+LN_PRI
@@ -613,6 +615,11 @@ timer_vblank_service:
         move.l  TIMER_CIAA(a2),a1
         jsr     cia_server
 .svc_vbl:
+        subq.w  #1,EB_ELAPSED(a6)    ; exec's quantum (timer-v34 §3): at 0 reloaded and TQE set, no reschedule
+        bne.s   .svc_tod
+        move.w  EB_QUANTUM(a6),EB_ELAPSED(a6)
+        bset    #SFB_TQE,EB_SYSFLAGS(a6)
+.svc_tod:
         lea     CIAA_HW,a0           ; clock fold-over (timer-v34 §4): once the TOD reaches 65536 ticks, the base takes
         tst.b   CIA_TODHI(a0)        ; the current time and TOD and counter restart from 0 (reading the high byte
         bne.s   .svc_fold            ; latches the TOD: the low byte is read to release it)

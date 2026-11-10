@@ -247,6 +247,8 @@ gb_Modes     EQU 158          ; UWORD: modes of the displayed view (View->Modes)
 gb_VBlank    EQU 160          ; BYTE: cleared by the VBlank server each frame (QBSBlit's "VBlank seen" test)
 gb_system_bplcon0 EQU 164     ; WORD: BPLCON0 bits imposed by the system
 gb_SpriteReserved EQU 166     ; UBYTE: hardware sprites taken by GetSprite (bit n = sprite n)
+gb_BlitLock  EQU 170          ; WORD: blitter requesters - 1 (-1 = free), graphics-blitter-v34 §3
+gb_BlitNest  EQU 172          ; WORD: initialised to -1, unused
 gb_TOFWaitQ  EQU 192          ; struct List: WaitTOF nodes (ln_Name = waiting task), signalled each VBlank
 gb_DisplayFlags EQU 206       ; UWORD : NTSC 1 / GENLOC 2 / PAL 4
 gb_SimpleSprites EQU 208      ; APTR: table of the 8 SimpleSprites last moved

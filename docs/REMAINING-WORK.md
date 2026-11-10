@@ -171,14 +171,14 @@ working flags are not reset when a window is activated (only when a menu opens).
 - Left, small: MrgCop rebuilds the lists even when no ViewPort has a CopList (1.3 then leaves the old lists alone,
   §5.1); ClrIns is not merged (we never build one).
 
-### C5. exec scheduling — [src] partly, S–M
+### C5. exec scheduling — done 2026-11-10 but one point
 
-Done 2026-11-09: Signal and AddTask reschedule when the task becomes the head of TaskReady, AUTOINIT goes through
-AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
-- The quantum is counted by our own VBlank server, not by timer.device's.
-- Software interrupts run at SR $2100 instead of $2000 (lowering the IPL there makes level 1 re-entrant, DSKBLK
-  included).
-- Signal returns nothing in D0 (1.3: the previous tc_SigRecvd, undocumented).
+Signal and AddTask reschedule when the task becomes the head of TaskReady, AUTOINIT goes through
+AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1 (2026-11-09). Since 2026-11-10 timer.device
+counts the quantum (Elapsed/TQE, never a preemption in the production ROM; the dev ROM keeps a round-robin server for
+its spinning demo tasks), software interrupts run at SR $2000 with SOFTINT masked, and Signal returns the previous
+tc_SigRecvd (`tests/sched_probe.sh`). Left: the software interrupts sit in one FIFO list instead of the five
+priority queues of ExecBase SoftInts (exec-scheduling §8).
 
 ### C6. strap — done 2026-11-09
 
@@ -234,43 +234,42 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
 
 ### C10. graphics leftovers — S each
 
+Done 2026-11-10: GfxBase BlitLock, CloseFont of a removed font (replied once, at 0 accessors, NT_FREEMSG without a
+port), ClipBlit's ClipRect order and same-BitMap pieces (`tests/clipblit_probe.sh`). rp_minterms are read by
+RectFill and the line engines since PRs #30/#32. Left:
 - QBSBlit is the same as QBlit.
-- GfxBase BlitLock is not kept.
 - TmpRas is not used as Text's line buffer.
-- A removed font replied without a port gets NT_REPLYMSG.
 - VSprites go through our own SprIns stream, and one partly above its ViewPort is not clipped.
 - The VERTB chain costs about 19 lines.
-- ClipBlit walks ClipRects in list order.
-- rp_minterms is recomputed at call time instead of read.
 - Patterned lines and clipped line pieces are not accelerated.
 
-### C11. Coldstart — S
+### C11. Coldstart — done 2026-11-10 but one point
 
-- CoolCapture runs in supervisor mode without tasks.
-- The memory self-test writes before the KickMem areas are reserved.
-- The cold path does not clear RAM.
-- There is no LED toggle.
+LED toggle after ColdCapture, RAM zeroed on the cold path, and no self-test while KickMem areas must survive. Left:
+CoolCapture runs in supervisor mode without tasks, because our InitCode(RTF_COLDSTART) still runs before the first
+task exists; moving it into the initial task in user mode is larger than S.
 
-### C12. Paula autovectors — S
+### C12. Paula autovectors — done 2026-11-10
 
-- Level 3 and 4 service order.
-- No INTEN test at entry.
-- 14-byte `iv_Data` List.
-- Source: custom-chips §7.2 item 5.
+INTEN test at entry, 1.3 service order, 22-byte chain headers (custom-chips §3.3). We still serve every pending
+source of a level per entry where 1.3 serves one and is re-interrupted, and acknowledge VERTB before its chain.
 
 ### C13. trackdisk — S
 
+TD_FORMAT without a floppy: done 2026-11-10 (29 before anything is cached). Left:
 - ETD sector labels.
 - Error codes 22/27.
-- TD_FORMAT without a floppy.
-- No unit task for change polling.
+- No unit task for change polling (larger than S).
 - TD_MOTOR, whose spec is partial.
 
 ### C14. dos — S
 
-- Retry restarts the whole call instead of resending the packet.
+- Retry resends the packet; 1.3 restarts the whole call, name resolution included (dos-lvo-partial §1.4). It only
+  differs when the volume moved meanwhile; every name-based LVO would have to loop on its resolution.
 - On a CLI-only boot, the mouse does not move the pointer while a dos requester is up.
-- The GV of a makeglobvec handler is not freed.
+- The GV of a makeglobvec handler is not freed: 1.3 frees pr_GlobVec when it differs from dl_GV, but our createproc
+  gives a child its creator's GV (Execute needs it), so that rule would free a parent's GV; ownership has to be
+  recorded first.
 
 ### C15. CPU — M–L, optional
 
@@ -375,8 +374,8 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 ## Suggested order
 
-1. **The S-sized leftovers** (C5, C7, C10-C14), one subsystem at a time.
+1. **The S-sized leftovers** (C7, C10, C11, C13, C14), one subsystem at a time.
 2. **The analysis-side gaps** (A7-A10, D1-D4), each through an analysis agent first.
 
-A5, A6, C1, C2, C3, C4, C5 (main part), C6, C7 (main part), C8, C9 and the ADF sweep are done;
+A5, A6, C1, C2, C3, C4, C5, C6, C7 (main part), C8, C9, C12 and the ADF sweep are done;
 D1/D3 are specified.

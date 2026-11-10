@@ -120,6 +120,14 @@ EXEC_SVC     macro
 ; Exception frames inside exec are kept in the 68000 form {SR, PC}. On a 68010 or later the CPU adds a format word
 ; after the PC (format 0 for interrupts, TRAP and privilege violations): FRAME_IN removes it at the entry of such a
 ; handler, FRAME_OUT puts one back (format 0) before RTE. Both only change the CCR.
+; INT_ENTRY: first instructions of a level 1-6 autovector: with INTEN (bit 14) clear in INTENAR, plain RTE, nothing
+; acknowledged and no schedule check (custom-chips-v34 §3.3).
+INT_ENTRY    macro
+        btst    #6,INTENAR
+        bne.s   .ie\@
+        rte
+.ie\@:
+             endm
 FRAME_IN     macro
         tst.b   CPU_FMT
         beq.s   .fi\@
@@ -156,6 +164,15 @@ INTB_VERTB   EQU 5            ; M7f: VERTB number (INT3) — INTF_VERTB=$0020=bi
 INTB_BLIT    EQU 6            ; M7g: BLIT number (INT3) — INTF_BLIT=$0040=bit6
 INTB_EXTER   EQU 13           ; Paula EXTER interrupt number (INT6)
 INTB_SOFTINT EQU 2            ; software interrupt (level 1) — Cause
+INTB_TBE     EQU 0            ; hardware/intbits.i: serial transmit (level 1)
+INTB_DSKBLK  EQU 1            ; disk block done (level 1)
+INTB_AUD0    EQU 7            ; audio channels (level 4)
+INTB_AUD1    EQU 8
+INTB_AUD2    EQU 9
+INTB_AUD3    EQU 10
+INTB_RBF     EQU 11           ; serial receive (level 5)
+INTB_DSKSYNC EQU 12           ; disk sync (level 5)
+INTB_NMI     EQU 15
 INTF_SOFTINT EQU $0004
 NT_SOFTINT   EQU 11            ; exec/nodes.i: Interrupt pending in the software queue
 ; struct Interrupt (exec/interrupts.i) — server / ICR vector
@@ -173,8 +190,11 @@ IV_CODE      EQU 4
 IV_NODE      EQU 8
 IV_SIZE      EQU 12
 INTVECTS_NVEC EQU 16          ; numbers 0..15 (14 = INTEN unused, 15 = NMI)
-IV_LIST_SIZE EQU 14           ; sizeof(struct List) of a server chain
-INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 224 (NO space: vasm truncates the operand at the space)
+IV_LIST_SIZE EQU 22           ; server chain header: struct List, CLR mask, SET mask, acknowledge word, spare
+IVL_CLR      EQU 14           ;   (custom-chips-v34 §3.3)
+IVL_SET      EQU 16
+IVL_ACK      EQU 18
+INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 352 (NO space: vasm truncates the operand at the space)
 ; CIA timers A and B — registers (offsets from the CIA base = register<<8)
 CIA_TALO     EQU $400         ; timer A low
 CIA_TAHI     EQU $500         ; timer A high (writing loads the latch)

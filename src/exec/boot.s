@@ -178,6 +178,29 @@ kss_idstr:
         dcb.b   $D0-(*-hdr_start),0
         dc.w    $4E70            ; $FC00D0 RESET (magic_reset)
 
+; CLRMEM low, high: zeroes [low, high) (both multiples of 4) with no stack: single longs from the top until the size
+; is a multiple of 128 bytes, then 4 movem of the 8 zeroed registers d1-d5/d7/a2/a3 per round. Clobbers d6/a0/a1.
+CLRMEM          macro
+        lea     \1,a1
+        move.l  \2,a0
+.cm1\@:
+        move.l  a0,d6
+        sub.l   a1,d6
+        and.w   #127,d6
+        beq.s   .cm2\@
+        clr.l   -(a0)
+        bra.s   .cm1\@
+.cm2\@:
+        cmpa.l  a1,a0
+        bls.s   .cm3\@
+        movem.l d1-d5/d7/a2-a3,-(a0)
+        movem.l d1-d5/d7/a2-a3,-(a0)
+        movem.l d1-d5/d7/a2-a3,-(a0)
+        movem.l d1-d5/d7/a2-a3,-(a0)
+        bra.s   .cm2\@
+.cm3\@:
+                endm
+
 coldstart:                        ; $FC00D2
         ; --- Phase 1: supervisor + hardware freeze (straight-line, no stack) ---
         move.w  #$2700,sr
@@ -236,6 +259,10 @@ coldstart:                        ; $FC00D2
 .cc_back:
         move.l  ($4).w,d6
 .cc_done:
+        tst.l   d6                   ; ExecBase passed the first checks: the LED bit toggles after ColdCapture (§5.1
+        beq.s   .cc_led              ; step 5; bright again)
+        bchg    #1,CIAA_PRA
+.cc_led:
         move.l  #STACKTOP,sp
         move.l  d6,-(sp)             ; popped in phase 3
         lea     LOWVARS_LO,a0        ; low-RAM variables and the cushion up to LOWHEAP_LO zeroed: RAM is not null at
@@ -294,8 +321,26 @@ coldstart:                        ; $FC00D2
         move.l  EB_KICKCHECKSUM(a6),-(sp)
         move.l  EB_COOLCAPTURE(a6),-(sp)
         move.l  EB_WARMCAPTURE(a6),-(sp)
-        bra.s   .eb_zero
+        bra     .eb_zero
 .eb_cold:
+        ; Cold path: chip RAM from $108 and the slow RAM are zeroed, as 1.3 zeroes them from $C0 (coldstart-hardware
+        ; §6). $100/$104 (a dead-end alert's numbers) stay for alert_boothook, which reads them once intuition is up
+        ; (1.3 reads them before clearing); the low-RAM variables were zeroed above and are in use. The boot stack is
+        ; empty and nothing is called, so its area is cleared too. RAMKICK: the image below SLOW_RSV is kept.
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        moveq   #0,d5
+        moveq   #0,d7
+        sub.l   a2,a2
+        sub.l   a3,a3
+        CLRMEM  $108,#LOWVARS_LO
+        CLRMEM  LOWHEAP_LO,#MAXCHIP
+        tst.l   d0
+        beq.s   .eb_noslow
+        CLRMEM  SLOW_BASE+SLOW_RSV,d0
+.eb_noslow:
         moveq   #5-1,d1
 .eb_none:
         clr.l   -(sp)
@@ -384,9 +429,12 @@ coldstart:                        ; $FC00D2
         cmp.l   #MH_CHIP,d0
         bne     eb_fail
 
+        tst.l   EB_KICKMEMPTR(a6)    ; KickMem areas to keep (warm path): no self-test, its allocations and the
+        bne.s   .st_skip             ; FTEST_LO..FTEST_HI test write into chip RAM before kick_reserve reserves them
         bsr     selftest             ; d0 = 0 (OK) / !=0 (failure)
         tst.l   d0
         bne     eb_fail
+.st_skip:
         jsr     add_low_chip         ; low chip below the heap, once the selftest is done with FTEST_LO..FTEST_HI
         jsr     add_slow_memory      ; after the memory selftest (which assumes chip at the head of the list)
         lsr.l   #8,d0                ; bytes -> KB (512 KB = $0200)

@@ -193,7 +193,7 @@ gfx_CloseFont:
         move.l  a1,d0
         beq.s   .cf_r
         subq.w  #1,tf_Accessors(a1)
-        bgt.s   .cf_r
+        bne.s   .cf_r                ; only the close that brings it to 0 replies (graphics-text §10.5: -1, -2 nothing)
         btst    #FPB_REMOVED,tf_Flags(a1)
         beq.s   .cf_r
         move.l  a6,-(sp)

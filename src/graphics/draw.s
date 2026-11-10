@@ -72,9 +72,13 @@ DC_PSEUDO       EQU 46               ; pseudo-ClipRect without a layer (Next, pr
 DC_SIZE         EQU 70
 ; ClipRect fields read here (graphics/clip.h)
 CR_NEXT         EQU 0
+CR_PREV         EQU 4
 CR_LOBS         EQU 8
 CR_BITMAP       EQU 12
 CR_MINX         EQU 16
+CR_MINY         EQU 18
+CR_MAXX         EQU 20
+CR_MAXY         EQU 22
 CR_ORGX         EQU 24               ; origin of the backup (layers private: cr_p1)
 CR_ORGY         EQU 26
 LY_CLIPRECT     EQU 8
@@ -4849,8 +4853,9 @@ gfx_BltMaskBitMapRastPort:
 ; ClipBlit(source RastPort a0, srcX d0, srcY d1, dest RastPort a1, destX d2, destY d3, width d4, height d5,
 ; minterm d6) -> d0 = 1 (spec graphics-blitter-v34 §5.3): the source rectangle is clipped by the ClipRects of its
 ; layer (visible part: the screen BitMap; hidden and backed up: the backup; hidden without backup: the
-; destination stays intact); each piece goes through BltBitMapRastPort, which clips on the destination side. Deviations:
-; no source SuperBitMap, no reordering of the ClipRects for an overlapping copy within the same RastPort.
+; destination stays intact); each piece goes through BltBitMapRastPort, which clips on the destination side. A copy
+; within one RastPort whose rectangles touch first re-sorts the layer's ClipRect list for a safe order (cb_sort).
+; Deviation: no source SuperBitMap.
 CB_SX   EQU 0                        ; saved arguments (words): sx, sy, dx, dy, w, h; minterm (long); dest RastPort
 CB_SY   EQU 2
 CB_DX   EQU 4
@@ -4874,6 +4879,33 @@ gfx_ClipBlit:
         move.l  rp_Layer(a1),d1
         lea     CB_L1(sp),a2
         bsr     cb_lock2
+        cmpa.l  CB_DRP(sp),a0
+        bne.s   .cb_ctx
+        move.l  rp_Layer(a0),d0
+        beq.s   .cb_ctx
+        move.w  CB_DX(sp),d1         ; same RastPort: do the rectangles touch?
+        sub.w   CB_SX(sp),d1         ; d1 = horizontal move
+        move.w  d1,d2
+        bpl.s   .cb_ax
+        neg.w   d2
+.cb_ax:
+        cmp.w   CB_W(sp),d2
+        bgt.s   .cb_ctx
+        move.w  CB_DY(sp),d3
+        sub.w   CB_SY(sp),d3         ; d3 = vertical move
+        move.w  d3,d2
+        bpl.s   .cb_ay
+        neg.w   d2
+.cb_ay:
+        cmp.w   CB_H(sp),d2
+        bgt.s   .cb_ctx
+        move.l  a0,-(sp)
+        move.l  d0,a0
+        move.w  d1,d0
+        move.w  d3,d1
+        bsr     cb_sort
+        move.l  (sp)+,a0
+.cb_ctx:
         move.l  a0,a1
         bsr     dr_ctx               ; context of the source RastPort (lock of its layer)
         move.w  DC_OX(a5),d0
@@ -4956,6 +4988,78 @@ gfx_ClipBlit:
 ; first, in the order LockLayers uses (front to back) when they share a Layer_Info, by address otherwise; the inner
 ; obtains then only nest. Stores them at (a2) / 4(a2), zeros if one is missing or both are the same. Preserves
 ; everything but d0/d1.
+; cb_sort(a0 = Layer, d0.w = horizontal move, d1.w = vertical move): re-sorts the layer's ClipRect list in place
+; (cr_Prev rebuilt) so that an overlapping copy reads each piece before overwriting it (graphics-blitter §5.3 step
+; 3): of two ClipRects that overlap vertically, the one further along the horizontal move comes first; otherwise
+; the one further along the vertical move. Insertion sort. Preserves everything.
+cb_sort:
+        movem.l d0-d5/a0-a4,-(sp)
+        move.l  LY_CLIPRECT(a0),a2   ; a2 = ClipRects still to place
+        clr.l   -(sp)                ; head of the sorted list
+.cs_next:
+        cmpa.w  #0,a2
+        beq.s   .cs_done
+        move.l  a2,a1                ; a1 = ClipRect to place
+        move.l  CR_NEXT(a2),a2
+        move.l  sp,a4                ; a4 = link to update (CR_NEXT is at offset 0)
+.cs_find:
+        move.l  (a4),d2
+        beq.s   .cs_ins
+        move.l  d2,a3
+        bsr.s   .cs_before
+        bne.s   .cs_ins
+        move.l  a3,a4
+        bra.s   .cs_find
+.cs_ins:
+        move.l  (a4),CR_NEXT(a1)
+        move.l  a1,(a4)
+        bra.s   .cs_next
+.cs_done:
+        move.l  (sp)+,a1
+        move.l  a1,LY_CLIPRECT(a0)
+        sub.l   a3,a3
+.cs_prev:
+        cmpa.w  #0,a1
+        beq.s   .cs_ret
+        move.l  a3,CR_PREV(a1)
+        move.l  a1,a3
+        move.l  CR_NEXT(a1),a1
+        bra.s   .cs_prev
+.cs_ret:
+        movem.l (sp)+,d0-d5/a0-a4
+        rts
+; .cs_before(a1 = new, a3 = placed, d0/d1 = moves) -> Z = 0 if a1 must come before a3. Clobbers d2-d5.
+.cs_before:
+        move.w  CR_MINY(a1),d2       ; vertical overlap: compare along x, otherwise along y
+        cmp.w   CR_MAXY(a3),d2
+        bgt.s   .cb_byy
+        move.w  CR_MINY(a3),d2
+        cmp.w   CR_MAXY(a1),d2
+        bgt.s   .cb_byy
+        move.w  CR_MINX(a1),d2
+        move.w  CR_MINX(a3),d4
+        move.w  d0,d5
+        bra.s   .cb_cmp
+.cb_byy:
+        move.w  CR_MINY(a1),d2
+        move.w  CR_MINY(a3),d4
+        move.w  d1,d5
+.cb_cmp:
+        moveq   #0,d3
+        tst.w   d5
+        ble.s   .cb_asc
+        cmp.w   d4,d2                ; moving right / down: the greater coordinate first
+        ble.s   .cb_r
+        moveq   #1,d3
+        bra.s   .cb_r
+.cb_asc:
+        cmp.w   d4,d2                ; otherwise the smaller one first
+        bge.s   .cb_r
+        moveq   #1,d3
+.cb_r:
+        tst.l   d3
+        rts
+
 cb_lock2:
         clr.l   (a2)
         clr.l   4(a2)
@@ -5096,6 +5200,18 @@ gfx_BltBitMapRastPort:
         sub.w   DC_BX(a5),d2         ; coordinates within the ClipRect's BitMap
         sub.w   DC_BY(a5),d3
         move.l  DC_CBM(a5),a3        ; a3 = destination BitMap
+        cmpa.l  a4,a3                ; the same BitMap (ClipBlit within one RastPort): through BltBitMap, whose rows
+        bne.s   .bb_two              ; go through a buffer and run bottom-up for a downward copy, where the forward
+        move.l  a4,a0                ; walk below would smear a copy to the right
+        move.l  a3,a1
+        moveq   #0,d6
+        move.b  DC_MINTERM(a5),d6
+        move.l  DC_RP(a5),a2
+        moveq   #0,d7
+        move.b  rp_Mask(a2),d7
+        sub.l   a2,a2
+        bra     gfx_BltBitMap
+.bb_two:
         bsr     br_copy
         bne     .bb_oret
         moveq   #0,d7                ; d7 = plane

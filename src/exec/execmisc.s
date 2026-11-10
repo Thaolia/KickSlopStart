@@ -131,9 +131,15 @@ exec_softint_init:
         move.w  #(INTF_SETCLR|INTF_SOFTINT),INTENA
         rts
 
-; softint_server (level 1, a6 = SysBase): acknowledges SOFTINT then executes the pending interrupts in order.
+; softint_server (level 1, a6 = SysBase): acknowledges SOFTINT then executes the pending interrupts in order, at
+; SR $2000 as on 1.3 (exec-scheduling-v34 §8): every hardware level, level 1 included, may nest over a software
+; interrupt, while the SOFTINT source itself stays off in INTENA (a Cause meanwhile is picked up by this loop).
 softint_server:
+        movem.l d2-d7/a2-a4,-(sp)    ; the level-1 dispatcher's loop registers, whatever the softint code does
         move.w  #INTF_SOFTINT,INTREQ
+        move.w  #INTF_SOFTINT,INTENA
+        move.w  sr,-(sp)
+        move.w  #$2000,sr
 .ss_lp:
         move.w  #INTF_INTEN,INTENA
         lea     EXEC_SOFTLIST,a0
@@ -149,6 +155,9 @@ softint_server:
         move.l  ($4).w,a6
         bra.s   .ss_lp
 .ss_ret:
+        move.w  (sp)+,sr
+        move.w  #(INTF_SETCLR|INTF_SOFTINT),INTENA
+        movem.l (sp)+,d2-d7/a2-a4
         rts
 
 ; Alert(alertNum d7, a5) (spec alert-v34 §1, coldstart-hardware-v34 §8): serial message, then

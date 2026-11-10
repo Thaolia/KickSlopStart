@@ -1395,11 +1395,8 @@ td_wr:
         cmp.l   #TD_DISKBYTES,d0
         bhi     .wr_badlen
         bsr     td_check_change
-        tst.l   d7
-        bne.s   .wr_fmt
-        bsr     td_require
-        beq     .wr_absent
-.wr_fmt:
+        bsr     td_require           ; no floppy: 29 before anything is cached or written, TD_FORMAT included (the
+        beq     .wr_absent           ; disk test comes before the protection one, trackdisk-write §7 steps 7-8)
         bsr     td_sense
         btst    #DSKB_PROT,d1
         beq     .wr_prot

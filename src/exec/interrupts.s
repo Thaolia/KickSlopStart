@@ -103,8 +103,10 @@ init_ints:
         move.l  #int4_dispatch,AUTOVEC_L4         ; AUD0..AUD3
         move.l  #int5_dispatch,AUTOVEC_L5         ; RBF / DSKSYNC
         bsr     init_traps                        ; CPU exceptions + TRAP #4-15 -> the task's tc_TrapCode
-        ; M7f: registers the SCHEDULER server (round-robin quantum) on the VERTB chain. Faithful:
-        ; the real exec has a VBlank server that requests a reschedule. pri 20 -> head of chain.
+                ifeq    PROD
+        ; M7f: registers the dev harness's round-robin server on the VERTB chain (pri 20 -> head of chain): its
+        ; demo tasks spin at priority 0 without ever waiting and live on that time slicing. 1.3 has no such server
+        ; (exec-scheduling-v34 §2.3: the quantum never preempts), and the production ROM leaves it out.
         clr.l   SCHED_INT+LN_SUCC                 ; (reserved low RAM, not guaranteed zero at power-on)
         clr.l   SCHED_INT+IS_DATA                 ; scheduler server: IS_DATA unused (reads the globals)
         move.b  #20,SCHED_INT+LN_PRI              ; pri 20: runs before timer_vblank(0)/vbl_tail(-10)
@@ -112,6 +114,7 @@ init_ints:
         moveq   #INTB_VERTB,d0                    ; AddIntServer(VERTB, &SCHED_INT)
         lea     SCHED_INT,a1
         bsr     exec_AddIntServer
+                endc
         move.w  #INTF_VERTB,INTREQ                ; clears a pending VERTB
         ; enables VERTB + PORTS (INT2) + master. EXTER(INT6, level 6 > VBlank 3) is enabled
         ; LATER, at the bringup of the MICROHZ unit (boot.s M7a): it now preempts the BODY of
@@ -125,13 +128,14 @@ init_ints:
 ; int3_dispatch (AUTOVEC_L3, level 3): M7f — VERTB (only level 3 source used, single-source
 ; like int2/int6) goes through the BY-NUMBER dispatcher + server chain, instead of a dedicated handler.
 ; Body = M7g MULTI-SOURCE DECODING: reads INTREQR & INTENAR, dispatches+acks EACH pending level 3
-; source (COPER bit4, VERTB bit5, BLIT bit6) via IntVects[n], instead of assuming VERTB only.
+; source via IntVects[n], in the 1.3 order BLIT (6), VERTB (5), COPER (4) (custom-chips-v34 §3.3).
 ; VERTB -> M3a counter + chain (sched/timer/tail). Epilogue = intr_isr_defer (consumes SAR).
 ; VBL_INBODY (M7e gate) covers the whole body (preemptible by INT6). Bonus: on a SPURIOUS INT3 (ack
 ; propagation delay, cf. M7e) the 3 btst fail -> we dispatch NOTHING (more correct than M7f which
 ; dispatched VERTB unconditionally). d2 = mask of the pending sources, PRESERVED by the server
 ; convention (walker: movem d2/a2-a4; coper_test: only touches COPER_FIRED) across the dispatches.
 int3_dispatch:
+        INT_ENTRY
                 ifne    M7E_PROLOGUE_IPL7
         move.w  #$2700,sr           ; RED2 M7e: M7a model (whole handler at IPL7) -> INT6 does NOT preempt
                                     ; the body -> VBL_PREEMPT_COUNT==0 -> "M7E IPL OK" never emitted.
@@ -146,6 +150,15 @@ int3_dispatch:
         move.b  d0,VBL_IPL
         move.w  INTREQR,d2          ; M7g: pending sources ...
         and.w   INTENAR,d2          ; ... AND enabled (d2 preserved across the dispatches)
+        btst    #INTB_BLIT,d2       ; --- BLIT (bit 6; not used in demo -> dormant) ---
+        beq.s   .i3_vertb
+        move.w  #INTF_BLIT,INTREQ   ; ack BLIT
+                ifeq    M7G_MONO_SOURCE
+        moveq   #INTB_BLIT,d0
+        bsr     intr_dispatch_number ; dispatch IntVects[BLIT]
+        move.l  ($4).w,a6
+                endc
+.i3_vertb:
         btst    #INTB_VERTB,d2      ; --- VERTB (bit 5) ---
         beq.s   .i3_coper
         move.w  #INTF_VERTB,INTREQ  ; ack VERTB (SETCLR=0 -> clears this bit only)
@@ -155,27 +168,19 @@ int3_dispatch:
         move.l  ($4).w,a6           ; reload a6 (the walker does not restore it)
 .i3_coper:
         btst    #INTB_COPER,d2      ; --- COPER (bit 4) ---
-        beq.s   .i3_blit
+        beq.s   .i3_done
         move.w  #INTF_COPER,INTREQ  ; ack COPER (always, even in RED -> no storm)
                 ifeq    M7G_MONO_SOURCE
         moveq   #INTB_COPER,d0
         bsr     intr_dispatch_number ; dispatch IntVects[COPER] (= coper_test in demo)
         move.l  ($4).w,a6
                 endc                ; RED M7G_MONO_SOURCE=1: acked but NOT dispatched -> COPER_FIRED frozen
-.i3_blit:
-        btst    #INTB_BLIT,d2       ; --- BLIT (bit 6; not used in demo -> dormant) ---
-        beq.s   .i3_done
-        move.w  #INTF_BLIT,INTREQ   ; ack BLIT
-                ifeq    M7G_MONO_SOURCE
-        moveq   #INTB_BLIT,d0
-        bsr     intr_dispatch_number ; dispatch IntVects[BLIT]
-        move.l  ($4).w,a6
-                endc
 .i3_done:
         clr.b   VBL_INBODY          ; M7e: end of the window before dispatch (disjoint from VBL_INSURG)
         bra     intr_isr_defer      ; common tail: reloads a6 + deferred schedule check if SAR (S=0)
 
-; sched_server: VERTB server of the SCHEDULER (round-robin quantum). Sets TQE and SAR when a
+                ifeq    PROD
+; sched_server (dev ROM only): VERTB server of the harness's round-robin. Sets SAR when a
 ; preemption is due — SCHED_ON && !Forbid && !Disable && TaskReady not empty (same guards as the old
 ; vbl_handler: round-robin RESPECTS Forbid/Disable). Faithful: the real exec has a VBlank server that
 ; requests a reschedule; intr_isr_defer consumes SAR at IRQ exit (like an INT6 wake-up).
@@ -197,8 +202,7 @@ sched_server:
         bcs.s   .sched_cont         ; ELAPSED < QUANTUM -> the time slice continues (no reschedule)
         clr.b   QUANTUM_ELAPSED     ; quantum elapsed -> reset + request a deferred reschedule (round-robin)
         addq.l  #1,QUANTUM_EXPIRE_N ; throughput proof (~= VBL_COUNT/QUANTUM in isolation; ~=0 in the default demo)
-        bset    #SFB_TQE,EB_SYSFLAGS(a6) ; quantum elapsed ...
-        bset    #SFB_SAR,EB_SYSFLAGS(a6) ; ... and a schedule check at IRQ exit (intr_isr_defer -> Schedule)
+        bset    #SFB_SAR,EB_SYSFLAGS(a6) ; a schedule check at IRQ exit (intr_isr_defer -> Schedule)
 .sched_cont:
                 ifne    M7F_SCHED_STOPS_CHAIN
         moveq   #1,d0               ; RED2 M7f: Z-CLEAR -> the walker STOPS the chain after sched
@@ -206,6 +210,7 @@ sched_server:
         moveq   #0,d0               ; Z-SET -> continue the chain (call-all: timer_vblank + vbl_tail after)
                 endc
         rts
+                endc                ; PROD
 
 ; intr_exit: common EPILOGUE (int1-6). d7 = schedule check requested. We schedule ONLY at the USER BOUNDARY: S bit
 ; of the SAVED SR (FRAME_SR) == 0. S=1 (nested IRQ / kernel) => simple resume. This plays the part of ExitIntr
@@ -327,12 +332,15 @@ dispatch_pick:                      ; IPL7, a6 = ExecBase, sp = 66-byte slot
 ; dispatch_in: loads the incoming task (a1) and rte's to it. Also used by the launch of the 1st task (boot.s).
 ; sp = 66-byte SSP slot. Order (§2.5): ThisTask, DispCount, TQE cleared, RUN, nest counts, tc_Launch, exception.
 dispatch_in:
+                ifeq    PROD
         cmp.l   EB_THISTASK(a6),a1  ; M7h: REAL task change (incoming != outgoing)?
         beq.s   .di_samequantum
         clr.b   QUANTUM_ELAPSED     ; yes -> new time slice (no reset on dispatch-to-self)
 .di_samequantum:
+                endc
         move.l  a1,EB_THISTASK(a6)
         addq.l  #1,EB_DISPCOUNT(a6)
+        move.w  EB_QUANTUM(a6),EB_ELAPSED(a6) ; a new quantum on every dispatch (§2.2)
         bclr    #SFB_TQE,EB_SYSFLAGS(a6)
         move.b  #TS_RUN,TC_STATE(a1)
         bsr.s   di_nest
@@ -587,6 +595,7 @@ trap2_handler:
 
 ; int2_dispatch ($68, level 2): only level 2 source = PORTS -> dispatches IntVects[INTB_PORTS].
 int2_dispatch:
+        INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 2) — preemptible by vbl(3)/int6(6)
         move.l  ($4).w,a6
@@ -598,32 +607,37 @@ int2_dispatch:
         bra     intr_isr_defer
 ; int1/int4/int5_dispatch (autovectors $64/$70/$74): multiple sources with an EXCLUSIVE vector (SetIntVector). For each
 ; pending AND enabled source of the level: handler present -> call (it acknowledges INTREQ itself, RKRM "Exec:
-; Interrupts"); no handler -> acknowledged here (no storm). Level 1 = TBE(0)/DSKBLK(1)/SOFTINT(2), level 4 =
-; AUD0..3(7-10), level 5 = RBF(11)/DSKSYNC(12). trackdisk and the serial console poll DSKBLK/RBF with INTENA off:
-; these sources do not come through here.
+; Interrupts"); no handler -> acknowledged here (no storm). Order of 1.3: level 1 = TBE, DSKBLK, SOFTINT, level 4 =
+; AUD1, AUD3, AUD0, AUD2, level 5 = DSKSYNC, RBF. trackdisk and the serial console poll DSKBLK/RBF with INTENA off:
+; these sources do not come through here. Each source is tested again just before its call: the software
+; interrupts run at IPL 0, so a nested level-1 interrupt may already have served one.
 int1_dispatch:
+        INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
-        move.w  #INTM_L1,d3
+        lea     intr_l1(pc),a2
         bra.s   intr_multi
 int4_dispatch:
+        INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
-        move.w  #INTM_L4,d3
+        lea     intr_l4(pc),a2
         bra.s   intr_multi
 int5_dispatch:
+        INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
-        move.w  #INTM_L5,d3
-intr_multi:
+        lea     intr_l5(pc),a2
+intr_multi:                          ; a2 = the level's sources in service order, -1 at the end
         move.l  ($4).w,a6
+.im_lp:
+        moveq   #0,d4
+        move.b  (a2)+,d4             ; d4 = source number
+        bmi.s   .im_end
         move.w  INTREQR,d2
         and.w   INTENAR,d2
-        and.w   d3,d2                ; d2 = sources of the level to serve
-        moveq   #0,d4                ; d4 = source number
-.im_lp:
         btst    d4,d2
-        beq.s   .im_next
+        beq.s   .im_lp               ; not pending (or served by a nested interrupt)
         lea     EB_INTVECTS(a6),a0
         move.w  d4,d0
         mulu    #IV_SIZE,d0
@@ -632,19 +646,23 @@ intr_multi:
         moveq   #0,d0                ; no handler: acknowledge
         bset    d4,d0
         move.w  d0,INTREQ
-        bra.s   .im_next
+        bra.s   .im_lp
 .im_call:
         move.l  d4,d0
         bsr     intr_dispatch_number
         move.l  ($4).w,a6
-.im_next:
-        addq.w  #1,d4
-        cmp.w   #13,d4
-        bcs.s   .im_lp
+        bra.s   .im_lp
+.im_end:
         bra     intr_isr_defer
+; service order of the multi-source levels (custom-chips-v34 §3.3)
+intr_l1:        dc.b    INTB_TBE,INTB_DSKBLK,INTB_SOFTINT,-1
+intr_l4:        dc.b    INTB_AUD1,INTB_AUD3,INTB_AUD0,INTB_AUD2,-1
+intr_l5:        dc.b    INTB_DSKSYNC,INTB_RBF,-1
+                even
 
 ; int6_dispatch ($78, level 6): only level 6 source = EXTER -> dispatches IntVects[INTB_EXTER].
 int6_dispatch:
+        INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 6) — highest level used, never preempted
         move.l  ($4).w,a6
@@ -746,7 +764,7 @@ exec_AddIntServer:
         move.l  a1,a2               ; a2 = interrupt (preserved by newlist/Enqueue)
         move.l  EB_INTSVL(a6),a3    ; a3 = block of the server lists
         move.l  a3,d1
-        beq.s   .ais_ret            ; block missing (defensive)
+        beq     .ais_ret            ; block missing (defensive)
         move.w  #INTF_INTEN,INTENA
         move.l  d0,d2               ; d2 = number
         move.w  d2,d1               ; &IntVects[n] = ExecBase + EB_INTVECTS + n*12
@@ -762,6 +780,15 @@ exec_AddIntServer:
         jsr     newlist             ; NEWLIST(a1) (clobbers a0)
         move.l  (sp)+,a1
         move.l  (sp)+,a0
+        moveq   #0,d1               ; the rest of the 1.3 header: CLR / SET masks, acknowledge word (0 for NMI)
+        bset    d2,d1
+        move.w  d1,IVL_CLR(a1)
+        cmp.w   #INTB_NMI,d2
+        beq.s   .ais_nmi
+        move.w  d1,IVL_ACK(a1)
+.ais_nmi:
+        or.w    #INTF_SETCLR,d1
+        move.w  d1,IVL_SET(a1)
         move.l  a1,IV_DATA(a0)
         move.l  #intr_chain_walker,IV_CODE(a0)
         clr.l   IV_NODE(a0)

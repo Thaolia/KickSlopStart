@@ -6,7 +6,8 @@
 ;   ETD_READ of block 0 with iotd_Count = C - 1          -> 29 (counter newer than the request);
 ;   ETD_READ of block 0 with iotd_Count = C              -> 0, io_Actual 512;
 ; then writes "TC EJECT", waits 10 s for the harness to eject the floppy, and does a CMD_READ of block 0
-;   -> 29 (no floppy). Ends with "TC END".
+;   -> 29 (no floppy), then a TD_FORMAT of track 0 -> 29, io_Actual 0 (the disk test comes first, trackdisk-write
+;   §7). Ends with "TC END".
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o tdcode_probe tests/tdcode_probe.s
 
         section code,code
@@ -88,6 +89,12 @@ start:
         move.l  #512,d2
         bsr     doio
         lea     n_absent(pc),a0
+        bsr     report
+        moveq   #11,d0               ; TD_FORMAT of track 0 without a floppy
+        moveq   #0,d1
+        move.l  #11*512,d2
+        bsr     doio
+        lea     n_fmt(pc),a0
         bsr     report
         lea     n_end(pc),a0
         bsr     say
@@ -177,10 +184,11 @@ n_range:  dc.b   "READ-BEYOND",0
 n_etdold: dc.b   "ETD-OLDCOUNT",0
 n_etdok:  dc.b   "ETD-COUNT",0
 n_absent: dc.b   "READ-NODISK",0
+n_fmt:    dc.b   "FORMAT-NODISK",0
 n_eject:  dc.b   "TC EJECT",10,0
 n_end:    dc.b   "TC END",10,0
 n_fail:   dc.b   "TC FAIL",10,0
         even
 
         section buffer,bss_c
-buf:    ds.b    512
+buf:    ds.b    11*512

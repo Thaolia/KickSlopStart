@@ -66,7 +66,6 @@ AD_SIZE         EQU AD_CH+4*ACH_SIZE
 AUD0LC          EQU CUSTOM+$0A0      ; channel n: +16*n; LC.l, LEN.w (+4), PER.w (+6), VOL.w (+8)
 ADKCON_A        EQU CUSTOM+$09E
 DMACON_A        EQU CUSTOM+$096
-INTB_AUD0       EQU 7
 DMAF_MASTER_A   EQU $0200
 
         EVEN

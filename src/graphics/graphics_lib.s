@@ -261,6 +261,8 @@ graphics_initfunc:
         jsr     newlist
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
+        move.w  #-1,gb_BlitLock(a2)
+        move.w  #-1,gb_BlitNest(a2)
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter permanently enabled, like 1.3: a
                                      ; program that saves then restores DMACON must find it again
         move.l  #-1,CUSTOM+$044      ; known masks at startup: direct blitter users can inherit this state
@@ -1916,8 +1918,10 @@ gfx_QBlit:
         rts
 
 ; gfx_OwnBlitter(): takes the blitter (gb_BlitSem semaphore: waits until no other task owns it), then waits
-; for it to be idle. ScrollRaster only uses the blitter when nobody holds it (AttemptSemaphore).
+; for it to be idle. ScrollRaster only uses the blitter when nobody holds it (AttemptSemaphore). The public
+; BlitLock counts the requesters - 1 as on 1.3 (0 while one task holds it).
 gfx_OwnBlitter:
+        addq.w  #1,gb_BlitLock(a6)
         move.l  a6,-(sp)
         lea     gb_BlitSem(a6),a0
         move.l  ($4).w,a6
@@ -1933,6 +1937,8 @@ gfx_DisownBlitter:
         move.l  EB_THISTASK(a6),d0
         cmp.l   GB_SS_OWNER(a0),d0
         bne.s   .db_ret
+        move.l  (sp),a1
+        subq.w  #1,gb_BlitLock(a1)
         jsr     LVO_RELEASESEMAPHORE(a6)
 .db_ret:
         move.l  (sp)+,a6

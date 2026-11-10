@@ -1589,6 +1589,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **S-sized leftovers (2026-11-10)**: REMAINING-WORK C5, C10-C13; ARCHITECTURE "S-sized leftovers". New probes, each
+  failing on the previous ROM: `tests/sched_probe.sh` (SCHED OK), `tests/clipblit_probe.sh` (0 wrong pixels; 7,080
+  before, 480 without the ClipRect sort), `tests/tdcode_probe.sh` (TD_FORMAT without a floppy 29, was 28). Unchanged:
+  `mrgcop_probe` 9/9, `mvport_probe` 13/13, `gtext_probe` identical to the previous ROM. writeback_probe (production,
+  run in sequence with the previous ROM): DF1 46.6-47.3 s / DH0 14.1-14.2 s against 46.9 / 14.1, OFS CHECK OK,
+  66 files identical. prepush-check (dev) FAIL=0 twice, Lemmings menu looked at; production ROM: Lemmings menu,
+  Workbench drawer, Shell and `dir` (screenshots looked at). Not covered: the cold-path RAM clear of the soft-kick
+  image (it needs the real Kickstart to load it, analysis track only).
   **MrgCop by line, insert-disk screen on NTSC (2026-11-10)**: REMAINING-WORK C4 completed; ARCHITECTURE "MrgCop
   merges by line". `tests/mrgcop_probe.sh` (CLI probe printing the merged lists, `tests/mrgcop_check.py`): nine
   cases equal to graphics-display §5.2-5.4 and §7.3 in three runs (one other run lost serial characters, now

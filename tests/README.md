@@ -18,6 +18,27 @@ through MakeVPort and MrgCop and their hardware lists are printed. `tests/mrgcop
 and the MOVEs after them and compares them with the spec. Success: `OK: 9 cases ...`. A line damaged by lost serial
 characters is reported as such: run the probe again.
 
+## exec scheduling probe
+
+`tests/sched_probe.sh <out_dir> [rom]` runs `tests/sched_probe.s` (CLI command, our ROM under Amiberry): ExecBase
+Quantum and Elapsed read by a busy loop on 8 frames (timer.device's quantum, `timer-v34.md` §3), the D0 that Signal
+returns (the previous tc_SigRecvd, `exec-scheduling-v34.md` §2.7), and SR and INTENAR inside a software interrupt
+(SR $2000, SOFTINT off, §8). Success: `SCHED OK`.
+
+## ClipBlit within one RastPort
+
+`tests/clipblit_probe.sh <out_dir> [rom]` runs `tests/clipblit_probe.s`: a borderless SMART_REFRESH window filled
+with 8-pixel columns of pens, partly covered by a second window, is ClipBlitted onto itself 8 pixels to the right,
+then the cover window closes and every pixel of the destination is read back (`graphics-blitter-v34.md` §5.3 step
+3). Prints `CB FILL` (the fill, 0 expected) and `CB BAD` (wrong pixels after the copy). Success: `CLIPBLIT OK`.
+
+## trackdisk error codes
+
+`tests/tdcode_probe.sh <out_dir> [rom]` runs `tests/tdcode_probe.s` from the boot disk and ejects it through
+Amiberry's IPC when the probe prints `TC EJECT`: CMD_READ beyond the disk (−4), ETD_READ with an old and a current
+change count (29, 0), CMD_READ and TD_FORMAT without a floppy (29, io_Actual 0) (`trackdisk-write-v34.md` §5.2, §7).
+Success: `TDCODE OK`.
+
 ## Native rectangle-pen regression
 
 `make test-graphics-rectpens` (also included through the normal and quick Graphics groups) supplies per-plane

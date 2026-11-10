@@ -2194,6 +2194,35 @@ differs.
   `tests/mrgcop_probe.sh` checks nine cases against §5.2-5.4 and §7.3 (lists of §5.3, line 255 at $DE and at
   DDFSTRT, UCopList inside and below its ViewPort, stacked and contiguous ViewPorts, interlace, SetRGB4 and
   ScrollVPort on the shown list): all equal; the previous ROM failed five of them.
+  **S-sized leftovers (2026-11-10)**: REMAINING-WORK C5, C10-C13.
+  - exec (C5): timer.device owns the quantum as on 1.3 (timer-v34 §2-3, exec-scheduling §2.3): its init sets
+    ExecBase Quantum = Elapsed = 16, its VERTB server decrements Elapsed and at 0 reloads it and sets TQE without
+    asking for a reschedule, and every dispatch reloads Elapsed. The production ROM no longer has a round-robin
+    server: the quantum never preempts. The dev ROM keeps `sched_server` (pri 20) because its demo tasks spin at
+    priority 0 without waiting. Software interrupts run at SR $2000 with SOFTINT off in INTENA meanwhile
+    (`softint_server`, which also keeps d2-d7/a2-a4 for the dispatcher); the level-1/4/5 dispatcher tests each
+    source again just before its call, since a nested level-1 interrupt may have served it. Signal returns the
+    previous tc_SigRecvd in D0. `tests/sched_probe.sh`: Quantum $10, Elapsed counting down, Signal's D0, SR $2000
+    and INTENA bit 2 clear inside a software interrupt (the previous ROM failed all three).
+  - Paula autovectors (C12, custom-chips §3.3): every level 1-6 handler returns at once (RTE, nothing
+    acknowledged) when INTEN is clear (`INT_ENTRY`); sources are served in the 1.3 order (level 3 BLIT, VERTB, COPER;
+    level 4 AUD1, AUD3, AUD0, AUD2; level 5 DSKSYNC, RBF) from per-level tables; a server chain header is 22 bytes
+    (List, CLR mask, SET mask, acknowledge word 0 for NMI, spare).
+  - Coldstart (C11, coldstart-hardware §5.1, §6): the LED bit toggles after ColdCapture when the old ExecBase
+    passed the first checks; the cold path zeroes chip RAM from $108 (the low-RAM variables excepted) and the slow
+    RAM (`CLRMEM`, 4 movem of 8 registers per round, no stack); $100/$104 stay for alert_boothook. The boot
+    self-test is skipped when KickMemPtr survived a warm reset, so that it does not write over KickMem areas before
+    `kick_reserve` reserves them.
+  - graphics (C10): GfxBase BlitLock counts the OwnBlitter requesters - 1 (−1 free, BlitNest −1). CloseFont replies
+    a removed font only when its accessors reach exactly 0 (graphics-text §10.5). ClipBlit within one RastPort
+    whose rectangles touch re-sorts the layer's ClipRect list (`cb_sort`, graphics-blitter §5.3 step 3), and
+    BltBitMapRastPort sends a piece whose source and destination are the same BitMap through BltBitMap (row buffer,
+    bottom-up when needed): its forward byte walk smeared a copy to the right. `tests/clipblit_probe.sh`: an
+    obscured SMART_REFRESH window copied onto itself 8 pixels right, 0 wrong pixels (previous ROM 7,080, without the
+    sort 480).
+  - trackdisk (C13): TD_FORMAT checks for a floppy like CMD_WRITE before anything is cached: 29 at once, where it
+    used to cache the track as modified and fail at the write, leaving a dirty track behind
+    (`tests/tdcode_probe.sh`, FORMAT-NODISK).
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

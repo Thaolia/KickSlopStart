@@ -301,9 +301,11 @@ task_excpending:
 ; Remove/Enqueue preserve a1.
 ; Exception signal (d0 & tc_SigExcept, exec-scheduling-v34 §2.7): TB_EXCEPT set, a waiting task is woken whatever
 ; its wait mask, then Reschedule (which only sets SAR when called from an interrupt).
+; Returns in D0 the task's tc_SigRecvd from before the call, as 1.3 does (undocumented, §2.7).
 exec_Signal:
         addq.b  #1,EB_IDNEST(a6)     ; BARE Disable (critical section vs scheduler)
         move.w  #INTF_INTEN,INTENA   ; INTEN off (bit14)
+        move.l  TC_SIGRECVD(a1),-(sp)
         or.l    d0,TC_SIGRECVD(a1)
         and.l   TC_SIGEXCEPT(a1),d0
         bne.s   .sig_exc
@@ -319,7 +321,9 @@ exec_Signal:
         cmp.l   EB_TASKREADY(a6),a1
         beq.s   .sig_resched         ; it is the head: Enable, then Reschedule
 .sig_done:
-        bra     raw_enable           ; BARE exit (INTEN on if IDNest<0; no reschedule tail)
+        bsr     raw_enable           ; BARE exit (INTEN on if IDNest<0; no reschedule tail)
+        move.l  (sp)+,d0
+        rts
 .sig_exc:
         bset    #TB_EXCEPT,TC_FLAGS(a1)
         cmp.b   #TS_WAIT,TC_STATE(a1)
@@ -330,7 +334,9 @@ exec_Signal:
         jsr     LVO_ENQUEUE(a6)
 .sig_resched:
         bsr     raw_enable
-        jmp     LVO_RESCHEDULE(a6)
+        jsr     LVO_RESCHEDULE(a6)
+        move.l  (sp)+,d0
+        rts
 
 ; SetTaskPri(task a1, pri d0.b) -> d0 = old priority, ZERO-extended as in 1.3 (-1 -> $000000FF). A READY task
 ; is re-enqueued; Reschedule when the task is the running one or became the head of TaskReady
