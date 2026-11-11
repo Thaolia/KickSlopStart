@@ -5309,6 +5309,8 @@ gfx_BltBitMapRastPort:
         sub.l   a2,a2
         bra     gfx_BltBitMap
 .bb_two:
+        bsr     br_blit
+        bne     .bb_oret
         bsr     br_copy
         bne     .bb_oret
         moveq   #0,d7                ; d7 = plane
@@ -5360,6 +5362,263 @@ gfx_BltBitMapRastPort:
         addq.w  #1,d7
         bra     .bb_plane
 .bb_oret:
+        rts
+
+; Word-aligned sources can be shifted into arbitrary destination phases by the blitter's B channel.
+; Validate all selected planes, including the final masked B fetch and cross-plane aliasing, before any DMA.
+; Unsupported alignment, constants, non-CHIP memory and aliasing retain the CPU engines below.
+RB_SOFF         EQU 0
+RB_DOFF         EQU 4
+RB_SRANGE       EQU 8
+RB_DRANGE       EQU 12
+RB_SMOD         EQU 16
+RB_DMOD         EQU 18
+RB_FWM          EQU 20
+RB_LWM          EQU 22
+RB_SHIFT        EQU 24
+RB_BLTSIZE      EQU 26
+RB_PLANE        EQU 28
+RB_MASK         EQU 30
+RB_GFX          EQU 32
+RB_SIZE         EQU 36
+br_blit:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        move.l  a4,a2
+        lea     -RB_SIZE(sp),sp
+        move.l  sp,a4
+        move.l  a6,RB_GFX(a4)
+        cmp.b   #$c0,DC_MINTERM(a5)
+        bne     .rb_no
+        move.w  d0,d6
+        or.w    d1,d6
+        or.w    d2,d6
+        or.w    d3,d6
+        bmi     .rb_no
+        move.w  d0,d6
+        and.w   #15,d6
+        bne     .rb_no              ; clipping to a non-word-aligned source keeps the CPU path
+        move.w  bm_BytesPerRow(a2),d6
+        or.w    bm_BytesPerRow(a3),d6
+        btst    #0,d6
+        bne     .rb_no
+        tst.w   bm_BytesPerRow(a2)
+        ble     .rb_no
+        tst.w   bm_BytesPerRow(a3)
+        ble     .rb_no
+        moveq   #0,d6
+        move.b  bm_Depth(a3),d6
+        beq     .rb_no
+        cmp.w   #8,d6
+        bhi     .rb_no
+        cmp.b   bm_Depth(a2),d6
+        bhi     .rb_no
+        moveq   #0,d6
+        move.w  d0,d6
+        add.w   d4,d6
+        bcs     .rb_no
+        moveq   #0,d7
+        move.w  bm_BytesPerRow(a2),d7
+        lsl.l   #3,d7
+        cmp.l   d7,d6
+        bhi     .rb_no
+        moveq   #0,d6
+        move.w  d2,d6
+        add.w   d4,d6
+        bcs     .rb_no
+        moveq   #0,d7
+        move.w  bm_BytesPerRow(a3),d7
+        lsl.l   #3,d7
+        cmp.l   d7,d6
+        bhi     .rb_no
+        move.w  d1,d6
+        add.w   d5,d6
+        bcs     .rb_no
+        cmp.w   bm_Rows(a2),d6
+        bhi     .rb_no
+        move.w  d3,d6
+        add.w   d5,d6
+        bcs     .rb_no
+        cmp.w   bm_Rows(a3),d6
+        bhi     .rb_no
+        cmp.w   #1024,d5
+        bhi     .rb_no
+        move.w  d2,d6
+        and.w   #15,d6
+        moveq   #-1,d7
+        lsr.w   d6,d7
+        move.w  d7,RB_FWM(a4)
+        ror.w   #4,d6
+        move.w  d6,RB_SHIFT(a4)
+        move.w  d2,d6
+        add.w   d4,d6
+        subq.w  #1,d6
+        move.w  d6,d7
+        and.w   #15,d7
+        moveq   #15,d4
+        sub.w   d7,d4
+        moveq   #-1,d7
+        lsl.w   d4,d7
+        move.w  d7,RB_LWM(a4)
+        lsr.w   #4,d6
+        move.w  d2,d7
+        lsr.w   #4,d7
+        sub.w   d7,d6
+        addq.w  #1,d6              ; words fetched per row, including masked edges
+        cmp.w   #64,d6
+        bhi     .rb_no
+        move.w  d6,d4
+        mulu    d5,d4
+        cmp.l   #64,d4
+        blo     .rb_no
+        move.w  d5,d4
+        lsl.w   #6,d4
+        move.w  d6,d7
+        and.w   #63,d7
+        or.w    d7,d4
+        move.w  d4,RB_BLTSIZE(a4)
+        add.w   d6,d6              ; DMA row byte count
+        lsr.w   #3,d0
+        and.l   #$ffff,d0
+        mulu    bm_BytesPerRow(a2),d1
+        add.l   d0,d1
+        move.l  d1,RB_SOFF(a4)
+        lsr.w   #4,d2
+        add.w   d2,d2
+        and.l   #$ffff,d2
+        mulu    bm_BytesPerRow(a3),d3
+        add.l   d2,d3
+        move.l  d3,RB_DOFF(a4)
+        move.w  bm_BytesPerRow(a2),d0
+        sub.w   d6,d0
+        move.w  d0,RB_SMOD(a4)
+        move.w  bm_BytesPerRow(a3),d0
+        sub.w   d6,d0
+        move.w  d0,RB_DMOD(a4)
+        subq.w  #1,d5
+        move.w  d5,d0
+        mulu    bm_BytesPerRow(a2),d0
+        and.l   #$ffff,d6
+        add.l   d6,d0
+        move.l  d0,RB_SRANGE(a4)
+        mulu    bm_BytesPerRow(a3),d5
+        add.l   d6,d5
+        move.l  d5,RB_DRANGE(a4)
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),RB_MASK(a4)
+        move.l  4.w,a6
+        moveq   #0,d7
+.rb_validate:
+        cmp.b   bm_Depth(a3),d7
+        bhs     .rb_valid
+        btst    d7,RB_MASK(a4)
+        beq     .rb_vnext
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),d3
+        beq     .rb_no
+        cmp.l   #-1,d3
+        beq     .rb_no
+        add.l   RB_SOFF(a4),d3
+        bcs     .rb_no
+        btst    #0,d3
+        bne     .rb_no
+        move.l  d3,a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .rb_no
+        move.l  d3,d4
+        add.l   RB_SRANGE(a4),d4
+        bcs     .rb_no
+        move.l  d4,a1
+        subq.l  #1,a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .rb_no
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a3,d0.w),d5
+        add.l   RB_DOFF(a4),d5
+        bcs     .rb_no
+        move.l  d5,a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .rb_no
+        add.l   RB_DRANGE(a4),d5
+        bcs     .rb_no
+        move.l  d5,a1
+        subq.l  #1,a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .rb_no
+        moveq   #0,d2              ; every enabled destination plane must be disjoint from this source span
+.rb_alias:
+        cmp.b   bm_Depth(a3),d2
+        bhs.s   .rb_vnext
+        btst    d2,RB_MASK(a4)
+        beq.s   .rb_anext
+        move.w  d2,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a3,d0.w),d5
+        add.l   RB_DOFF(a4),d5
+        bcs     .rb_no
+        move.l  d5,d6
+        add.l   RB_DRANGE(a4),d6
+        bcs     .rb_no
+        cmp.l   d4,d5
+        bhs.s   .rb_anext
+        cmp.l   d6,d3
+        blo     .rb_no
+.rb_anext:
+        addq.w  #1,d2
+        bra.s   .rb_alias
+.rb_vnext:
+        addq.w  #1,d7
+        bra     .rb_validate
+.rb_valid:
+        move.l  a2,-(sp)
+        move.l  a3,a2
+        move.l  RB_GFX(a4),a6
+        bsr     db_enter           ; validates destination CHIP planes and takes a nonblocking blitter hold
+        move.l  (sp)+,a2
+        beq     .rb_no
+        clr.w   RB_PLANE(a4)
+.rb_plane:
+        move.w  RB_PLANE(a4),d7
+        cmp.b   bm_Depth(a3),d7
+        bhs.s   .rb_done
+        btst    d7,RB_MASK(a4)
+        beq.s   .rb_next
+        bsr     db_wait
+        move.w  #$07ca,BLT_CON0(a0) ; D = A ? B : C, A constant with destination word-edge masks
+        move.w  RB_SHIFT(a4),BLT_CON1(a0)
+        clr.w   BLT_BDAT(a0)
+        move.w  #$ffff,BLT_ADAT(a0)
+        move.w  RB_FWM(a4),BLT_AFWM(a0)
+        move.w  RB_LWM(a4),BLT_ALWM(a0)
+        move.w  RB_SMOD(a4),BLT_BMOD(a0)
+        move.w  RB_DMOD(a4),BLT_CMOD(a0)
+        move.w  RB_DMOD(a4),BLT_DMOD(a0)
+        lsl.w   #2,d7
+        move.l  bm_Planes(a2,d7.w),a1
+        adda.l  RB_SOFF(a4),a1
+        move.l  a1,BLT_BPT(a0)
+        move.l  bm_Planes(a3,d7.w),a1
+        adda.l  RB_DOFF(a4),a1
+        move.l  a1,BLT_CPT(a0)
+        move.l  a1,BLT_DPT(a0)
+        move.w  RB_BLTSIZE(a4),BLT_SIZE(a0)
+.rb_next:
+        addq.w  #1,RB_PLANE(a4)
+        bra.s   .rb_plane
+.rb_done:
+        bsr     db_leave
+        moveq   #1,d0
+        bra.s   .rb_return
+.rb_no:
+        moveq   #0,d0
+.rb_return:
+        lea     RB_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 
 ; Copy a disjoint byte-aligned rectangle without rebuilding row alignment or multiplying row indices.
@@ -6108,12 +6367,27 @@ gfx_BltBitMap:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; Source-independent minterms need neither a source-row snapshot nor the per-byte truth-table engine.
+; Source-independent minterms, including identical source/destination pixels reduced to their diagonal truth
+; table, need neither a source-row snapshot nor the per-byte truth-table engine.
 ; Use the rectangle engine for clear/set/invert, including its CHIP blits and byte-addressable CPU fallback.
 ; a3/a4 = destination/source BitMaps, a5 = BB frame, a6 = GfxBase. Z clear when handled; preserves registers.
 bb_solid:
         movem.l d0-d7/a0-a4/a6,-(sp)
         move.b  DC_MINTERM(a5),d0
+        cmpa.l  a3,a4
+        bne.s   .bs_classify
+        move.l  BB_SX(a5),d1
+        cmp.l   BB_DX(a5),d1
+        bne.s   .bs_classify
+        ; B and C are the same pixel: only truth-table entries 00 and 11 can occur.
+        ; Expand those two entries into the equivalent source-independent operation.
+        and.b   #$90,d0
+        move.b  d0,d1
+        lsl.b   #2,d0
+        or.b    d1,d0
+        lsr.b   #2,d1
+        or.b    d1,d0
+.bs_classify:
         and.b   #$f0,d0
         beq.s   .bs_go
         cmp.b   #$f0,d0

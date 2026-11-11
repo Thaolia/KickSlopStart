@@ -121,10 +121,13 @@ within the module can change the requested update interval.
 `make test-graphics-copymin` (also included through the normal and quick Graphics groups) tests authored
 bitmap patterns through `BltBitMap`, `BltBitMapRastPort` and `ClipBlit` in CHIP and non-DMA memory. The independent
 per-pixel Boolean oracle in `mk_copymin_cases.py` generates whole-buffer fingerprints, including untouched
-rows, columns, masked planes and allocation guards. The 267 cases cover all 256 minterms, constant source
+rows, columns, masked planes and allocation guards. The 371 cases cover all 256 minterms, constant source
 planes, safe leftward aliasing, negative destination clipping, zero/partial/full masks, shifted bit phases,
 odd strides, odd plane addresses, different source/destination parity and multi-block row tails. The fixture
 also verifies preserved destination RastPort state, the minterm register and the BltBitMap plane count.
+Same-position operations additionally run through one actual RastPort, covering all Boolean diagonal reductions.
+Five-plane copies exercise every destination word phase in CHIP and non-DMA memory, including odd strides and
+addresses; boundary cases cover word-aligned source offsets, clipping and the blitter's 64-word/1024-row limits.
 
 A five-plane, 40-byte-stride, 256-row workload restores `(0,11)` to `(0,11)` over 296 by 245 pixels. Four
 `ClipBlit` restores followed by `WaitBlit` are measured for each of `$C0` and `$CC`, first in CHIP and then
@@ -133,6 +136,26 @@ non-DMA memory, with pixel fingerprints checked after each workload. Both four-c
 Timing excludes buffer generation and fingerprints. The pre-fix production ROM passes pixels but fails this
 latency gate. Success requires `COPYMIN PIXELS OK`, two `COPYMIN RESTORE` timing records (hex scanlines),
 `COPYMIN OK` and `COPYMIN END`. Logs/screenshots are in `build/copymin-results/`.
+
+Two `COPYMIN MOTION` records time four 40-by-40, five-plane shifted copies and same-port `$20` clears.
+Each four-call total must stay below 1000 PAL scanlines (an average below one frame), with the full-buffer pixel
+fingerprint and RastPort-state checks still required. This catches the slow clear/redraw cycle in Fred Fish #1's
+Balls demo; the pre-fix ROM passes the pixel checks but fails the small-copy timing gate.
+
+## Native borderless title and close-gadget regression
+
+`make test-intuition-borderless` (included through normal and quick Intuition groups) opens plain, close-only and
+BACKDROP borderless windows. It checks zero base borders, the screen-font-based top border, independently reads
+back title/gadget pixels and untouched interior pixels, refreshes the frame, then injects a real press/release
+through input.device and requires exactly one CLOSEWINDOW message per click. The cases repeat with the default
+font and explicit Topaz 8, clicking both the middle and last row of the ten-line close gadget; this catches release
+hit testing incorrectly clipped to a shorter title border. The authored fixture also passes on official
+Kickstart 1.3. The pre-fix production ROM fails the decorated-window geometry check. Success requires
+`BORDERLESS OK` and `BORDERLESS END`; failure records the stage. Logs/screenshots are in `build/borderless-results/`.
+
+For a private standalone Balls boot disk, also copy `devs/system-configuration` from the Workbench disk used
+for the reference run. That disk selects Topaz 8; omitting its saved Preferences selects the ROM's larger
+Topaz 9 default on both ROMs. Preserve the original Fred Fish disk and keep Workbench files out of the repository.
 
 ## Native line-pen and cursor-erasure regression
 

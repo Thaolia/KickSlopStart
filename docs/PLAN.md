@@ -8,6 +8,23 @@ This preserves narrator.device's worker context. The initial CLI also uses the s
 allowing equal-priority worker handoffs between speech requests. New `test-exec-taskargs` and
 `test-exec-clipri` regressions belong to both normal and quick Exec groups and have official-ROM oracles.
 
+Graphics/Intuition compatibility update (2026-11-10): borderless windows retain explicitly requested title bars
+and system gadgets, including close-button input. BorderTop uses the screen's requested font height in bordered
+and borderless windows. This restores Fred Fish #1's Balls control strip. Native `test-intuition-borderless`,
+in normal and quick Intuition groups, checks geometry, title/gadget pixels, frame refresh and real close clicks,
+including the last gadget row with Topaz 8's shorter border;
+the fixture also passes on Kickstart 1.3.
+
+Graphics performance update (2026-11-10): identical-pixel bitmap operations reduce their Boolean minterms before
+dispatch, and disjoint word-aligned CHIP sources use blitter B-channel shifts for RastPort copies. Bounds, plane
+masks, CHIP addresses and cross-plane aliasing are checked before DMA; unsupported cases retain CPU fallbacks.
+The expanded `test-graphics-copymin` covers all destination phases, same-port minterms, odd/non-DMA fallbacks,
+hardware size limits and small five-plane animation timing. Balls' clear/copy loop no longer spends multiple
+frames erasing each old image. Its ball pixels match the original ROM at the same application loop state;
+existing hand-authored font and system-gadget artwork differences remain in the title strip.
+The private standalone boot fixture also includes the reference Workbench disk's saved Preferences, so it uses
+the same Topaz 8 size as the Workbench-launched demo instead of the ROM's Topaz 9 default.
+
 Graphics compatibility update (2026-11-09): RectFill now honors client-supplied per-plane RastPort minterms in
 both CPU and solid blitter paths, restoring selected labels and highlight colours in DPaint III's format
 chooser. Private explicit-pen fills retain their existing behavior; text clearing and Intuition ghost drawing

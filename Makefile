@@ -181,7 +181,7 @@ test-graphics-quick: test-graphics-copymin
 test-graphics-copymin: kick-prod $(BUILD)/copymin
 	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/copymin \
 	  --out $(BUILD)/copymin-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
-	  --seconds 180 --tag COPYMIN --pass-marker "COPYMIN OK" --workloads
+	  --seconds 240 --tag COPYMIN --pass-marker "COPYMIN OK" --workloads
 $(BUILD)/copymin_cases.i: tests/mk_copymin_cases.py | $(BUILD)
 	$(PYTHON) -I $< > $@
 $(BUILD)/copymin: tests/copymin.s $(BUILD)/copymin_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
@@ -198,6 +198,15 @@ $(BUILD)/linepens_cases.i: tests/mk_linepens_cases.py | $(BUILD)
 $(BUILD)/linepens: tests/linepens.s $(BUILD)/linepens_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
 	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(BUILD) -o $@ $<
 .PHONY: test-intuition-mousepoll
+test-intuition: test-intuition-borderless
+test-intuition-quick: test-intuition-borderless
+.PHONY: test-intuition-borderless
+test-intuition-borderless: kick-prod $(BUILD)/borderless
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/borderless \
+	  --out $(BUILD)/borderless-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 40 --tag BORDERLESS --pass-marker "BORDERLESS OK" --workloads
+$(BUILD)/borderless: tests/borderless.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
 test-intuition: test-intuition-mousepoll
 test-intuition-quick: test-intuition-mousepoll
 test-intuition-mousepoll: kick-prod $(BUILD)/mousepoll
