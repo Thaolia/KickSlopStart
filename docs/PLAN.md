@@ -2,6 +2,12 @@
 
 ## Context
 
+Exec compatibility update (2026-11-10): AddTask builds its initial frame below the supplied `tc_SPReg`,
+preserving arguments placed above it; zero retains the existing stack-upper fallback for internal callers.
+This preserves narrator.device's worker context. The initial CLI also uses the standard priority zero,
+allowing equal-priority worker handoffs between speech requests. New `test-exec-taskargs` and
+`test-exec-clipri` regressions belong to both normal and quick Exec groups and have official-ROM oracles.
+
 Graphics compatibility update (2026-11-09): RectFill now honors client-supplied per-plane RastPort minterms in
 both CPU and solid blitter paths, restoring selected labels and highlight colours in DPaint III's format
 chooser. Private explicit-pen fills retain their existing behavior; text clearing and Intuition ghost drawing

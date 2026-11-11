@@ -54,7 +54,8 @@ init_task:
 ; exec-scheduling-v34 §4.2: tc_Flags 0, nest counts -1/-1 (permitted & enabled), SigWait/SigRecvd/SigExcept 0,
 ; tc_TrapCode / tc_ExceptCode defaulted from ExecBase when 0, finalPC 0 -> ExecBase TaskExitCode. Context in the
 ; §4.1 layout, all registers 0: [PC=initialPC][SR=$0000][d0-d7/a0-a6 = 0][finalPC]; TC_SPREG -> the PC; USP at 1st entry = TC_SPREG+FRAME_SIZE
-; -> points to finalPC (return if the task does RTS). Built from TC_SPUPPER (our callers set SPLOWER/UPPER only).
+; -> points to finalPC (return if the task does RTS). Built below the caller's TC_SPREG, preserving arguments
+; above it. A zero TC_SPREG retains the SPUPPER fallback for internal callers that only supply stack bounds.
 ; A task that becomes the head of TaskReady gets a Reschedule: from a task outside Forbid it runs at once.
 exec_AddTask:
         tst.b   LN_TYPE(a1)          ; ln_Type is set by the caller (CreateProc -> NT_PROCESS): do NOT overwrite it
@@ -83,7 +84,11 @@ exec_AddTask:
         bne.s   .at_fin
         move.l  EB_TASKEXITCODE(a6),d0
 .at_fin:
-        move.l  TC_SPUPPER(a1),a0    ; top of the task's user stack
+        move.l  TC_SPREG(a1),a0      ; callers can place initial arguments below the stack's upper bound
+        cmpa.w  #0,a0
+        bne.s   .at_stack
+        move.l  TC_SPUPPER(a1),a0    ; legacy internal callers supply only the bounds
+.at_stack:
         move.l  d0,-(a0)             ; finalPC (A3, or TaskExitCode when 0): return if the task does RTS
         moveq   #14,d0
 .at_zero:

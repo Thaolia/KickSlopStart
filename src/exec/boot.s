@@ -6064,7 +6064,7 @@ dw_teardown:
 initial_cli:
         lea     sh_cname(pc),a0
         move.l  #shell_main,a1       ; absolute: shell.o linked out of 16-bit lea(pc) range
-        moveq   #2,d0                ; Initial CLI pri 2 (sole consumer of the console)
+        moveq   #0,d0                ; standard CLI priority: equal-priority device workers can run at handoff
         move.l  #SH_STK,d1           ; the commands it launches run on this stack
         jmp     proc_create
 st_name:

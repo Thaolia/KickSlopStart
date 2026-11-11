@@ -25,6 +25,19 @@ Quantum and Elapsed read by a busy loop on 8 frames (timer.device's quantum, `ti
 returns (the previous tc_SigRecvd, `exec-scheduling-v34.md` §2.7), and SR and INTENAR inside a software interrupt
 (SR $2000, SOFTINT off, §8). Success: `SCHED OK`.
 
+## Native task startup arguments and initial CLI priority
+
+`make test-exec-taskargs` (normal and quick Exec groups) supplies four initial `tc_SPReg` positions below
+`tc_SPUpper`, including a word-aligned position, with authored arguments and guarded padding. The child must
+see those arguments at entry, return through the default or custom finalPC, and preserve the caller's argument
+area. This catches narrator.device's lost startup context. The pre-fix ROM fails; the corrected ROM and official
+Kickstart 1.3 pass. Success requires `TASKARGS OK` and `TASKARGS END`; logs are in `build/taskargs-results/`.
+
+`make test-exec-clipri` (normal and quick Exec groups) verifies that the initial CLI runs at priority zero and
+hands control to an ordinary priority-zero worker when Forbid ends. It reproduces the elevated CLI priority
+that delayed narrator.device between utterances. The old ROM fails; the corrected and official ROMs pass.
+Success requires `CLIPRI OK` and `CLIPRI END`; logs are in `build/clipri-results/`.
+
 ## ClipBlit within one RastPort
 
 `tests/clipblit_probe.sh <out_dir> [rom]` runs `tests/clipblit_probe.s`: a borderless SMART_REFRESH window filled
