@@ -2,6 +2,41 @@
 
 ## Context
 
+Menu latency update (2026-11-11): narrow proportional glyphs compose by strided byte/word operations, and
+staged menus reuse one CHIP text scratch buffer. Layer backups prefer CHIP with a public-memory fallback;
+JAM2 and congruent source phases use template DMA for masked bitmap copies. Plain text menu surfaces are
+retained only within the held-menu session. Exact source snapshots cover screen geometry, pens, font metrics,
+glyph data/tables and item text; changed data is redrawn, unsupported renderings use the ordinary path, and
+cached storage is released on menu close or evicted and retried under allocation pressure. Native menu tests
+check twenty long items, repeated visits, source-color invalidation and storage release. New
+`test-graphics-textcompose` checks 2,304 independently evaluated glyph/phase/mode/mask cases in CHIP and
+non-DMA bitmaps, plus a bounded repeated-line workload, under normal and quick Graphics groups.
+
+Intuition menu compatibility/performance update (2026-11-11): menu bars and boxes use the active window's
+DetailPen/BlockPen, preserve full proportional-font title strings, and highlight the selected title. Low-resolution
+screens expose the appropriate bar/menu borders. Item bounds inherit the screen font when ITextFont is absent;
+the first draw refreshes those bounds after client string changes. The smart menu bar preserves its overlapping
+last row while switching boxes. Boxes use those bounds and are composed in a temporary CHIP bitmap before one copy to the visible layer,
+avoiding progressive fills/text/stipples. Graphics Text skips rendering a run consisting entirely of zero-width glyph images
+when only character spacing changes: pen advance and buffer limits remain intact; JAM2, inverse video and underline
+retain their rendering paths. Composed text buffers prefer CHIP RAM so eligible glyph runs reach the template
+blitter, with a public-memory fallback when CHIP allocation fails. Distinct bitmap copies share the existing
+rectangle engines, including masked final-byte CPU copies, instead of repeating per-row setup. Native `test-intuition-menupens` and `test-graphics-textblank`, under normal/quick
+component groups, cover the contrasting pens, proportional glyphs, disabled titles, margins, pixel guards, draw-mode
+fallbacks, pen advance and a bounded spacing-only workload. Existing font/submenu tests continue to exercise the
+layered menu path. Hover-redraw follow-up (2026-11-11): the visible popup RastPort inherits the screen font
+and algorithmic style as well as the staging RastPort. HIGHIMAGE text selection and restoration no longer use
+the larger global default font. The menu regression now checks repeated brighter-text selection and restoration
+against an authored glyph block with no explicit ITextFont; full popup captures also match the original ROM
+through repeated hover/unhover cycles.
+
+Exec interrupt-chain compatibility update (2026-11-11): AddIntServer retains the active public server-list
+header and dispatcher when software wraps or relocates the dispatcher into RAM. A changed code address no
+longer causes an existing chain to be cleared. This preserves the graphics, gameport and timer VBlank servers
+when Mortevielle installs and removes its voice-timing server, keeping mouse movement and clicks alive after
+speech. Native `test-exec-irqchain`, in normal and quick Exec groups, checks a RAM trampoline with two servers,
+including the first server continuing to run after the second is added and removed; the official-ROM oracle passes.
+
 Graphics compatibility update (2026-11-09): RectFill now honors client-supplied per-plane RastPort minterms in
 both CPU and solid blitter paths, restoring selected labels and highlight colours in DPaint III's format
 chooser. Private explicit-pen fills retain their existing behavior; text clearing and Intuition ghost drawing

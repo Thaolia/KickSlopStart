@@ -756,7 +756,8 @@ exec_SetIntVector:
         rts
 
 ; AddIntServer(intNum d0, interrupt a1) -> void. Adds the server to the chain of the number, sorted by
-; LN_PRI. 1st server: NEWLISTs the svlist, sets IV_DATA=&svlist / IV_CODE=intr_chain_walker. a6=SysBase.
+; LN_PRI. An uninitialized vector gets a list and dispatcher; established iv_Data is the chain even when
+; software has wrapped or relocated iv_Code. a6=SysBase.
 ; Then enables the chain's source in INTENA, as the 1.3 exec does at every add (custom-chips-v34 §3.1): software
 ; that adds a COPER server counts on it. Masked: the chain may be walked by its interrupt meanwhile.
 exec_AddIntServer:
@@ -770,8 +771,8 @@ exec_AddIntServer:
         move.w  d2,d1               ; &IntVects[n] = ExecBase + EB_INTVECTS + n*12
         mulu    #IV_SIZE,d1
         lea     EB_INTVECTS(a6,d1.l),a0
-        cmp.l   #intr_chain_walker,IV_CODE(a0)
-        beq.s   .ais_enq            ; already a chain
+        tst.l   IV_DATA(a0)
+        bne.s   .ais_enq            ; preserve an established chain and its current dispatcher
         move.w  d2,d1               ; 1st server: &svlist[n] = block + n*14
         mulu    #IV_LIST_SIZE,d1
         lea     0(a3,d1.l),a1       ; a1 = &svlist[n]
@@ -793,9 +794,7 @@ exec_AddIntServer:
         move.l  #intr_chain_walker,IV_CODE(a0)
         clr.l   IV_NODE(a0)
 .ais_enq:
-        move.w  d2,d1               ; &svlist[n] (robust to both paths)
-        mulu    #IV_LIST_SIZE,d1
-        lea     0(a3,d1.l),a0       ; a0 = &svlist[n]
+        move.l  IV_DATA(a0),a0      ; use the active public header, including a relocated chain
         move.l  a2,a1               ; a1 = interrupt
         jsr     LVO_ENQUEUE(a6)     ; inserts by LN_PRI (head = highest pri)
         move.w  #INTF_SETCLR,d1

@@ -17,6 +17,16 @@ def cases():
     yield [8, 8, 16, 2048, 2, 2, 3, 0, 0, -8, -2, 40, 24, 0xCC, 32, 1024]
     for width in [520, 592, 632]:
         yield [80, 80, 16, 8192, 2, 2, 3, 0, 1, 0, 4, width, 20, 0xCC, 32, 4096]
+    # Menu-strip backups, masked popup edges and unequal depths through every bitmap API.
+    for mt in [0xC0, 0xCC]:
+        for sb, db, sx, dx, width, height, sd, dd, mask in [
+                (40, 40, 0, 0, 320, 11, 5, 5, 31),
+                (22, 40, 0, 0, 167, 72, 5, 5, 31),
+                (40, 22, 0, 0, 167, 72, 5, 5, 21),
+                (40, 40, 3, 9, 167, 72, 2, 5, 3),
+                (40, 14, 72, 8, 87, 176, 5, 5, 31),
+                (14, 40, 8, 72, 87, 176, 5, 5, 5)]:
+            yield [sb, db, 16, 51232, sd, dd, mask, sx, 0, dx, 1, width, height, mt, 256, 27648]
     for so, do in [(16, 51232), (17, 51233), (16, 51233)]:
         yield [40, 40, so, do, 5, 5, 31, 0, 11, 0, 11, 296, 245, 0xCC, 256, 27648]
 

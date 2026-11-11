@@ -118,7 +118,8 @@ IB_STRPWIN       EQU IB_STRPEND+4      ; its window
 IB_OWTIME        EQU IB_STRPWIN+4      ; 2 LONGs: time of the last event handled when OpenWindow was called
 IB_MVQUAL        EQU IB_OWTIME+8       ; WORD: ie_Qualifier of the last movement (IB_MOVED), for its MOUSEMOVE
 IB_RCDONE        EQU IB_MVQUAL+2       ; BYTE: Preferences row/column size change applied (once, intuition-prefs §3.3)
-INTUITIONBASE_SIZE EQU IB_RCDONE+2
+IB_MENUCACHE     EQU IB_RCDONE+2      ; private staged text-menu surfaces, owned by the active menu session
+INTUITIONBASE_SIZE EQU IB_MENUCACHE+4
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

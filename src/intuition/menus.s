@@ -1,8 +1,8 @@
 ; src/intuition/menus.s - intuition menus: SetMenuStrip/ClearMenuStrip, ItemAddress, OnMenu/OffMenu, PrintIText,
 ; IntuiTextLength, and the right-button interaction (intuition input task).
 ; Right button pressed over the active window that has a menu strip (and no RMBTRAP): the screen's title bar is
-; covered by a simple layer carrying the menu titles; the pointer in the bar pulls down the targeted menu
-; (a second simple layer under the bar, ITEMTEXT or image items); the item under the pointer is
+; covered by a smart layer carrying the menu titles; the pointer in the bar pulls down the targeted menu
+; (a smart layer under the bar, ITEMTEXT or image items); the item under the pointer is
 ; highlighted (inversion) if it is enabled. On release: MENUPICK to the window with the selection code (MENUNULL
 ; otherwise), layers deleted; layers gives the area back to the windows (backup of smart windows, REFRESHWINDOW for
 ; simple windows via it_refresh). Disabled items or menus are ghosted by the 1.3 dot pattern in
@@ -42,12 +42,13 @@
                 xdef    intuition_IntuiTextLength
                 xdef    it_menubutton
                 xdef    it_menumove
+                xdef    mn_boxfree
+                xref    mn_cache_lookup,mn_cache_store,mn_cache_dispose,mn_cache_clear
                 xdef    mn_lbutton
                 xdef    mn_keyshort
                 xdef    mn_keypick
                 xdef    mn_defcheck
                 xref    it_refresh
-                xref    it_title
                 xref    it_box
                 xref    it_scrxy
                 xref    wn_sendgad
@@ -86,9 +87,21 @@ intuition_SetMenuStrip:
         move.l  a1,a2
 .sm_menu:
         move.l  a2,d0
-        beq     .sm_ret
+        beq.s   .sm_ret
+        bsr     mn_measuremenu
+        move.l  MU_NEXTMENU(a2),a2
+        bra.s   .sm_menu
+.sm_ret:
+        movem.l (sp)+,d2-d7/a2-a4
+        moveq   #1,d0
+        rts
+
+; Measure current item contents with the screen font. Applications may fill strings after SetMenuStrip;
+; the first draw in each menu session refreshes the public box cache before MIDRAWN is set.
+mn_measuremenu:
+        movem.l d2-d7/a2-a4,-(sp)
         move.l  MU_FIRSTITEM(a2),d0
-        beq     .sm_next
+        beq     .sm_done
         move.l  d0,a3
         move.w  #$7FFF,d4            ; d4..d7 = left, top, right, bottom
         move.w  d4,d5
@@ -129,12 +142,8 @@ intuition_SetMenuStrip:
         move.w  d0,d6
 .sm_right:
         movem.w d4-d7,MU_JAZZX(a2)
-.sm_next:
-        move.l  MU_NEXTMENU(a2),a2
-        bra.s   .sm_menu
-.sm_ret:
+.sm_done:
         movem.l (sp)+,d2-d7/a2-a4
-        moveq   #1,d0
         rts
 .sm_union:                           ; d0..d3 = rectangle into d4..d7
         cmp.w   d4,d0
@@ -156,7 +165,7 @@ intuition_SetMenuStrip:
         rts
 .sm_fill:                            ; d0 = ItemFill | SelectFill of item a3: its extent, offset by the item
         tst.l   d0
-        beq.s   .sf_ret
+        beq     .sf_ret
         move.l  d0,a0
         btst    #1,MI_FLAGS+1(a3)    ; ITEMTEXT
         bne.s   .sf_text
@@ -169,10 +178,28 @@ intuition_SetMenuStrip:
         move.w  d1,d3
         add.w   IG_HEIGHT(a0),d3
         bra.s   .sf_go
-.sf_text:                            ; IntuiText: its length; bottom = font height, TopEdge not counted (§3.5)
+.sf_text:                            ; Missing ITextFont inherits the menu's screen font, not the global default.
+        tst.l   IT_ITEXTFONT(a0)
+        bne.s   .sf_explicit
+        movem.l a0/a6,-(sp)
+        lea     -rp_SIZEOF(sp),sp
+        move.l  IB_GFXBASE(a6),a6
+        move.l  sp,a1
+        jsr     LVO_INITRASTPORT(a6)
+        move.l  SC_RASTPORT+rp_Font(a4),a0
+        jsr     LVO_SETFONT(a6)
+        move.l  rp_SIZEOF(sp),a0
+        move.l  IT_ITEXT(a0),a0
+        bsr     mn_strlen
+        jsr     LVO_TEXTLENGTH(a6)
+        lea     rp_SIZEOF(sp),sp
+        movem.l (sp)+,a0/a6
+        bra.s   .sf_length
+.sf_explicit:
         move.l  a0,-(sp)
         bsr     intuition_IntuiTextLength
         move.l  (sp)+,a0
+.sf_length:
         move.w  d0,d2
         move.w  MI_LEFTEDGE(a3),d0
         add.w   IT_LEFTEDGE(a0),d0
@@ -181,8 +208,7 @@ intuition_SetMenuStrip:
         add.w   IT_TOPEDGE(a0),d1
         move.l  IT_ITEXTFONT(a0),d3  ; height of its font, the default one without
         bne.s   .sf_ta
-        move.l  IB_GFXBASE(a6),a1
-        move.l  gb_DefaultFont(a1),a1
+        move.l  SC_RASTPORT+rp_Font(a4),a1
         move.w  tf_YSize(a1),d3
         bra.s   .sf_h
 .sf_ta:
@@ -519,7 +545,7 @@ it_menubutton:
         moveq   #0,d3                ; lines 0..BarHeight-1
         move.b  SC_BARHEIGHT(a4),d3
         subq.w  #1,d3
-        moveq   #IL_SIMPLE,d4
+        moveq   #IL_SMART,d4
         suba.l  a2,a2
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_CREATEUPFRONTLAYER(a6)
@@ -547,6 +573,7 @@ it_menubutton:
 ; mn_rmbar(a5): closes the boxes and removes the bar layer, then repairs.
 mn_rmbar:
         bsr     mn_closebox
+        bsr     mn_cache_clear
         clr.l   IB_MENUCUR(a5)
         clr.b   IB_TRACK(a5)
         move.l  IB_MENUBAR(a5),a1
@@ -605,8 +632,8 @@ mn_menuup:
         movem.l (sp)+,d2-d3/d6/a3-a4
         rts
 
-; mn_drawbar(a3 = window, a4 = screen, a5): background in pen BlockPen, menu titles in pen DetailPen at their
-; LeftEdge; a disabled menu is ghosted.
+; mn_drawbar(a3 = window, a4 = screen, a5): window BlockPen/DetailPen, screen font and bar borders.
+; Menu names are complete strings: the nominal font width does not bound proportional-font text.
 mn_drawbar:
         movem.l d2-d7/a2,-(sp)
         move.l  IB_MENUBAR(a5),a2
@@ -615,8 +642,8 @@ mn_drawbar:
         move.l  a2,a1
         bsr     mn_screenfont
         move.l  a2,a1
-        moveq   #0,d0
-        move.b  SC_BLOCKPEN(a4),d0
+        bsr     mn_windowpens
+        move.l  d1,d0
         jsr     LVO_SETAPEN(a6)
         move.l  a2,a1
         moveq   #0,d0
@@ -631,21 +658,35 @@ mn_drawbar:
 .db_lp:
         tst.l   d7
         beq.s   .db_ret
+        bsr     mn_windowpens
+        move.l  a2,a1
+        jsr     LVO_SETAPEN(a6)
+        move.l  d1,d0
+        jsr     LVO_SETBPEN(a6)
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
         move.l  d7,a0
         moveq   #0,d0
-        move.b  SC_DETAILPEN(a4),d0
+        move.b  SC_BARHBORDER(a4),d0
+        add.w   MU_LEFTEDGE(a0),d0
         moveq   #0,d1
-        move.b  SC_BLOCKPEN(a4),d1
-        move.w  MU_WIDTH(a0),d2
-        move.w  MU_LEFTEDGE(a0),d3
-        addq.w  #4,d3
-        move.l  MU_MENUNAME(a0),a0
-        move.l  a2,a1
-        jsr     it_title
+        move.b  SC_BARVBORDER(a4),d1
+        add.w   rp_TxBaseline(a2),d1
+        jsr     LVO_MOVE(a6)
+        move.l  d7,a0
+        move.l  MU_MENUNAME(a0),d0
+        beq.s   .db_flags
+        move.l  d0,a0
+        bsr     mn_strlen
+        jsr     LVO_TEXT(a6)
+.db_flags:
         move.l  d7,a0
         btst    #0,MU_FLAGS+1(a0)    ; MENUENABLED
         bne.s   .db_nx
         move.w  MU_LEFTEDGE(a0),d0
+        moveq   #0,d1
+        move.b  SC_BARHBORDER(a4),d1
+        add.w   d1,d0
         moveq   #0,d1
         move.w  d0,d2
         add.w   MU_WIDTH(a0),d2
@@ -661,6 +702,22 @@ mn_drawbar:
         bra.s   .db_lp
 .db_ret:
         movem.l (sp)+,d2-d7/a2
+        rts
+
+; mn_windowpens(a4 = screen, a5): d0 = DetailPen, d1 = BlockPen of the menu's window.
+; A screen without a menu window uses its own pens. Clobbers a0.
+mn_windowpens:
+        moveq   #0,d0
+        moveq   #0,d1
+        move.l  IB_MENUWIN(a5),a0
+        cmpa.w  #0,a0
+        beq.s   .wp_screen
+        move.b  WD_DETAILPEN(a0),d0
+        move.b  WD_BLOCKPEN(a0),d1
+        rts
+.wp_screen:
+        move.b  SC_DETAILPEN(a4),d0
+        move.b  SC_BLOCKPEN(a4),d1
         rts
 
 ; Fresh menu layers otherwise retain the graphics global default instead of this screen's font and style.
@@ -689,9 +746,13 @@ mn_ghost:
         move.w  rp_Flags(a2),-(sp)
         move.l  #$44441111,d4        ; pattern rows 0 / 1
         move.l  rp_Layer(a2),d5
-        beq.s   .gh_rot
+        beq.s   .gh_buffer
         move.l  d5,a0
         move.w  lr_MinX(a0),d5
+        bra.s   .gh_phase
+.gh_buffer:
+        move.w  MB_X(a2),d5
+.gh_phase:
         and.w   #3,d5
         rol.w   d5,d4                ; screen x phase: bit 15 of a row = x of the layer's left edge
         swap    d4
@@ -770,6 +831,9 @@ mn_track:
         move.l  a2,d0
         beq.s   .mm_none
         move.w  d4,d0
+        moveq   #0,d1
+        move.b  SC_BARVBORDER(a4),d1
+        sub.w   d1,d0
         sub.w   MU_LEFTEDGE(a2),d0
         bmi.s   .mm_fnx
         cmp.w   MU_WIDTH(a2),d0
@@ -783,8 +847,13 @@ mn_track:
         cmp.l   IB_MENUCUR(a5),a2
         beq.s   .mm_none
         bsr     mn_closebox
+        move.l  a2,-(sp)
+        move.l  IB_MENUCUR(a5),a2
+        bsr     mn_hltitle
+        move.l  (sp)+,a2
         move.l  a2,IB_MENUCUR(a5)
         move.w  d6,IB_MENUNUM(a5)
+        bsr     mn_hltitle
         bsr     mn_openbox
 .mm_none:
         suba.l  a2,a2
@@ -797,10 +866,10 @@ mn_track:
         moveq   #0,d6
         move.w  d4,d2                ; position relative to the first item
         sub.w   IB_BOX(a5),d2
-        subq.w  #MB_MARGIN,d2
+        sub.w   IB_BOX+4(a5),d2
         move.w  d5,d3
         sub.w   IB_BOX+2(a5),d3
-        subq.w  #MB_MARGIN,d3
+        sub.w   IB_BOX+6(a5),d3
 .mm_it:
         move.l  a2,d0
         beq.s   mn_setitem
@@ -819,6 +888,34 @@ mn_track:
         addq.w  #1,d6
         bra.s   .mm_it
 .mm_ret:
+        rts
+
+; Toggle the enabled menu title in the bar's own layer. The window's menu pens are complemented through
+; the screen depth; the public BarVBorder positions both the hit rectangle and its highlight.
+mn_hltitle:
+        move.l  a2,d0
+        beq.s   .ht_ret
+        btst    #0,MU_FLAGS+1(a2)
+        beq.s   .ht_ret
+        movem.l d0-d3/a0-a1/a6,-(sp)
+        move.l  IB_MENUBAR(a5),a0
+        move.l  IL_RP(a0),a1
+        move.l  IB_GFXBASE(a5),a6
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  SC_BARVBORDER(a4),d0
+        add.w   MU_LEFTEDGE(a2),d0
+        moveq   #0,d1
+        move.w  d0,d2
+        add.w   MU_WIDTH(a2),d2
+        subq.w  #1,d2
+        moveq   #0,d3
+        move.b  SC_BARHEIGHT(a4),d3
+        subq.w  #1,d3
+        jsr     LVO_RECTFILL(a6)
+        movem.l (sp)+,d0-d3/a0-a1/a6
+.ht_ret:
         rts
 
 ; mn_setitem(a2 = targeted item | 0, d6.w = its number, a4, a5): the hit item changes -> sub-item box of another
@@ -876,8 +973,8 @@ mn_light:
 mn_hilite:
         move.l  IB_ITEMCUR(a5),a0
         move.l  IB_MENUBOX(a5),a1
-        moveq   #MB_MARGIN,d0
-        moveq   #MB_MARGIN,d1
+        move.w  IB_BOX+4(a5),d0
+        move.w  IB_BOX+6(a5),d1
         bra.s   mn_hlrect
 mn_hlsub:
         move.l  IB_SUBCUR(a5),a0
@@ -1073,28 +1170,26 @@ mn_openbox:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  MU_FIRSTITEM(a2),d0
         beq     .ob_ret
-        move.l  d0,a3
-        moveq   #0,d6                ; d6/d7 = extent of the items (right, bottom)
-        moveq   #0,d7
-.ob_ext:
-        move.w  MI_LEFTEDGE(a3),d0
-        add.w   MI_WIDTH(a3),d0
-        cmp.w   d6,d0
-        ble.s   .ob_e1
-        move.w  d0,d6
-.ob_e1:
-        move.w  MI_TOPEDGE(a3),d0
-        add.w   MI_HEIGHT(a3),d0
-        cmp.w   d7,d0
-        ble.s   .ob_e2
-        move.w  d0,d7
-.ob_e2:
-        move.l  MI_NEXTITEM(a3),d0
-        move.l  d0,a3
-        bne.s   .ob_ext
-        add.w   #2*MB_MARGIN-1,d6    ; d6/d7 = width / height - 1
-        add.w   #2*MB_MARGIN-1,d7
+        btst    #0,MU_FLAGS(a2)      ; MIDRAWN: lazily refresh bounds after client item changes
+        bne.s   .ob_measured
+        move.l  a5,a6
+        bsr     mn_measuremenu
+.ob_measured:
+        move.w  MU_BEATX(a2),d6
+        sub.w   MU_JAZZX(a2),d6      ; box width - 1, including the screen's menu borders
+        move.w  MU_BEATY(a2),d7
+        moveq   #0,d0
+        move.b  SC_MENUVBORDER(a4),d0
+        add.w   d0,d7                ; box height - 1
+        move.w  d0,IB_BOX+6(a5)      ; item origin inside the box (Y)
+        move.w  MU_JAZZX(a2),d0
+        neg.w   d0
+        move.w  d0,IB_BOX+4(a5)      ; item origin inside the box (X)
         move.w  MU_LEFTEDGE(a2),d0
+        moveq   #0,d1
+        move.b  SC_BARHBORDER(a4),d1
+        add.w   d1,d0
+        add.w   MU_JAZZX(a2),d0
         move.w  SC_WIDTH(a4),d1
         subq.w  #1,d1
         sub.w   d6,d1                ; maximum x0
@@ -1108,6 +1203,7 @@ mn_openbox:
 .ob_x0:
         moveq   #0,d1
         move.b  SC_BARHEIGHT(a4),d1
+        subq.w  #1,d1
         move.w  d0,d2
         add.w   d6,d2
         move.w  d1,d3
@@ -1119,26 +1215,67 @@ mn_openbox:
         move.w  d4,d3
 .ob_y:
         movem.w d0-d1,IB_BOX(a5)
-        moveq   #IL_SMART,d4         ; smart: the sub-item box placed on top of it leaves it intact
+        movem.w d6-d7,IB_BOXW(a5)
+        ; Compose the complete box before exposing it. Its smart layer still keeps the underlying
+        ; screen for normal item highlighting, submenus and removal.
+        movem.w d0-d3,-(sp)
+        bsr     mn_cache_lookup
+        tst.l   d0
+        beq.s   .ob_compose
+        move.l  d0,a3
+        bra.s   .ob_ready
+.ob_compose:
+        move.w  (sp),d0             ; lookup returns zero on a miss; allocation still needs the screen X phase
+        bsr     mn_boxalloc
+        tst.l   d0
+        bne.s   .ob_allocated
+        tst.l   IB_MENUCACHE(a5)
+        beq.s   .ob_allocated
+        bsr     mn_cache_clear       ; optional cached surfaces must not prevent a larger menu allocation
+        move.w  (sp),d0
+        bsr     mn_boxalloc
+.ob_allocated:
+        move.l  d0,a3
+        tst.l   d0
+        beq.s   .ob_nobuf
+        bsr     mn_paintbox
+        move.w  IB_BOX+4(a5),IB_DOX(a5)
+        move.w  IB_BOX+6(a5),IB_DOY(a5)
+        btst    #0,MU_FLAGS+1(a2)
+        seq     IB_DGHOST(a5)
+        move.l  a2,-(sp)
+        move.l  MU_FIRSTITEM(a2),a2
+        bsr     mn_drawitems
+        move.l  (sp)+,a2
+.ob_ready:
+        movem.w (sp)+,d0-d3
+        move.l  a2,-(sp)
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
-        move.l  a2,-(sp)
+        moveq   #IL_SMART,d4
         suba.l  a2,a2
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_CREATEUPFRONTLAYER(a6)
         move.l  (sp)+,a2
         move.l  d0,IB_MENUBOX(a5)
-        beq     .ob_ret
-        move.l  d0,a3
-        move.l  IL_RP(a3),a3         ; a3 = RastPort of the menu
-        movem.w d6-d7,IB_BOXW(a5)
-        bsr     mn_paintbox
-        move.w  #MB_MARGIN,IB_DOX(a5)
-        move.w  #MB_MARGIN,IB_DOY(a5)
-        btst    #0,MU_FLAGS+1(a2)    ; disabled menu: all its items ghosted
-        seq     IB_DGHOST(a5)
-        move.l  MU_FIRSTITEM(a2),a2
-        bsr     mn_drawitems
+        beq.s   .ob_layerfail
+        bset    #0,MU_FLAGS(a2)
+        move.l  d0,a0
+        move.l  IL_RP(a0),a1
+        bsr     mn_boxshow
+        bsr     mn_cache_store
+.ob_free:
+        bsr     mn_cache_dispose
+        bra.s   .ob_ret
+.ob_layerfail:
+        bsr     mn_cache_dispose
+        tst.l   IB_MENUCACHE(a5)
+        beq.s   .ob_ret
+        bsr     mn_cache_clear
+        movem.l (sp)+,d2-d7/a2-a4
+        bra     mn_openbox          ; one retry after eviction; an empty cache cannot cause another retry
+.ob_nobuf:
+        addq.l  #8,sp
 .ob_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
@@ -1161,6 +1298,15 @@ mn_drawitems:
         move.l  a5,a6
         btst    #1,MI_FLAGS+1(a2)    ; ITEMTEXT
         beq.s   .ob_img
+        tst.l   rp_Layer(a3)
+        bne.s   .ob_itext
+        tst.l   IT_ITEXTFONT(a1)
+        bne.s   .ob_itext
+        tst.l   IT_NEXTTEXT(a1)
+        bne.s   .ob_itext
+        bsr     mn_stagetext
+        bra.s   .ob_ghost
+.ob_itext:
         bsr     intuition_PrintIText
         bra.s   .ob_ghost
 .ob_img:
@@ -1199,6 +1345,32 @@ mn_drawitems:
         move.l  MI_NEXTITEM(a2),a2
         bra     .ob_it
 .ob_ret:
+        rts
+
+; A single inherited-font IntuiText in our private staging RastPort needs no public save/restore or line-state
+; resets. Text reads pens/mode directly; ghosting and any later RectFill synchronize their own minterms.
+mn_stagetext:
+        movem.l a2/a6,-(sp)
+        move.l  a0,a2
+        move.l  a1,a0
+        move.b  IT_FRONTPEN(a0),rp_FgPen(a2)
+        move.b  IT_BACKPEN(a0),rp_BgPen(a2)
+        move.b  IT_DRAWMODE(a0),rp_DrawMode(a2)
+        st      rp_Mask(a2)
+        add.w   IT_LEFTEDGE(a0),d0
+        move.w  d0,rp_cp_x(a2)
+        add.w   IT_TOPEDGE(a0),d1
+        add.w   rp_TxBaseline(a2),d1
+        move.w  d1,rp_cp_y(a2)
+        move.l  IT_ITEXT(a0),d0
+        beq.s   .st_ret
+        move.l  d0,a0
+        bsr     mn_strlen
+        move.l  a2,a1
+        move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_TEXT(a6)
+.st_ret:
+        movem.l (sp)+,a2/a6
         rts
 
 ; mn_opensub(a2 = item with sub-items, d6.w = its number, a4, a5): sub-item box. Extent of the
@@ -1264,10 +1436,10 @@ mn_opensub:
         moveq   #0,d3
 .os_c4:
         move.w  IB_BOX(a5),d4        ; d4/d5 = screen position of the item
-        add.w   #MB_MARGIN,d4
+        add.w   IB_BOX+4(a5),d4
         add.w   MI_LEFTEDGE(a2),d4
         move.w  IB_BOX+2(a5),d5
-        add.w   #MB_MARGIN,d5
+        add.w   IB_BOX+6(a5),d5
         add.w   MI_TOPEDGE(a2),d5
         add.w   d4,d0
         add.w   d4,d2
@@ -1384,8 +1556,7 @@ mn_commseq:
 .cq_y:
         move.l  IB_GFXBASE(a5),a6
         move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_DETAILPEN(a4),d0
+        bsr     mn_windowpens
         jsr     LVO_SETAPEN(a6)
         move.l  a3,a1
         moveq   #JAM1,d0
@@ -1515,8 +1686,116 @@ mn_cat_lo_data:                      ; the same in low resolution (14 x 8)
         dc.w    $9027
         dc.w    $F87F
 
-; mn_paintbox(a3 = RastPort of a box, d6/d7 = width - 1 / height - 1, a4 = screen, a5): background BlockPen,
-; border DetailPen. Clobbers d0-d3/a0/a1/a6.
+ ; A temporary CHIP RastPort/BitMap plus its planes. The completed image is copied into the new
+; menu layer once, keeping intermediate fills, glyphs and ghosting off the displayed BitMap.
+MB_BM           EQU rp_SIZEOF
+MB_SIZE         EQU MB_BM+bm_SIZEOF
+MB_X            EQU MB_SIZE+4
+MB_TR           EQU MB_X+4          ; optional shared text-line TmpRas (CHIP)
+MB_HEADER       EQU MB_TR+8
+; mn_boxalloc(d0.w = screen x, d6/d7 = width/height - 1, a4 = screen) -> d0 = buffer RastPort | 0.
+mn_boxalloc:
+        movem.l d1-d7/a0-a2/a6,-(sp)
+        move.w  d0,d4
+        move.w  d6,d5
+        add.w   #16,d5
+        lsr.w   #4,d5
+        add.w   d5,d5                ; word-aligned row stride
+        move.w  d7,d2
+        addq.w  #1,d2
+        mulu    d5,d2                ; bytes per plane
+        moveq   #0,d3
+        move.b  SC_BITMAP+bm_Depth(a4),d3
+        move.l  d2,d0
+        mulu    d3,d0
+        add.l   #MB_HEADER,d0
+        move.l  d0,d6
+        move.l  #MEMF_CHIP|MEMF_CLEAR,d1
+        move.l  4.w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ba_ret
+        move.l  d0,a2
+        move.l  d6,MB_SIZE(a2)
+        move.w  d4,MB_X(a2)
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a2,a1
+        jsr     LVO_INITRASTPORT(a6)
+        lea     MB_BM(a2),a0
+        move.l  a0,rp_BitMap(a2)
+        move.w  d5,bm_BytesPerRow(a0)
+        addq.w  #1,d7
+        move.w  d7,bm_Rows(a0)
+        move.b  d3,bm_Depth(a0)
+        lea     MB_HEADER(a2),a1
+        lea     bm_Planes(a0),a0
+        subq.w  #1,d3
+.ba_plane:
+        move.l  a1,(a0)+
+        adda.l  d2,a1
+        dbra    d3,.ba_plane
+        ; Reuse a line buffer while composing this box instead of allocating one per item. A larger
+        ; explicit font or a failed scratch allocation still takes Text's ordinary allocation path.
+        moveq   #0,d0
+        move.w  d5,d0
+        addq.l  #8,d0
+        move.l  SC_RASTPORT+rp_Font(a4),a0
+        mulu    tf_YSize(a0),d0
+        move.l  d0,MB_TR+tr_Size(a2)
+        moveq   #MEMF_CHIP,d1
+        move.l  4.w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ba_ready
+        move.l  d0,MB_TR+tr_RasPtr(a2)
+        lea     MB_TR(a2),a0
+        move.l  a0,rp_TmpRas(a2)
+.ba_ready:
+        move.l  a2,d0
+.ba_ret:
+        movem.l (sp)+,d1-d7/a0-a2/a6
+        rts
+; mn_boxshow(a3 = buffer RastPort, a1 = destination RastPort, d6/d7 = width/height - 1).
+mn_boxshow:
+        movem.l d2-d7/a0-a2/a6,-(sp)
+        ; Initial pixels come from the staging bitmap, but HIGHIMAGE hover/unhover later draws through
+        ; this visible RastPort. IntuiText without ITextFont must inherit the same screen font and style.
+        move.l  IB_GFXBASE(a5),a6
+        bsr     mn_screenfont
+        move.l  rp_BitMap(a3),a0
+        moveq   #0,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        move.w  d6,d4
+        addq.w  #1,d4
+        move.w  d7,d5
+        addq.w  #1,d5
+        moveq   #-$40,d6
+        move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_BLTBITMAPRASTPORT(a6)
+        movem.l (sp)+,d2-d7/a0-a2/a6
+        rts
+; mn_boxfree(a3 = temporary RastPort). Wait for any image DMA before returning the CHIP allocation.
+mn_boxfree:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        jsr     -228(a6)             ; WaitBlit
+        move.l  4.w,a6
+        move.l  MB_TR+tr_RasPtr(a3),d0
+        beq.s   .bf_bitmap
+        move.l  d0,a1
+        move.l  MB_TR+tr_Size(a3),d0
+        jsr     LVO_FREEMEM(a6)
+.bf_bitmap:
+        move.l  MB_SIZE(a3),d0
+        move.l  a3,a1
+        jsr     LVO_FREEMEM(a6)
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; mn_paintbox(a3 = RastPort of a box, d6/d7 = width - 1 / height - 1, a4 = screen, a5): window background
+; BlockPen and border DetailPen. Clobbers d0-d3/a0/a1/a6.
 mn_paintbox:
         move.l  IB_GFXBASE(a5),a6
         move.l  a3,a1
@@ -1525,8 +1804,8 @@ mn_paintbox:
         moveq   #JAM2,d0
         jsr     LVO_SETDRMD(a6)
         move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_BLOCKPEN(a4),d0
+        bsr     mn_windowpens
+        move.l  d1,d0
         jsr     LVO_SETAPEN(a6)
         move.l  a3,a1
         moveq   #0,d0
@@ -1535,15 +1814,25 @@ mn_paintbox:
         move.w  d7,d3
         jsr     LVO_RECTFILL(a6)
         move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_DETAILPEN(a4),d0
+        bsr     mn_windowpens
         jsr     LVO_SETAPEN(a6)
         move.l  a3,a1
         moveq   #0,d0
         moveq   #0,d1
         move.w  d6,d2
         move.w  d7,d3
-        jmp     it_box
+        bsr     it_box
+        moveq   #1,d0               ; menu frames have two-pixel vertical sides
+        moveq   #0,d1
+        moveq   #1,d2
+        move.w  d7,d3
+        jsr     LVO_RECTFILL(a6)
+        move.w  d6,d0
+        subq.w  #1,d0
+        moveq   #0,d1
+        move.w  d0,d2
+        move.w  d7,d3
+        jmp     LVO_RECTFILL(a6)
 
 ; mn_clrflags(a0 = first Menu, d0.w = flags cleared in the items, d1.w = in the sub-items, d2.w = in the menus).
 ; Preserves all registers.
