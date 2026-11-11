@@ -35,6 +35,8 @@ if len(s) != 2 or s[0] & 0x100000 or s[1] != s[0] | 0x100000:
 o = [int(v, 16) for v in f.get("SOFT", [])]
 if len(o) != 2 or o[0] & 0x2700 != 0x2000 or o[1] & 4:
     bad.append("software interrupt SR/INTENAR %s: expected SR $2000 and SOFTINT off in INTENA" % o)
+if f.get("ORD") != ["CEBDFA"]:
+    bad.append("software interrupt order %s: expected CEBDFA (five priority queues, FIFO inside one)" % f.get("ORD"))
 print("\n".join(bad) if bad else "SCHED OK")
 sys.exit(1 if bad else 0)
 PY

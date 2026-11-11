@@ -28,7 +28,7 @@
                 xref    build_reslist    ; resident.s (scan of the ROMTags)
                 xref    kick_reserve     ; resident.s (KickMem/KickTag check of a warm reset)
                 xref    task_alloc
-                xref    cia_server       ; cia.s (PORTS/INT2 server and EXTER/INT6 exclusive vector)
+                xref    cia_server       ; cia.s (server of the PORTS/INT2 and EXTER/INT6 chains)
                 xref    gfx_display_init ; graphics/gfx.s (M4a: first Copper-driven display)
                 xref    gfx_display_free
                 xref    exec_RawIOInit   ; exec/execmisc.s (coldstart: SERPER as in 1.3)
@@ -494,12 +494,9 @@ coldstart:                        ; $FC00D2
         jsr     build_reslist        ; scans [RESSCAN_LO,HI) -> ExecBase->ResModules, KickTags merged
         bclr    #1,CIAA_PRA          ; power LED bright (audio filter on), as 1.3 after ResModules (coldstart-hardware
                                      ; §5): Shanghai's intro waits for CIA-A PRA == $BC, LED bit included
-        move.l  EB_COOLCAPTURE(a6),d0 ; CoolCapture (§5.3): A6 = ExecBase, just before InitCode(RTF_COLDSTART)
+        tst.l   EB_COOLCAPTURE(a6)   ; CoolCapture (§5.3): A6 = ExecBase, just before InitCode(RTF_COLDSTART)
         beq.s   .no_cool
-        move.l  d0,a0
-        movem.l d2-d7/a2-a6,-(sp)
-        jsr     (a0)
-        movem.l (sp)+,d2-d7/a2-a6
+        bsr     cool_call
 .no_cool:
         moveq   #RTF_COLDSTART,d0    ; startClass: cold-start residents
         moveq   #0,d1                ; minimum version 0
@@ -3457,12 +3454,18 @@ d2_done:
         tst.l   d0
         beq     m7a_fail
         move.l  d0,a2                ; a2 = ciab base
-        jsr     LVO_DISABLE(a6)      ; no INT6 between the vector and its data (a1 = 0 would leave the ICR unread)
-        moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int): EXCLUSIVE vector ->
-        lea     ciab_server_int(pc),a1  ; INT6 goes through the by-number dispatcher (cia_server/cia_dispatch)
-        jsr     LVO_SETINTVECTOR(a6)
-        move.l  a2,EB_INTVECTS+INTB_EXTER*IV_SIZE+IV_DATA(a6) ; the ROM Interrupt cannot hold the ciab base
-        jsr     LVO_ENABLE(a6)
+        moveq   #IS_SIZE,d0          ; EXTER is a server chain with ciab.resource at pri 0, as on 1.3
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1 ; (custom-chips-v34 §3.3): programs add their own INT6 servers
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7a_fail
+        move.l  d0,a1
+        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        move.l  #srv_ciab_name,LN_NAME(a1)
+        move.l  a2,IS_DATA(a1)
+        move.l  #cia_server,IS_CODE(a1)
+        moveq   #INTB_EXTER,d0
+        jsr     LVO_ADDINTSERVER(a6)
                 ifeq    PROD            ; dev ROM: level 6 source of the M7d/M7e proofs (the production ROM
         move.l  a6,-(sp)             ; programs no CIA-B timer, like 1.3: games take them)
         move.l  a2,a6                ; AddICRVector(ciab, bit0 = timer A, &m7_int6_int)
@@ -6269,17 +6272,42 @@ m7_int6_int:
         dc.l    m7_int6_probe       ; IS_CODE
                 endc
 
-; ciab_server_int (M7b): EXCLUSIVE EXTER vector installed by SetIntVector -> cia_server. Not linked
-; (SetIntVector copies IS_DATA/IS_CODE) -> can stay in ROM; the ciab base is stored into the vector's iv_Data after.
+; cool_call(a6): CoolCapture called in user mode as on 1.3 (coldstart-hardware-v34 §4.4: a privileged instruction
+; there is a privilege violation), A6 = ExecBase, on a 4 KB stack of its own (1.3's initial task stack size) since
+; the boot task still runs on the supervisor stack; the interrupt mask is left as it is. Supervisor() brings the
+; boot back to supervisor mode: its routine drops the exception frame and resumes here. Preserves d2-d7/a2-a6.
+COOL_STK        EQU 4096
         EVEN
-ciab_server_int:
-        dc.l    0                    ; LN_SUCC
-        dc.l    0                    ; LN_PRED
-        dc.b    0                    ; LN_TYPE
-        dc.b    0                    ; LN_PRI (unused: exclusive vector)
-        dc.l    srv_ciab_name        ; LN_NAME
-        dc.l    0                    ; IS_DATA
-        dc.l    cia_server           ; IS_CODE
+cool_call:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  #COOL_STK,d0
+        move.l  #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .cc_ret              ; no stack: CoolCapture skipped rather than run on a bad one
+        move.l  d0,-(sp)
+        add.l   #COOL_STK,d0
+        move.l  d0,a0
+        move.l  a0,usp
+        move.l  EB_COOLCAPTURE(a6),a0
+        andi.w  #$DFFF,sr            ; user mode
+        jsr     (a0)
+        move.l  ($4).w,a6
+        lea     .cc_back(pc),a5
+        jsr     LVO_SUPERVISOR(a6)   ; does not return: .cc_back goes on in supervisor mode
+.cc_back:
+        addq.l  #6,sp                ; the exception frame {SR, PC}, plus the format word on a 68010 or later
+        tst.b   CPU_FMT
+        beq.s   .cc_f
+        addq.l  #2,sp
+.cc_f:
+        move.l  (sp)+,a1
+        move.l  #COOL_STK,d0
+        jsr     LVO_FREEMEM(a6)
+.cc_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
 srv_ciab_name:
         dc.b    "ciab.exter",0
         EVEN

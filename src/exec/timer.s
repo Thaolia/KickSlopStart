@@ -287,6 +287,7 @@ timer_beginio:
         bsr     timer_setsys
         bra.s   .bio_done
 .bio_get:
+        move.b  #NT_MESSAGE,LN_TYPE(a3)  ; set on this quick path too, as on 1.3 (exec-messages-io §8a, IO5)
         bsr     timer_systime
         move.l  d0,TV_SECS(a3)
         move.l  d1,TV_MICRO(a3)

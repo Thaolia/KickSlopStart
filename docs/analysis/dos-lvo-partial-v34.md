@@ -3,7 +3,8 @@
 > ANALYSIS track ("dirty"). Sources: the real Kickstart 1.3 ROM (`kick34005.A500`, read-only) run under
 > Amiberry (cycle-exact A500, 512 KB chip + 512 KB slow, copy of the Workbench 1.3.3 disk), observed as a
 > black box; static reading of the dos kernel and BLIB segments with radare2 to know *what* is sent and
-> returned. No instruction sequence, no ROM address or ROM offset below. Date: 2026-11-04.
+> returned. No instruction sequence, no ROM address or ROM offset below. Date: 2026-11-04; §4 probes run 2026-11-10
+> and 2026-11-11.
 >
 > **Legend**: **[O]** observed on the running real ROM (registers and memory read with the debugger, screenshots)
 > · **[S]** read statically in the ROM (behaviour only, not probed) · **[D]** deduced · **[?]** uncertain ·
@@ -16,7 +17,9 @@
 > were loaded (A6 = DosBase, D2–D7/A2–A5 set to marker values), the PC was pointed at the LVO vector with a
 > return address under a hardware breakpoint, and the registers were restored afterwards. `pr_Result2` was
 > set to a marker value (777 or 1234) before the calls where its behaviour mattered. Strings and buffers were
-> placed in the unused part of the Workbench stack. No program was written or loaded.
+> placed in the unused part of the Workbench stack. No program was written or loaded for those calls. The
+> 2026-11-11 additions (§4 items 2, 3, 7, condition codes in §1.1a) come from the implementation-side program
+> `tests/dosmisc_probe.s`, run unchanged on the real ROM by the analysis track (its serial output read back).
 >
 > Related pages, not repeated here: `bcpl-runtime-v34.md` §1.4 (LVO → BCPL bridge, LVO/global table),
 > §5.1 (FileHandle fields), §8 (globals, in particular 10, 47, 48, 51, 82, 91, 102, 108, 109, 113, 114, 127);
@@ -45,9 +48,10 @@
    only if `pr_WindowPtr` ≠ −1. Retry restarts the whole operation; Cancel returns the failure. Other errors
    (205, 202, 209, 219…) return at once. Observed: "No disk present / in unit 0" after a CreateDir. [O]
 4. **Surprises a replacement must reproduce:** `IsInteractive(0)` returns the long at address 4 (ExecBase,
-   non-zero); `Seek` on a CON: handle returns **0** (not −1) with IoErr 209; `Seek` on a `NIL:` handle returns
-   0 without a packet; `Info(0, buf)` and `ParentDir(0)` go to `pr_FileSystemTask` with a zero lock (boot
-   volume root); `Delay(−1)` had not returned after about 8 minutes. [O]
+   non-zero); `Seek` on a console handle (CON:, RAW:, NEWCON:, a CLI's `Output()`) returns **0** (not −1)
+   with IoErr 209; `Seek` on a `NIL:` handle returns 0 without a packet; `Info(0, buf)` and `ParentDir(0)` go
+   to `pr_FileSystemTask` with a zero lock (boot volume root); `Info` on an unaligned buffer writes at the
+   longword boundary below it; **negative Delay values (−1, −49, −50) do not return** (§2.13). [O]
 
 ---
 
@@ -116,6 +120,11 @@ No program was written; nothing was patched.
   nine calls, from three different callers. Neither is a documented result. [O, meaning not established]
 - **Rule for an implementation**: every dos LVO returns with D1 equal to D0 (for the "no result" LVOs, whatever
   D0 holds), A0 = 0, D2–D7/A2–A6 preserved.
+- **Condition codes** [O, 2026-11-11, same breakpoint method, a CLI program on a probe disk]: three successful
+  Open (−30) calls (RAW:, NEWCON:, a disk file) and one successful Lock (−84) returned with **all of X, N, Z, V,
+  C clear** (D0 a positive BPTR). A failing Open/Lock was not caught at the return, so whether Z is set for a 0
+  result is not established [?]; an implementation that ends with D0 tested (Z = (D0 = 0)) agrees with every
+  sample.
 
 ### 1.2 `pr_Result2` (IoErr) [O]
 
@@ -320,6 +329,12 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 - **CON: handle** (`CON:0/0/300/60/x`, MODE_NEWFILE): Seek(fh, 0, OFFSET_CURRENT) and Seek(fh, 0,
   OFFSET_BEGINNING) both return **0** with Result2 = **209** (ERROR_ACTION_NOT_KNOWN): the console handler
   answers Res1 = 0, which dos treats as a valid position. A program testing for −1 sees success. [O]
+- **Console handles in a CLI program** (2026-11-11, §4 item 3) [O]: Seek(Output(), 0, OFFSET_CURRENT) (the boot
+  CLI's console), Seek on a `RAW:` window handle and Seek on a `NEWCON:` window handle (Newcon-Handler of the
+  Workbench 1.3 disk), both with (0, OFFSET_BEGINNING): each **0, IoErr 209**, like the CON: handle above.
+- **Disk file after a read** (2026-11-11) [O]: `s/startup-sequence` opened MODE_OLDFILE, LVO `Read` of 10 bytes →
+  10, then Seek(fh, 0, OFFSET_CURRENT) → **10**, and again → **10**; IoErr 0. The position reported is the
+  handler's, which LVO `Read` (unbuffered) advanced by exactly the bytes returned.
 - `NIL:` handle: Seek(fh, 0, OFFSET_CURRENT) → 0; Seek(fh, 10, OFFSET_BEGINNING) → 0; Result2 unchanged. [O]
 - **Seek(0, …)** (NULL handle): `fh_Type` is read from address 8 (an exception vector), the packet goes to a
   bogus "port" → system failure. Not reproduced as a feature. [S, not probed]
@@ -339,6 +354,9 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 | never existed (`ram:nfx`) | 0 | 205 |
 
 - DF0: with the drive reporting no disk: `pr_WindowPtr = −1` → 0 / 226 immediately. [O]
+- DF0: write-protected from power-on (2026-11-10, §4 item 1) [O]: `pr_WindowPtr = 0` → requester "Volume /
+  <volume name> / is write protected" (Retry / Cancel), Cancel → failure, Why = 214; `pr_WindowPtr = −1` → no
+  requester, failure with 214 at once.
 
 ### 2.4 Rename (−78)
 
@@ -368,7 +386,9 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 
 - In: D1 = lock, D2 = APTR of an InfoData (36 bytes). Out: D0 = dp_Res1 (−1 success, 0 failure).
 - D2 is converted to a BPTR by **dropping its two low bits**: the buffer must be longword-aligned (an
-  unaligned buffer silently shifts down to the previous longword boundary). [S]
+  unaligned buffer silently shifts down to the previous longword boundary). [S; O 2026-11-11, §4 item 7: with
+  buffer + 2 the 36 InfoData bytes were written from the aligned start, the two bytes before the pointer
+  included, and nothing past aligned start + 36]
 - Port: **lock ≠ 0 → `fl_Task`; lock = 0 → `pr_FileSystemTask`**. Packet **ACTION_INFO (26)**, Arg1 = lock (0
   passed as is), Arg2 = BPTR of the buffer. Failure → retry requester logic. [S]
 - Observed [O]:
@@ -394,8 +414,15 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 - Observed [O]: CreateDir("ram:newdir") → lock, Result2 205 (stale); again while that lock is held → 0 / 202;
   CreateDir("df0:wpdir") → lock, Result2 205; with DF0: reporting no disk: requester "No disk present / in
   unit 0" (`pr_WindowPtr = 0`) or immediate 0 / 226 (`pr_WindowPtr = −1`), §1.4.
-- [?] The result for an existing directory with no lock held was not probed (handler-dependent: see
-  `rom-filesystem-v34.md` for DF0:).
+- **Existing directory, no lock held** (2026-11-10, §4 item 6) [O]: **success** on both the ROM file system
+  (DF0:) and the RAM handler: Res1 = a lock on the (existing, empty) directory, Result2 stale (210 on RAM:, 205
+  on DF0:); no duplicate entry appears in the parent and **no 203**. With a lock on that directory held by
+  someone else, the same packet answers 0 / **202**. C:MakeDir never shows this: it sends LOCATE first and
+  prints "<name> already exists" when that succeeds (the CREATE_DIR packets above were obtained by making the
+  debugger change the type of MakeDir's LOCATE packet into an unknown action, so that no lock was left held).
+  A replacement may answer 203 instead (2.0 does): only programs that skip MakeDir's check see the difference;
+  `rom-filesystem-v34.md` §6.3 has the DF0: details (existing file or empty directory replaced, non-empty
+  directory 216).
 
 ### 2.8 CurrentDir (−126)
 
@@ -421,6 +448,13 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
   start of the code, as written by the hunk loader for `HUNK_OVERLAY` files), dos first closes the overlay
   file handle stored there (selected as input, ended, previous input reselected), frees the hunk table and the
   overlay table vectors stored there, then frees the resident chain. [S, layout = public AmigaDOS overlay ABI]
+  Black-box check, 2026-11-10 (§4 item 4) [O]: Deluxe Paint III v3.00 (the only `HUNK_OVERLAY` program on the
+  local test disks) run twice from the Initial CLI (`df1:DPaint`, once with its "Load All" loading mode, once
+  with "Swap", menus and the About requester used, then Quit): free memory after the first run was 4856 bytes
+  lower than before it (first-run residue: disk-loaded libraries and fonts stay cached), and **identical** after
+  the second run (chip and fast Available and Largest unchanged), so nothing of the program, its overlay nodes
+  or the overlay file handle stays allocated per run. Right after exit, `Delete df1:DPaint` succeeded with no
+  message: **no lock on the overlay file is left** once the CLI has unloaded the program.
 - A segment whose size header (the longword before the segment) is **negative** is treated specially: its first
   code longword is passed to exec `CloseLibrary`, the size is made positive and the block freed. [S, purpose
   [?]: no loader path that produces it was identified]
@@ -452,11 +486,21 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
   global 127 (device opened, DoIO, closed at each call, request in the caller's stack, reply port =
   `pr_MsgPort`). [S]
 - Delay(0) and Delay(25) return normally. [O]
+- **Delay(50)** from a CLI program, measured with DateStamp before and after (2026-11-11) [O]: 50, 51, 52, 55 and
+  59 ticks on five runs (59 while three other programs were starting from the same disk). Never fewer than 50;
+  the excess is the cost around the request (timer.device opened and closed at each call, scheduling) [D].
 - **Delay(−1)** (seconds 0, microseconds −20000 = $FFFFB1E0 as an unsigned field) **did not return within about 8
   minutes** (the debugger session ended first). [O] [D] timer.device takes the microseconds field unsigned, i.e. ≈ 4295 s
   (≈ 72 minutes). Any negative argument therefore blocks for a long time (−50 and below: seconds negative,
   i.e. ≈ 136 years unsigned). No program should depend on it; a replacement may treat negative values the
-  same way or clamp them, but must not return early for positive ones. [?] not probed beyond −1.
+  same way or clamp them, but must not return early for positive ones.
+- **Delay(−1), Delay(−49), Delay(−50)** each in its own `run` process (2026-11-11, §4 item 2) [O]: none
+  returned within about 30 minutes of emulated time (frame counter of the emulator; the run went on for
+  about 45 minutes of host time at roughly half speed). The calling processes stayed in Wait on their
+  process-port signal; the rest of the system ran normally (other programs, a typed CLI command). **A negative
+  Delay never returns at once on 1.3**: a program that relies on Delay(negative) being a no-op hangs there.
+  With the conversion above, −1 and −49 give seconds 0 and microseconds −20000 / −980000 (≈ 4295 s if taken
+  unsigned) and −50 gives seconds −1; whether −1 and −49 return after about 72 minutes was not waited for [?].
 
 ### 2.14 ParentDir (−210)
 
@@ -481,7 +525,7 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 
 ---
 
-## 3. Test vectors (observable, all from the Workbench process)
+## 3. Test vectors (observable, from the Workbench process; T22–T26 from the Initial CLI through C: commands)
 
 | # | Call | Expected D0 | Expected pr_Result2 |
 |---|---|---|---|
@@ -506,27 +550,69 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 | T19 | DeleteFile("ram:d") while its lock is held | 0 | 202 |
 | T20 | SetComment / SetProtection on an absent name | 0 | 205 |
 | T21 | Delay(0) | returns at once | unchanged |
+| T22 | DeleteFile / CreateDir / Rename on a disk write-protected at boot, pr_WindowPtr = 0 | requester "Volume / <name> / is write protected"; Cancel → 0 | 214 |
+| T23 | same with pr_WindowPtr = −1; SetComment / SetProtection with pr_WindowPtr = 0 | 0 at once, no requester | 214 |
+| T24 | CreateDir of an existing empty directory, no lock held (RAM: or DF0:) | a lock on that directory | stale |
+| T25 | same while a lock on the directory is held | 0 | 202 |
+| T26 | DeleteFile("") with pr_CurrentDir on a RAM: directory | 0 | 205 |
 | R | every call above | D1 = D0, A0 = 0, D2–D7/A2–A6 preserved | |
 
 ---
 
 ## 4. Probes still wanted (described, not written)
 
-1. **Write-protected disk from boot.** Toggling the emulator's write-protect switch at run time made the drive
-   report "no disk" (226), so the 214 path was not seen. Boot from a copy of an ADF that is write-protected
-   before power-on, then `DeleteFile`, `CreateDir`, `Rename`, `SetComment` on DF0: with `pr_WindowPtr` 0 and
-   −1: expect a "… is write protected" requester naming the volume, Cancel → 0 / 214.
-2. **Delay with negative values**: time Delay(−1), Delay(−49), Delay(−50) against the TOD clock from a small
-   CLI program (print the elapsed 1/50 s), to confirm the unsigned-microseconds reading and whether timer.device
-   normalises tv_micro ≥ 1 000 000.
-3. **Seek on `*`** (the console of a CLI) and on RAW:/NEWCON: handles, and Seek right after a BCPL-buffered
-   read (to show that dos does not account for `fh_Pos/fh_End`).
-4. **Overlay UnLoadSeg**: load and unload an overlaid executable (any 1.3-era program using `HUNK_OVERLAY`),
-   checking that free memory returns to its initial value and the overlay file's lock is released.
-5. **DeleteFile(NULL) / CreateDir(NULL)** with `pr_CurrentDir` on an empty RAM: directory: expect the handler to
-   act on the current directory itself (likely 202 because of the CurrentDir lock).
-6. **CreateDir on an existing directory** with no lock held, on DF0: and RAM: (203 expected, not seen).
-7. **Info with an unaligned buffer** (APTR = aligned + 2): confirm the data lands 2 bytes lower.
+Status after the runs of 2026-11-10 and 2026-11-11 (real ROM, Amiberry A500 cycle-exact, 512 KB chip + 512 KB
+slow, session
+copies of the Workbench 1.3.3 disk with the startup-sequence cut down to `failat 30` and one `echo`, so that the
+Initial CLI stays at its prompt; commands typed in that CLI, every result read on a screenshot; packets read
+with a breakpoint on exec `PutMsg`'s jump-table entry in RAM, printing the DosPacket fields). Items 1, 4 and 6
+are settled, item 5 is answered for the empty-name case. Items 2, 3 and 7 were settled on 2026-11-11 by running the
+implementation-side program `tests/dosmisc_probe.s` unchanged on the real ROM (Amiberry A500 cycle-exact, 512 KB
+chip + 512 KB slow, `amiberry-session --analysis`, an OFS probe disk built by `tests/dosmisc_probe.sh`'s
+`xdftool` command; results read on the serial line).
+
+1. **Write-protected disk from boot — done [O].** A read-only image given as DF0: at power-on (Info: "Read
+   Only"). With `pr_WindowPtr = 0` (the Initial CLI as booted): `Delete` (DeleteFile), `MakeDir` (CreateDir) and
+   `Rename` each showed the System Request "Volume / Workbench1.3 / is write protected" (Retry / Cancel, the
+   volume name on its own line); Left Amiga + B cancelled it; the commands then printed "Not Deleted - disk
+   write-protected", "Can't create directory df0:newdir", "Can't rename df0:s as df0:s2", and `Why` gave
+   "disk write-protected" (214). `FileNote` (SetComment) and `Protect` (SetProtection) showed **no requester**:
+   "Note failed" / "Protect failed" within 2 s, Why 214 (the same split as `rom-filesystem-v34.md` §2.3 and as
+   for 213, §1.4). With `pr_WindowPtr` of the CLI process set to −1 by the debugger: MakeDir, Delete and Rename
+   failed at once with 214 and no requester. Quirk of the 1.3 C:Delete, not of dos: after "Not Deleted" it
+   leaves no return code, so `Why` printed "The last command did not set a return code".
+2. **Delay with negative values — done [O], 2026-11-11**, §2.13. Program `tests/dosmisc_probe.s` (implementation
+   side, run unchanged on the real ROM): four instances started from the startup-sequence of a probe disk (the
+   first three with `run >nil:`, Delay(50), Delay(−50), Delay(−49), Delay(−1), each printing "start" then the
+   DateStamp ticks elapsed when Delay returns). Delay(−50), Delay(−49) and Delay(−1) **did not return** within
+   the run (about 30 minutes of emulated time, §2.13); the machine stayed usable meanwhile (the foreground part of the probe ran
+   to its end, the Initial CLI accepted a typed command, and the exec task list showed the three Background CLI
+   processes waiting on their process port signal). Delay(50) returned after 50 to 59 ticks.
+3. **Seek on `*`, RAW:, NEWCON: and on a disk file after a read — done [O], 2026-11-11**, §2.2. Same probe, run
+   in the foreground from the startup-sequence (NEWCON: mounted first with the Workbench 1.3 `Mount` and
+   `Newcon-Handler`): Seek(Output(), 0, OFFSET_CURRENT), Seek(RAW: handle, 0, OFFSET_BEGINNING) and
+   Seek(NEWCON: handle, 0, OFFSET_BEGINNING) each returned **0 with IoErr 209**; on `s/startup-sequence`,
+   `Read` of 10 bytes returned 10, then Seek(fh, 0, OFFSET_CURRENT) returned **10** twice, IoErr 0. (The read was
+   an LVO `Read`, which is not buffered in 1.3, `dos-memory-v34.md` §0 item 5; a read through the BCPL stream
+   buffer of a C:Type-like path was not tried.) Identical on three runs.
+4. **Overlay UnLoadSeg — done [O]**, §2.10: memory back to the same value on every run after the first, no lock
+   left on the overlay file.
+5. **DeleteFile / CreateDir with an empty name** — answered through C:Delete / C:MakeDir with `""` and
+   `pr_CurrentDir` = a RAM: directory [O]: DeleteFile("") sent DELETE_OBJECT with Arg1 = the current-directory
+   lock and an empty name; the RAM handler answered **0 / 205** (it looks the empty name up inside the directory,
+   it does not delete the directory itself). MakeDir's own LOCATE of "" relative to the current directory
+   succeeded (it returns a lock on the directory itself), so MakeDir printed " already exists" and never sent
+   CREATE_DIR. A **NULL** C string pointer, as a C program would pass it, was not tried: on a running 1.3 the
+   long at address 0 is zero, so NULL reads as an empty string [D], which gives the results above. The ROM file
+   system (DF0:) was not tried with an empty name.
+6. **CreateDir on an existing directory with no lock held — done [O]**, §2.7: success (a lock on the existing
+   directory) on DF0: and RAM:, not 203; 202 when a lock on it is held.
+7. **Info with an unaligned buffer — done [O], 2026-11-11**, §2.6. Same probe: a longword-aligned 48-byte buffer
+   filled with `$5A`, Info(lock on `DF0:`, buffer + 2). D0 = −1; the 36-byte InfoData was written at the
+   **aligned buffer start** (bytes 0–35, including the two bytes before the pointer passed); bytes 36–47 still
+   held `$5A`. Fields read there: NumSoftErrors 0, UnitNumber 0, DiskState 82, NumBlocks 1758, NumBlocksUsed of
+   the probe disk, BytesPerBlock 488, DiskType `DOS\0`, VolumeNode non-zero, **InUse non-zero** (the probe held
+   the lock it passed). Identical layout on three runs.
 
 ## 5. Open / uncertain points
 
@@ -559,6 +645,10 @@ Review of 2026-11-04; the two validator bullets of §1.4 updated 2026-11-05 (tex
   screenshots, test disks made with xdftool plus a root-block flag patch; no debugger, no disassembly.
 - [x] No code was written: the probes were debugger register/memory manipulations of the running Workbench
   process; the further probes of §4 are described only.
+- [x] 2026-11-10 D8 runs (§2.3, §2.7, §2.10, §4 items 1, 4, 5, 6): commands typed in a CLI of the real ROM,
+  screenshots, `avail` figures; packet fields read with a breakpoint on exec's `PutMsg` jump-table entry in RAM;
+  one test changed the type field of a packet in RAM (C:MakeDir's LOCATE) with the debugger. No ROM code read,
+  no ROM address, no code written; the program still needed for items 2, 3 and 7 is described only.
 - [x] 2026-11-10 additions (§1.1a registers of the core LVOs, §1.4 keyboard answers to the requester): black box.
   Breakpoints were set only on the library's jump-table entries (in RAM) and on the callers' return addresses;
   only register values on return are reported (no addresses). The requester tests were commands typed in a CLI

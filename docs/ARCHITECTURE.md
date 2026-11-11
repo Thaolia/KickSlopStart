@@ -678,7 +678,7 @@ differs.
 - **STEP 9 — FONTS AND GELS**: (1) **fonts** (`src/graphics/text.s`) — topaz 8 is a real TextFont: hand-authored glyphs from `font8x8` also emitted in strike format (`topaz8_strike`, modulo 98, default glyph after HiChar) by `tests/mk_font8x8.py`; ROM template copied into RAM at graphics init, linked into `gb_TextFonts` (public offset 140) and set as `gb_DefaultFont` (154), GfxBase raised to 158 bytes. OpenFont (case-insensitive name, closest height, counted accesses), CloseFont, AskFont, AddFont, RemFont, AskSoftStyle/SetSoftStyle (bold and underline), AllocRaster/FreeRaster. Text/TextLength read the RastPort's font (CharLoc/CharSpace/CharKern, rp_TxSpacing, glyphs up to 32 pixels); fast path kept for aligned 8-pixel glyphs in JAM2. (2) **GELs** (`src/graphics/gels.s`) — list sorted by (Y, X) between two sentinels, Bobs drawn by rows of pixels (`gfx_putrow` from draw.s, through the layers) with background saved/restored, OVERLAY mask, PlanePick/PlaneOnOff; InitMasks, DoCollision (borders then pairs by CollMask, routines called with the C convention), animation (AddAnimOb, Animate with sequence change, Get/FreeGBuffers, InitGMasks). Boot probes FONTS OK and GELS OK. **Honest scope**: hardware VSprites not displayed; Before/After order, double buffering and italics not handled; Bob rendering per pixel (correct, not fast). Measurement (VBL_COUNT, production ROM): closing a drawer window costs ~1.4 s in DeleteLayer (phase A: copying back all the saves of the smart layers) and ~0.2 s in the intuition repair.
 - **SETPATCH 1.38 / SYSINFO 4.4 — COMPLETE V34 EXEC**: (1) **34 missing exec LVOs** (`src/exec/execmisc.s`, AutoDocs):
   SetFunction (real: JMP rewritten, LIBF_CHANGED, sum recomputed), SumLibrary, Cause + software interrupt
-  queue (`EXEC_SOFTLIST`, level 1 SOFTINT server, masking by INTENA and not Disable since callable from an
+  queues (ExecBase SoftInts since 2026-11-10, level 1 SOFTINT server, masking by INTENA and not Disable since callable from an
   interrupt), Alert (serial message "Software Failure / Recoverable Alert", stop if dead-end), SetSR,
   SuperState/UserState, GetCC, RemIntServer, AllocEntry/FreeEntry, SetExcept, AllocTrap/FreeTrap, RemResource,
   RawIOInit/RawMayGetChar/RawPutChar, Obtain/ReleaseSemaphoreList; `src/exec/memory.s` reworked: AllocMem/FreeMem
@@ -2311,6 +2311,53 @@ differs.
     node without a task whose dn_Startup is a FileSysStartupMsg (above 255; SER:, PAR:, CON: … hold 0..2) gets its
     handler through `bcpl_starthandler`, under DOS_HSEM like `dos_resolve` (rom-filesystem §1.4).
   - VSprite VSTART (`src/graphics/gels.s`) = clipped top + View DyOffset, no ViewPort DyOffset, no LACE halving.
+  **Merged PRs #37, #36, #38 (2026-11-11, warpdesign)**: audits in `docs/audit/pr-3[678].md`.
+  - #37 (`src/exec/tasks.s`, `boot.s`): AddTask builds the initial frame below a non-zero `tc_SPReg` (arguments
+    placed above it survive; 0 keeps the `tc_SPUpper` path of our own callers), and the Initial CLI runs at
+    priority 0 as on 1.3. Tests `make test-exec-taskargs`, `test-exec-clipri`.
+  - #36 (`src/intuition/screens.s`, `src/graphics/draw.s`): BORDERLESS windows keep an explicitly requested title
+    and system gadgets (drawn, refreshed, clickable over the ten-line box), BorderTop follows the screen font;
+    same-position BltBitMap reduces its minterm to clear/set/invert, and `br_blit` copies disjoint word-aligned
+    CHIP RastPort rectangles with the blitter's B shift after checking bounds, planes and aliasing. Tests
+    `make test-intuition-borderless`, `test-graphics-copymin`.
+  - #38 (`src/exec/interrupts.s`, `src/intuition/menus.s`, `menucache.s`, `draw.s`, `layers.s`): AddIntServer keeps
+    an existing chain whose `iv_Code` a program wrapped (`iv_Data` non-zero = chain); menus are drawn with the
+    window's DetailPen/BlockPen and the screen font, composed in a CHIP staging bitmap, and a held-menu session
+    keeps validated plain-text surfaces (`mn_cache_*`); `bb_copy` routes disjoint `$C0` BltBitMap copies through
+    BltBitMapRastPort; layer backups and Text's line buffer prefer CHIP. Tests `make test-exec-irqchain`,
+    `test-graphics-textcompose`, the menu tests.
+  **Patterned lines, EXTER chain, CoolCapture, OpenLibrary flags, 286 (2026-11-11)**: REMAINING-WORK C7, C10-C12,
+  C14, issue #35.
+  - Patterned lines (`lb_core`, `src/graphics/draw.s`): LinePtrn goes to BLTBDAT after BLTCON1, whose BSH is the
+    pattern bit of the first pixel (LN_PH; for a clipped piece linpatcnt − its major BitMap coordinate + C); Agnus
+    then steps down one bit per pixel like `ln_plot`. ln_blit and ln_cblit no longer require LinePtrn = $FFFF.
+  - EXTER (`src/exec/boot.s`): ciab.resource's `cia_server` is added to the INT6 chain at priority 0 through
+    AddIntServer, from an Interrupt allocated in RAM; INT6 used to be an exclusive vector whose `iv_Data` held the
+    ciab base, which a program's AddIntServer replaced.
+  - CoolCapture (`cool_call`, `src/exec/boot.s`): user mode, USP = top of a 4 KB AllocMem'd stack, interrupt mask
+    unchanged; Supervisor() with a routine that drops its exception frame (6 bytes, 8 when `CPU_FMT`) returns to the
+    coldstart, which frees the stack.
+  - OpenLibrary (`src/exec/library.s`) ends with `tst.l d0` so the caller's flags describe the result.
+  - dos (dosmisc probe against 1.3): Delay with a negative count waits DL_MAXTICKS (`dos_fn_delay`); DISK_INFO puts
+    `HC_LOCKS` in id_InUse (`src/dos/handler.s`); LoadSeg fails a hunk whose size has bits 31-30 = 11 with 103
+    (`src/dos/loadseg.s`).
+  - timer.device TR_GETSYSTIME sets `ln_Type` NT_MESSAGE on its quick path (exec-messages-io §8a, IO5).
+  - File system (`src/dos/handler.s`): when "You MUST replace volume" is cancelled with packets queued, `HC_CX286`
+    makes the first READ/WRITE among them end with −1 / 286 (disk-change §2.4.2); the flag drops once the queue is
+    empty.
+  **Clipped line pieces on the blitter, SoftInts queues (2026-11-10)**: REMAINING-WORK A7, C5.
+  - `dr_line` (`src/graphics/draw.s`): a piece of a line clipped by a ClipRect no longer goes to the CPU walk
+    (`ln_draw`) when the blitter can draw it. `ln_cblit` takes the piece's first and last major steps [ks, ke] from
+    the ClipRect bounds on both axes (minor position after k steps j(k) = (2m.k + M) / 2M), its start pixel and its
+    error term e0 + 2m.ks − 2M.j, and hands them to `lb_core`, the line-mode set-up split out of `ln_blit`
+    (first pixel, error term, length). `tests/lineclip_probe.sh` gives the same plane fingerprints as the previous
+    ROM, patterned and solid; solid clipped lines 1,347 → 395 ticks. Workbench 1.2 Lines: 93 → 274 Draw calls per
+    emulated second (431 on 1.3).
+  - Software interrupts (`exec_Cause`, `softint_server`, `src/exec/execmisc.s`): the private FIFO list at $758 gives
+    way to ExecBase `SoftInts` (`EB_SOFTINTS` $1B2, five 16-byte SoftIntList, priority −32 first). Cause queues at
+    the tail of the list chosen by `LN_PRI and $F0` as a signed byte, clamped to −32..+32 (1.3 writes outside the
+    array beyond); the server unlinks the head of the highest non-empty list under INTEN masking and rescans from
+    the top after each call (exec-scheduling §8). `tests/sched_probe.sh` "SP ORD": CEBDFA (the previous ROM: ABCDEF).
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

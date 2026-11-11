@@ -494,7 +494,6 @@ KBD_DEVBASE  EQU $00000744 ; long: keyboard.device base (set at its init) — kb
 TD_CDIRTY    EQU $00000748 ; trackdisk: TD_NCACHE bytes — slot modified by CMD_WRITE, not yet written to disk
 TD_DMABUF    EQU $00000754 ; trackdisk: long — CHIP buffer of the disk DMA (TD_DMASIZE bytes, kept; 0 = not allocated)
 TD_BASEP     EQU $00000750 ; trackdisk: long — device base (semaphore and units for td_disk_present / slot flushes)
-EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending software interrupts (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
 CPU_FMT      EQU $000007CC ; byte: $FF on a 68010 or later, whose exception frames carry a format word (boot.s)
@@ -680,6 +679,8 @@ EB_LIBLIST      EQU $17A
 EB_PORTLIST     EQU $188
 EB_TASKREADY    EQU $196
 EB_TASKWAIT     EQU $1A4
+EB_SOFTINTS     EQU $1B2       ; SoftInts[5]: struct SoftIntList (List + pad word), priority -32 first
+SH_SIZE         EQU 16
 EB_LASTALERT    EQU $202       ; LastAlert[4]: number and second number of the last alert (-1: none)
 EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213

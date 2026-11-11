@@ -1256,7 +1256,10 @@ DL_FRAME        EQU MP_SIZE+TR_SIZE
 dos_fn_delay:
         movem.l d2-d3/a2-a4/a6,-(sp)
         move.l  d1,d2
-        ble     .dl_done
+        beq     .dl_done
+        bpl.s   .dl_pos
+        move.l  #DL_MAXTICKS,d2      ; negative: 1.3 never came back within 30 minutes (dos-lvo-partial §2.13)
+.dl_pos:
         cmp.l   #DL_MAXTICKS,d2
         bls.s   .dl_ticks
         move.l  #DL_MAXTICKS,d2

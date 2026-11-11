@@ -147,6 +147,11 @@ that point (no ramlib patch yet, `ramlib-v34.md` §6), so every figure here is e
 - Size 0 → 0 after visiting every header (A0 = the last header). Failure → 0, nothing changed, **no alert**.
 - Registers: D0 = result; A0 = the header used (or the last one tried); A1 = the block (unchanged on failure);
   **D1 preserved**; D2–D7, A2–A6 preserved.
+- **Condition codes on return** [O, 2026-11-11, booted system (dos running, no SetPatch), breakpoint on the
+  vector in RAM, then on the caller's return address]: Z reflects D0 = 0 in every sample: three successes
+  (sizes 1 and `$10001` requirements, D0 = block) returned with Z and N clear, one failure (requirements 8, D0 = 0)
+  with Z set; X was set in all four, N clear. A caller may branch on Z straight after the call [D]; N was not
+  seen set (no negative result is possible below 16 MB).
 
 ### 2.5 FreeMem (−210) `FreeMem(memoryBlock A1, byteSize D0)` [O]
 

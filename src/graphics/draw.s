@@ -1345,6 +1345,8 @@ dr_line:
         beq.s   .ln_cn
         bsr     ln_boxhits
         beq.s   .ln_cn
+        bsr     ln_cblit
+        bne.s   .ln_cn
         bsr     ln_draw
 .ln_cn:
         move.l  a3,a0
@@ -1460,15 +1462,14 @@ ln_rect:
         bsr     dr_rect
         movem.l (sp)+,d0-d7/a0-a3
         rts
-; ln_blit: solid, contained segments in any octant. Pattern/ONE_DOT/first-dot continuations use the CPU engine.
+; ln_blit: contained segments in any octant, the pattern as the blitter's line texture. ONE_DOT and first-dot
+; continuations use the CPU engine.
 ; Agnus' error is twice the CPU error; a zero tie takes the minor step in both. Z clear on success.
 ln_blit:
         movem.l d0-d7/a0-a3/a6,-(sp)
         tst.b   LN_ONE(a4)
         bne     .lb_no
         tst.b   LN_PRE(a4)
-        bne     .lb_no
-        cmp.w   #$ffff,LN_PAT(a4)
         bne     .lb_no
         cmp.w   #4,LN_M(a4)
         blo     .lb_no
@@ -1491,8 +1492,43 @@ ln_blit:
         blt     .lb_no
         cmp.w   DC_CMAXY(a5),d3
         bgt     .lb_no
+        move.w  LN_M2(a4),d2
+        sub.w   LN_M(a4),d2          ; e0 = 2m - M
+        move.w  LN_NPIX(a4),d3
+        bsr.s   lb_core
+        bra     .lb_ret
+.lb_no:
+        moveq   #0,d0
+.lb_ret:
+        movem.l (sp)+,d0-d7/a0-a3/a6
+        rts
+; lb_core(d0/d1 = first pixel (coordinates of the ClipRect's space), d2.w = CPU error at that pixel (the decision
+; of the next step: >= 0 takes the minor step), d3.w = pixels, a4 = dr_line variables, a5 = context with its current
+; ClipRect): that part of the line by the blitter's line mode, every pixel inside the ClipRect, LinePtrn as the
+; texture in B (the stored minterms take B as the pattern bit). The first pixel uses the bit ln_draw would: LN_PH for
+; the unclipped engine, linpatcnt - its major coordinate in the BitMap + LN_C for a clipped piece; BSH starts the
+; texture there and Agnus walks it downwards one bit per pixel, as ln_plot does. -> d0 = 1, Z clear; 0 if the
+; blitter could not be had. Clobbers d1-d7/a0-a3/a6.
+lb_core:
+        move.w  d3,-(sp)
+        move.w  d2,-(sp)
         sub.w   DC_BX(a5),d0
         sub.w   DC_BY(a5),d1
+        move.w  LN_PH(a4),d5         ; d5 = pattern bit of the first pixel
+        tst.b   LN_CLIP(a4)
+        beq.s   .lb_ph
+        move.l  DC_RP(a5),a1
+        moveq   #0,d5
+        move.b  RP_LINPATCNT(a1),d5
+        add.w   LN_C(a4),d5
+        sub.w   d0,d5
+        tst.b   LN_XMAJ(a4)
+        bne.s   .lb_ph
+        add.w   d0,d5
+        sub.w   d1,d5
+.lb_ph:
+        and.w   #15,d5               ; BSH = the starting bit
+        ror.w   #4,d5
         move.l  DC_CBM(a5),a2
         mulu    bm_BytesPerRow(a2),d1
         move.w  d0,d2
@@ -1505,6 +1541,7 @@ ln_blit:
         or.w    #$0b00,d0           ; A, C, D; B is constant
         move.w  d0,d7
         moveq   #1,d6               ; LINEMODE
+        or.w    d5,d6               ; BSH
         tst.b   LN_XMAJ(a4)
         beq.s   .lb_ymaj
         or.w    #$10,d6
@@ -1525,14 +1562,13 @@ ln_blit:
         bpl.s   .lb_error
         or.w    #4,d6
 .lb_error:
-        move.w  LN_M2(a4),d2
-        sub.w   LN_M(a4),d2
-        add.w   d2,d2               ; 4m - 2M
+        move.w  (sp)+,d2
+        add.w   d2,d2               ; Agnus' error: twice the CPU's (4m - 2M at the line's start)
         bpl.s   .lb_enter
         or.w    #$40,d6             ; SIGN
 .lb_enter:
         bsr     db_enter
-        beq     .lb_no
+        beq     .lc_no
         move.l  DC_RP(a5),a1
         move.b  rp_Mask(a1),d4
         moveq   #0,d5                ; minterm index
@@ -1543,7 +1579,6 @@ ln_blit:
         bsr     db_wait
         move.l  #$ffffffff,BLT_AFWM(a0)
         move.w  #$8000,BLT_ADAT(a0)
-        move.w  #$ffff,BLT_BDAT(a0)
         move.w  d3,BLT_CMOD(a0)
         move.w  d3,BLT_DMOD(a0)
         move.w  LN_MM2(a4),d0
@@ -1565,13 +1600,14 @@ ln_blit:
         move.b  RP_MINT(a3,d5.w),d0
         move.w  d0,BLT_CON0(a0)
         move.w  d6,BLT_CON1(a0)
+        move.w  LN_PAT(a4),BLT_BDAT(a0)  ; after BLTCON1: the texture is shifted by BSH as it is written
         move.w  d2,d0
         ext.l   d0
         move.l  d0,BLT_APT(a0)
         adda.l  d1,a1
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)
-        move.w  LN_NPIX(a4),d0
+        move.w  2(sp),d0             ; pixels
         lsl.w   #6,d0
         or.w    #2,d0
         move.w  d0,BLT_SIZE(a0)
@@ -1580,15 +1616,178 @@ ln_blit:
         addq.w  #1,d5
         bra     .lb_plane
 .lb_done:
-        addq.l  #2,sp
+        addq.l  #4,sp                ; depth counter, pixels
         bsr     db_leave
         moveq   #1,d0
-        bra.s   .lb_ret
-.lb_no:
-        moveq   #0,d0
-.lb_ret:
-        movem.l (sp)+,d0-d7/a0-a3/a6
         rts
+.lc_no:
+        addq.l  #2,sp                ; pixels
+        moveq   #0,d0
+        rts
+; ln_cblit(a4 = dr_line variables, a5 = context with its current ClipRect): the piece of a clipped line inside
+; that ClipRect by the blitter. With the minor offset after k major steps j(k) = (2m.k + M) / 2M (the CPU walk's,
+; see ln_draw), the pixels inside are the steps k in [ks, ke] where the major coordinate and j(k) are both within the
+; ClipRect; the blit starts at step ks with the walk's error there, e0 + 2m.ks - 2M.j(ks). -> Z clear when done
+; (nothing to draw included), Z set when the CPU walk must do it (length, blitter busy elsewhere).
+; Preserves everything but d0.
+ln_cblit:
+        movem.l d1-d7/a0-a3/a6,-(sp)
+        move.w  LN_M(a4),d0
+        cmp.w   #4,d0
+        blo     .cb_cpu
+        cmp.w   #1023,d0
+        bhi     .cb_cpu
+        movem.w LN_X0(a4),d4-d5      ; d4/d5 = start x/y
+        tst.b   LN_XMAJ(a4)
+        beq.s   .cb_ym
+        move.w  d4,d0                ; major: start, bounds, step; minor: the same in d1/d2/d3
+        move.w  DC_CMINX(a5),d6
+        move.w  DC_CMAXX(a5),d7
+        move.w  LN_SX(a4),a0
+        move.w  d5,d1
+        move.w  DC_CMINY(a5),d2
+        move.w  DC_CMAXY(a5),d3
+        move.w  LN_SY(a4),a1
+        bra.s   .cb_rng
+.cb_ym:
+        move.w  d5,d0
+        move.w  DC_CMINY(a5),d6
+        move.w  DC_CMAXY(a5),d7
+        move.w  LN_SY(a4),a0
+        move.w  d4,d1
+        move.w  DC_CMINX(a5),d2
+        move.w  DC_CMAXX(a5),d3
+        move.w  LN_SX(a4),a1
+.cb_rng:
+        bsr     .cb_span                ; major: d6/d7 = first/last step inside
+        move.w  d6,d4
+        move.w  d7,d5
+        move.w  d1,d0
+        move.w  d2,d6
+        move.w  d3,d7
+        move.l  a1,a0
+        bsr     .cb_span                ; minor: d6/d7 = jlo/jhi
+        tst.w   d4                      ; ks = max(0, major lo)
+        bpl.s   .cb_k0
+        moveq   #0,d4
+.cb_k0:
+        move.w  LN_NPIX(a4),d0          ; ke = min(NPIX - 1, major hi)
+        subq.w  #1,d0
+        cmp.w   d0,d5
+        ble.s   .cb_k1
+        move.w  d0,d5
+.cb_k1:
+        moveq   #0,d3
+        move.w  LN_M(a4),d3             ; d3 = M
+        moveq   #0,d2
+        move.w  LN_M2(a4),d2            ; d2 = 2m
+        bne.s   .cb_mlo
+        tst.w   d6                      ; m = 0: j is always 0
+        bgt     .cb_none
+        tst.w   d7
+        bmi     .cb_none
+        bra.s   .cb_have
+.cb_mlo:
+        tst.w   d7                      ; jhi < 0: never inside
+        bmi     .cb_none
+        cmp.w   d3,d7                   ; j never passes M
+        ble.s   .cb_jh
+        move.w  d3,d7
+.cb_jh:
+        tst.w   d6                      ; jlo > 0: ks >= ceil((2M.jlo - M) / 2m)
+        ble.s   .cb_hi
+        moveq   #0,d1
+        move.w  d6,d1
+        mulu    d3,d1
+        add.l   d1,d1
+        sub.l   d3,d1
+        add.l   d2,d1
+        subq.l  #1,d1
+        divu    d2,d1
+        bvs     .cb_none                ; beyond any step
+        cmp.w   d1,d4
+        bge.s   .cb_hi
+        move.w  d1,d4
+.cb_hi:
+        moveq   #0,d1                   ; ke <= floor((2M.(jhi + 1) - M - 1) / 2m)
+        move.w  d7,d1
+        addq.l  #1,d1
+        mulu    d3,d1
+        add.l   d1,d1
+        sub.l   d3,d1
+        subq.l  #1,d1
+        divu    d2,d1
+        bvs.s   .cb_have                ; beyond the last step: no limit
+        cmp.w   d1,d5
+        ble.s   .cb_have
+        move.w  d1,d5
+.cb_have:
+        cmp.w   d5,d4
+        bgt     .cb_none
+        move.w  d5,d6
+        sub.w   d4,d6
+        addq.w  #1,d6                   ; d6 = pixels
+        moveq   #0,d1                   ; j = (2m.ks + M) / 2M
+        move.w  d4,d1
+        mulu    d2,d1
+        add.l   d3,d1
+        move.l  d3,d0
+        add.w   d0,d0                   ; 2M
+        divu    d0,d1                   ; d1.w = j
+        moveq   #0,d5                   ; e = (2m - M) + 2m.ks - 2M.j
+        move.w  d4,d5
+        mulu    d2,d5
+        add.l   d2,d5
+        sub.l   d3,d5
+        moveq   #0,d7
+        move.w  d1,d7
+        mulu    d0,d7
+        sub.l   d7,d5                   ; d5.w = e
+        move.w  d4,d0                   ; major offset ks, minor offset j -> first pixel
+        tst.b   LN_XMAJ(a4)
+        bne.s   .cb_xy
+        exg     d0,d1
+.cb_xy:
+        tst.w   LN_SX(a4)
+        bpl.s   .cb_sx
+        neg.w   d0
+.cb_sx:
+        add.w   LN_X0(a4),d0
+        tst.w   LN_SY(a4)
+        bpl.s   .cb_sy
+        neg.w   d1
+.cb_sy:
+        add.w   LN_Y0(a4),d1
+        move.w  d5,d2
+        move.w  d6,d3
+        bsr     lb_core
+        beq.s   .cb_cpu
+.cb_none:
+        moveq   #1,d0
+        bra.s   .cb_ret
+.cb_cpu:
+        moveq   #0,d0
+.cb_ret:
+        movem.l (sp)+,d1-d7/a0-a3/a6
+        rts
+; .cb_span(d0 = start, d6/d7 = ClipRect bounds, a0.w = step +1/-1) -> d6/d7 = steps (from the start) of the first and
+; last coordinate inside, in the direction of the line (either may be negative).
+.cb_span:
+        move.l  a0,-(sp)
+        tst.w   2(sp)
+        addq.l  #4,sp
+        bmi.s   .sp_neg
+        sub.w   d0,d6
+        sub.w   d0,d7
+        rts
+.sp_neg:
+        exg     d6,d7
+        neg.w   d6
+        neg.w   d7
+        add.w   d0,d6
+        add.w   d0,d7
+        rts
+
 ; ln_inx / ln_iny(d0 = absolute coordinate, a3 = ClipRect): Z = 1 if within its x / y bounds. Preserves the rest.
 ln_inx:
         cmp.w   CR_MINX(a3),d0

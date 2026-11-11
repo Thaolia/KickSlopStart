@@ -789,9 +789,9 @@ Same program with the screen opened LACE (320 × 200, so the View becomes LACE a
   LOF list's block (`MaxCount` 101), which therefore started at the first-row colour WAIT (line 58) and no longer
   contained the LOF field's sprite and display set-up (the rest of the LOF block still held the tail of its own
   set-up). The SHF block seems to have kept the size computed by an earlier MrgCop (before
-  the VSprite lists existed) instead of growing. Whether this is a 1.3 defect of MrgCop's SHF reallocation or an
-  effect of the test calling MrgCop on intuition's View every frame was not settled. An implementation must size
-  both lists from the current instruction count.
+  the VSprite lists existed) instead of growing. **Settled 2026-11-11 (§13.7)**: a 1.3 MrgCop defect, the SHF list
+  is never size-checked; it happens at the first MrgCop that needs more entries, not because of the per-frame
+  calls. An implementation must size both lists from the current instruction count.
 
 ### 13.6 Rules for an implementation (VSprites, as 1.3 behaves) [O][D]
 
@@ -805,6 +805,38 @@ Same program with the screen opened LACE (320 × 200, so the View becomes LACE a
    their absolute height and lose their colours/lower reuses; on a LACE screen the first VSprite row of a reused
    sprite is lost.
 
+### 13.7 SHF copper list sizing in MrgCop (2026-11-11) [O]
+
+Method: real ROM, Amiberry A500 preset (cycle-exact, 512 KB chip + 512 KB slow). `tests/vsprite_test.s` assembled
+unchanged (`vasmm68k_mot -Fhunkexe -kick1hunks`) and started from the startup-sequence of a non-Workbench boot
+floppy. Stopped at the program's entry (`monitor process-break`), its `NewScreen.ViewModes` word set to LACE with the
+debugger (as for §13.5), then hardware breakpoints **in the test program's own code** on its `MrgCop` and `LoadView`
+calls. At each hit the View's `LOFCprList` and `SHFCprList` were read (`cprlist`: `start`, `MaxCount`) and the
+entries of each list counted from `start` up to and including the end WAIT `$FFFF,$FFFE`. Three fresh sessions:
+
+| Run | Before the program's first MrgCop (lists made by intuition, no VSprite yet) | After it, and every later frame |
+|---|---|---|
+| unchanged | LOF and SHF: one block each, `MaxCount` 47, 41 entries used | LOF: **new block, `MaxCount` 101**, reads as 38 entries; SHF: **same block, `MaxCount` 47, 86 entries written** |
+| SHF `MaxCount` set to 1 by the debugger before that call | as above | SHF: still the same block, `MaxCount` still **1**, 86 entries written; LOF as above |
+| `View.SHFCprList` set to NULL before that call | as above | SHF: **new block, `MaxCount` 101**, 86 entries; LOF: new block, `MaxCount` 101, 86 entries |
+
+- With the VSprite lists, each field needs 86 entries (end WAIT included). MrgCop **reallocates the LOF list** when
+  its `MaxCount` is too small, but **reuses an existing SHF list whatever its `MaxCount`** (even 1): it writes the
+  86 SHF entries into the 47-entry block [O]. An SHF list is allocated (at the same size as the LOF one) only when
+  `View.SHFCprList` is NULL [O].
+- The overflow lands in the next block: in these runs the new LOF block started 48 entries after the SHF block, so
+  SHF entries 48-85 (38 entries, end WAIT included) overwrote the first 38 entries of the LOF list, which then
+  reads as the tail of the SHF stream ending at its end WAIT [O]; this is the damaged LOF list of §13.5.
+- Screen [O]: unchanged run = striped, pale picture (title bar and VSprites drawn in alternate lines only); NULL run
+  = a correct interlaced picture: intact title bar, the second VSprite row in its own colours (the first row is
+  still missing, for the WAIT reason of §13.5).
+- So the defect does not come from calling MrgCop every frame: the **first** MrgCop whose count exceeds the SHF
+  block overflows it, on a LACE View that already has an SHF list [O]. The allocation size (`MaxCount` 101 for 86
+  needed entries) follows a rule not determined here [?].
+- For an implementation [D]: reproducing the overflow is pointless (it corrupts the next allocation; no program
+  can rely on it); size both lists from the current count. Programs that work on 1.3 with LACE views either keep
+  the instruction count from growing or free the View's lists (`FreeCprList` and NULL pointers) before MrgCop.
+
 ## Open points
 
 1. **Beam synchronisation** (§5.9): QBSBlit vs QBlit chosen from `rp->Flags` DBUFFER is deduced; the effect on
@@ -812,8 +844,8 @@ Same program with the screen opened LACE (320 × 200, so the View becomes LACE a
 2. **SuperBitMap layers**: the SuperClipRect pass of §5.5 is deduced only.
 3. **VSprites on screen**: answered 2026-11-10 (§13.3-§13.5): MrgCop emits the $F000-style MOVEs as plain register
    MOVEs in LOF and SHF, adds View + ViewPort DyOffset (halved WAITs for LACE) to the WAITs only, so a ViewPort with
-   DyOffset ≠ 0 or LACE shows VSprites at the wrong height [O]. Still open: the SHF list size seen in the LACE run
-   (§13.5) [?].
+   DyOffset ≠ 0 or LACE shows VSprites at the wrong height [O]. The SHF list size seen in the LACE run (§13.5):
+   settled 2026-11-11 (§13.7), MrgCop never resizes an existing SHF list [O].
 4. **`GfxBase->VBlank` := 1**: who reads and clears it (the vertical-blank server?) was not traced. Observed:
    1 right after the call under the debugger, 0 when the CLI probe printed it after the call (G9a, G9b).
 5. **Collision defect formula** (§7.4): the "one word to the left" description fits all sweeps but was derived
@@ -850,3 +882,7 @@ Review of 2026-11-04.
   built for our VSprites, merged lists read from RAM, screenshots); no ROM instruction or address. The two
   programs were run unchanged; the LACE variant changed one data word of the test program's NewScreen through the
   debugger. No code was written by the analysis track.
+- [x] Review of 2026-11-11 (§13.7): same test program run unchanged (one NewScreen data word set to LACE through
+  the debugger, as in §13.5); breakpoints only in the test program's code; copper list headers and lengths read
+  from RAM; two runs changed one public View/cprlist field through the debugger before MrgCop. No ROM instruction
+  or address; no code written by the analysis track.

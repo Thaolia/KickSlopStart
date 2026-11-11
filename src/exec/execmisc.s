@@ -95,17 +95,31 @@ exec_SumLibrary:
 .sl_ret:
         rts
 
-; Cause(interrupt a1): the software interrupt is queued (only once while it is pending) then
-; SOFTINT is requested; the level 1 server executes it (a1 = is_Data, a5 = is_Code, a6 = SysBase). Callable
-; from an interrupt: masking through INTENA (master state restored), never Disable/Enable (which may yield).
+; Cause(interrupt a1): the software interrupt is queued at the tail of the SoftInts queue of its priority (only
+; once while it is pending), then SOFTINT is requested; the level 1 server executes it (a1 = is_Data, a5 = is_Code,
+; a6 = SysBase). Queue = (LN_PRI and $F0) as a signed byte, relative to the middle one (exec-scheduling-v34 §8);
+; 1.3 indexes outside the array beyond -32..+47, we clamp there instead. Callable from an interrupt: masking through
+; INTENA (master state restored), never Disable/Enable (which may yield).
 exec_Cause:
         move.w  INTENAR,d1
         move.w  #INTF_INTEN,INTENA
         cmp.b   #NT_SOFTINT,LN_TYPE(a1)
         beq.s   .ca_done             ; already pending
         move.b  #NT_SOFTINT,LN_TYPE(a1)
+        move.b  LN_PRI(a1),d0
+        and.b   #$F0,d0
+        ext.w   d0
+        cmp.w   #-2*SH_SIZE,d0
+        bge.s   .ca_lo
+        moveq   #-2*SH_SIZE,d0
+.ca_lo:
+        cmp.w   #2*SH_SIZE,d0
+        ble.s   .ca_hi
+        moveq   #2*SH_SIZE,d0
+.ca_hi:
+        lea     EB_SOFTINTS+2*SH_SIZE(a6),a0
+        add.w   d0,a0
         move.l  d1,-(sp)
-        lea     EXEC_SOFTLIST,a0
         jsr     LVO_ADDTAIL(a6)
         move.l  (sp)+,d1
         move.w  #(INTF_SETCLR|INTF_SOFTINT),INTREQ
@@ -116,14 +130,18 @@ exec_Cause:
 .ca_ret:
         rts
 
-; exec_softint_init(a6): empty queue, SOFTINT server installed (exclusive level 1 vector) and source enabled.
-; After init_ints (IntVects table allocated).
+; exec_softint_init(a6): the five SoftInts queues emptied, SOFTINT server installed (exclusive level 1 vector) and
+; source enabled. After init_ints (IntVects table allocated).
 exec_softint_init:
-        lea     EXEC_SOFTLIST,a0
+        lea     EB_SOFTINTS(a6),a0
+        moveq   #5-1,d0
+.si_lp:
         move.l  a0,8(a0)             ; lh_TailPred = &lh_Head
         addq.l  #LH_TAIL,a0
         move.l  a0,-LH_TAIL(a0)      ; lh_Head = &lh_Tail
         clr.l   (a0)                 ; lh_Tail = 0
+        lea     SH_SIZE-LH_TAIL(a0),a0
+        dbra    d0,.si_lp
         moveq   #INTB_SOFTINT,d0
         lea     softint_is(pc),a1
         jsr     LVO_SETINTVECTOR(a6)
@@ -131,9 +149,10 @@ exec_softint_init:
         move.w  #(INTF_SETCLR|INTF_SOFTINT),INTENA
         rts
 
-; softint_server (level 1, a6 = SysBase): acknowledges SOFTINT then executes the pending interrupts in order, at
-; SR $2000 as on 1.3 (exec-scheduling-v34 §8): every hardware level, level 1 included, may nest over a software
-; interrupt, while the SOFTINT source itself stays off in INTENA (a Cause meanwhile is picked up by this loop).
+; softint_server (level 1, a6 = SysBase): acknowledges SOFTINT then executes the pending interrupts, the head of
+; the highest non-empty priority queue first, rescanning from the top after each call, at SR $2000 as on 1.3
+; (exec-scheduling-v34 §8): every hardware level, level 1 included, may nest over a software interrupt, while the
+; SOFTINT source itself stays off in INTENA (a Cause meanwhile is picked up by this loop).
 softint_server:
         movem.l d2-d7/a2-a4,-(sp)    ; the level-1 dispatcher's loop registers, whatever the softint code does
         move.w  #INTF_SOFTINT,INTREQ
@@ -142,12 +161,18 @@ softint_server:
         move.w  #$2000,sr
 .ss_lp:
         move.w  #INTF_INTEN,INTENA
-        lea     EXEC_SOFTLIST,a0
-        jsr     LVO_REMHEAD(a6)
-        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
-        tst.l   d0
+        lea     EB_SOFTINTS+5*SH_SIZE(a6),a0
+        moveq   #5-1,d1
+.ss_q:
+        lea     -SH_SIZE(a0),a0
+        move.l  (a0),a1              ; lh_Head
+        tst.l   (a1)                 ; ln_Succ = 0: empty list
+        dbne    d1,.ss_q
         beq.s   .ss_ret
-        move.l  d0,a1
+        move.l  (a1),a2              ; unlink the head
+        move.l  a2,(a0)
+        move.l  a0,LN_PRED(a2)
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
         move.b  #NT_INTERRUPT,LN_TYPE(a1)
         move.l  IS_CODE(a1),a5
         move.l  IS_DATA(a1),a1
@@ -155,6 +180,7 @@ softint_server:
         move.l  ($4).w,a6
         bra.s   .ss_lp
 .ss_ret:
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
         move.w  (sp)+,sr
         move.w  #(INTF_SETCLR|INTF_SOFTINT),INTENA
         movem.l (sp)+,d2-d7/a2-a4

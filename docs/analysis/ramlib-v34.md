@@ -115,8 +115,14 @@
 | −402 `RemLibrary` | −60 | same |
 | −438 `RemDevice` | −66 | same |
 
-- The four Close/Rem replacements **return the value returned by the previous function unchanged** in D0
-  (the seglist BPTR, which has just been freed, or 0). [R]
+- ~~The four Close/Rem replacements return the value returned by the previous function unchanged in D0.~~
+  **Corrected 2026-11-10 [S]**: with a library/device whose Close or Expunge returned the BPTR of a one-hunk
+  seglist of 16 bytes (`tests/exec_msgio_probe.s`, vectors CD1, RD1, CL1, RL1, on a booted real 1.3), the caller
+  of CloseDevice, RemDevice, CloseLibrary and RemLibrary got **D0 = 16**, not the BPTR; the seglist was freed.
+  16 equals the size longword of the freed hunk, so D0 is most likely what the seglist-freeing step leaves (§5)
+  [I]; with a multi-hunk seglist it was not tried. When the previous function returns 0, D0 = 0 [R]. No 1.3 caller
+  is known to use the result; an implementation returning either 0 or the freed BPTR would only differ from 1.3
+  for a program that prints or tests it.
 - Order of installation: the order of the table. [R]
 
 ---
@@ -379,3 +385,5 @@ Steps and expected 1.3 values:
 - The debugger trampolines used for §8 were three-instruction scaffolds written by the analysis agent into
   emulated RAM for the session only; they are not ROM content and nothing of them is meant to be reused.
 - The probe of §8.1 is a description; it is written on the implementation side from that description only.
+- 2026-11-10 (§2.2 correction): black-box result of the implementation-side probe `tests/exec_msgio_probe.s` run
+  unchanged on the real ROM; only the D0 values returned to the caller were read. No ROM code read, no address.

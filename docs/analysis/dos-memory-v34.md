@@ -14,7 +14,9 @@
 > memory headers; then `mh_Free` of each memory header was read before/after each operation. Some runs
 > **injected a failure** by making one chosen `AllocMem` request impossible (its size replaced by a huge value
 > at the call), or **pre-filled** a freshly allocated block with a pattern to see what the loader writes.
-> Process and CLI structures were read with the debugger. No ROM code was read for this page.
+> Process and CLI structures were read with the debugger. No ROM code was read for this page. The 2026-11-11
+> results of §8 (P1, P3) come from the implementation-side program `tests/dosmisc_probe.s` run unchanged on the
+> real ROM (serial output), P3's second half and P4 from debugger breakpoints and free-list reads.
 >
 > Configuration of every figure below: Amiberry 8.4.2 defaults (68000, not cycle-exact), **512 KB chip +
 > 512 KB slow RAM at `$C00000`** (its memory header has attributes `MEMF_PUBLIC|MEMF_FAST`, so the "fast"
@@ -51,8 +53,8 @@
 7. **CLI structure and its BSTR buffers** live **inside the CLI process's own stack** (no allocation). [O]
 8. Every dos object observed is freed on the normal path: Open/Close, Lock/UnLock, LoadSeg/UnLoadSeg, running
    a command, `NewCLI` + `EndCLI` and `Run` all return free memory to the byte. [O] Genuine leaks found:
-   **24 bytes per failed process creation** (exec `AllocEntry` leaves its MemList copy) [O]; the 56 bytes per
-   Workbench Shell of `dos-cli-v34.md` §2 (cause not attributed).
+   **24 bytes per failed process creation** (exec `AllocEntry` leaves its MemList copy) [O]. The 56 bytes
+   per Workbench Shell of `dos-cli-v34.md` §2 are not a dos leak: 0 bytes on re-measurement (§8 P4).
 9. Low memory never raises a requester or an alert from dos: the operation fails with **Result2 = 103**. One
    exception crashes the machine: **a lock allocation failure inside the ROM file system** (§5.3). [O]
 
@@ -150,12 +152,25 @@ that satisfies the flags; with slow RAM present that is slow RAM for every `MEMF
 - The ROM file system also allocates and frees a 328-byte block every few seconds while idle. [O] (FS
   internals; listed so that nobody reads it as a leak.)
 
-### 2.3 Packets [D]
+### 2.3 Packets [O since 2026-11-10]
 
 No `AllocMem` other than the FileHandle, the stream buffer and the handler's own blocks was seen for
 `Open`, `Read`, `Close`, `Lock`, `UnLock`, `Examine`, `ExNext`, nor for the startup packets of new
-processes. The packets therefore live in the caller's BCPL frame (stack). Not checked by reading the message
-address against the stack bounds.
+processes. The packets live in the caller's stack (probe P6, 2026-11-10, breakpoint on exec `PutMsg`'s
+jump-table entry, message address compared with the sender's stack) [O]:
+
+- **LVO `Lock` from a C program** (the Workbench process opening a drawer; a breakpoint on dos's `Lock` vector
+  marked the call): the LOCATE_OBJECT packet sent to the file system lay **inside the caller's stack**
+  (`tc_SPLower`..`tc_SPUpper`), about 1.1 KB **below** the SP the caller had at the LVO entry, while the 68000 SP
+  at the `PutMsg` was only 64 bytes below that entry SP. The packet therefore sits in the area below A7 that the
+  LVO bridge uses for its BCPL frames (`bcpl-runtime-v34.md` §1.4), not in an `AllocMem` block. The EXAMINE
+  packet that followed was in the same area. A C program calling dos needs that headroom below its SP.
+- **BCPL commands run by a CLI** (MakeDir, Delete): the packet lay inside the **command's stack** (the block the
+  CLI allocates for the command, below the command's A7), which is not the range described by the process's
+  `tc_SPLower`/`tc_SPUpper` (those still describe the CLI process's own stack). The CLI's own packets (loading
+  the command, console I/O) lay inside the process stack range.
+- Not every packet is a dos one: the Workbench sends its ACTION_DISK_INFO packets (and one LOCATE when it opens a
+  disk icon) from a buffer of its own in chip RAM, without going through the dos LVO.
 
 ### 2.4 Processes [O]
 
@@ -257,8 +272,11 @@ Observed through the BCPL loadseg called by the CLI for every command, and from 
 - Bits 30/31 on the **hunk id** (HUNK_CODE with bit 30 set) are **ignored**: the hunk is accepted and loaded
   with `MEMF_PUBLIC`. This settles the open question of `dos-v34-spec.md` §4b: the header size is what
   counts. [O]
-- With bits 31-30 = 11, whether 1.3 would have consumed a following extra long (the 2.0 format) cannot be
-  seen: the allocation fails first. [O for the failure, uncertain for the format]
+- With bits 31-30 = 11, 1.3 does **not** know the 2.0 format (attribute long after the size) [O, 2026-11-11, P3]:
+  a one-hunk file whose size long has bits 31-30 = 11 and is followed by the attribute long `MEMF_CHIP` fails
+  with **D0 = 0, IoErr 103** (the flag-8 allocation of 12 bytes = 1 long + 8 fails first; the size used is
+  the low 30 bits). When the debugger rewrote that one request's flags to `MEMF_CHIP` so that it succeeded, the
+  load failed with **D0 = 0, IoErr 121**: the attribute long was read as the next hunk type, not consumed.
 
 ### 3.4 Clearing [O]
 
@@ -271,7 +289,13 @@ Observed through the BCPL loadseg called by the CLI for every command, and from 
 ### 3.5 UnLoadSeg [O]
 
 - Frees the chain **in chain order** (hunk 0 first), one `FreeMem` per segment with the header size.
-- `UnLoadSeg(0)`: not observed (no caller seen); see probe P1.
+- `UnLoadSeg(0)` through the LVO from a CLI program [O, 2026-11-11, P1]: returns, D0 = 0, and the longs at
+  addresses 0 and 4 are unchanged (0 and ExecBase before and after): nothing is freed or written.
+  (`dos-lvo-partial-v34.md` §2.10.)
+- `LoadSeg` of a missing file (`df0:nonexistent`) [O, P1]: D0 = 0, IoErr **205**, free memory (AvailMem of
+  any type) identical before and after.
+- Overlaid program (2026-11-10, Deluxe Paint III, `dos-lvo-partial-v34.md` §2.10) [O]: after the first run, each
+  run + exit leaves free memory unchanged, and the overlay file is no longer locked afterwards.
 
 ### 3.6 Failure in the middle of a load [O]
 
@@ -334,7 +358,7 @@ CLI stays except what cliinit made for the system (RootNode, DosInfo, rn_TaskArr
 | Case | Bytes left | Status |
 |---|---|---|
 | Process creation fails in `AllocEntry` (NewCLI with the 3388-byte request made impossible) | **24** (the MemList copy allocated by AllocEntry is never freed) | [O] exec behaviour, reached through createproc |
-| Shell opened from the Workbench `Shell` icon then `endcli` (Shell-Seg + NEWCON) | **56** | [O] in `dos-cli-v34.md` §2; not attributed (the ROM CLI pair leaks 0, §4.2) |
+| Shell opened from the Workbench `Shell` icon then `endcli` (Shell-Seg + NEWCON) | **56** in one run, **0** on re-measurement | [O] `dos-cli-v34.md` §2 (56, non cycle-exact) and §8 P4 (0, twice); the 56 = one IntuiMessage block kept for the disk window [D], not dos |
 | WB tool that calls Exit without replying WBStartup | its seglist and arguments | [D] `dos-exit-packets-v34.md` §1.5 |
 | Process created by C `CreateProc` | its `pr_CurrentDir`, `pr_CIS`/`pr_COS` are not released by endtask | [O] `dos-exit-packets-v34.md` §1.4 (the creator's lock is shared, not duplicated) |
 
@@ -362,12 +386,20 @@ Each case below was produced on the real ROM by making one chosen allocation fai
 
 See §1.2: a failing request first makes the system expunge unused libraries.
 
-### 5.3 Lock allocation failure in the ROM file system: system crash [O, cause D]
+### 5.3 Lock allocation failure in the ROM file system: system crash [O]
 
 Making the file system's 24-byte lock allocation fail during `cd s` hung the CLI; the memory list read through
-`ExecBase` became garbage, then the machine reset and stopped on a dark red screen. [O] Interpretation [D,
-uncertain]: the file system does not test getvec's result and writes the new lock at address 0, overwriting
-the ExecBase pointer at `$4`. A replacement does not have to copy this; programs cannot rely on it.
+`ExecBase` became garbage, then the machine reset and stopped on a dark red screen. [O]
+
+**Cause confirmed 2026-11-10 (probe P5)** [O]: the Workbench process opened a drawer (an LVO `Lock`); the
+24-byte `AllocMem` made by the `File System` task right after that call was made to fail (size replaced by a
+huge value at the call, as in §5.2), with a write watchpoint on `$0-$7`. The file system then wrote the new
+lock's first two longwords at **address 0**: long 0 = the BPTR of a lock already held on that volume (the
+link field of a FileLock), long 4 = a small number (presumably the key of the directory's header block, the
+second FileLock field) **in place of the ExecBase pointer at `$4`**. The machine crashed
+moments later. So the file system does not test the allocation result; the null-pointer write is the cause of
+the crash, whatever the caller's path (BCPL `cd` or LVO `Lock`). A replacement does not have to copy this
+(answering 0 / 103 is the sane behaviour); programs cannot rely on it.
 
 ### 5.4 Half-built objects [O]
 
@@ -432,31 +464,47 @@ Other real-side figures useful to `docs/MEMORY-USAGE.md` [O]:
 | 13 | C `CreateProc(name, pri, seg, 5000)` | Process block = 188 + 5000 + copy of the name above `tc_SPUpper`; `pr_StackSize` = 5000 |
 | 14 | `pr_CLI` of a CLI | points inside the CLI process's own stack |
 | 15 | CLI command whose stack cannot be allocated | "Unable to load <name>: insufficient free store" |
+| 16 | LVO UnLoadSeg(0) | D0 = 0; longs at 0 and 4 unchanged |
+| 17 | LVO LoadSeg of a missing file | D0 = 0, IoErr 205, free memory unchanged |
+| 18 | LoadSeg, bits 31-30 = 11 in a header size followed by a 2.0 attribute long | D0 = 0, IoErr 103 (not 121: the allocation fails before any further long is read) |
 
 ---
 
 ## 8. Probes still wanted (described, not written)
 
-- **P1 — UnLoadSeg(0) and LoadSeg(missing)**: a small C-style program that calls `UnLoadSeg(0)` (does it
-  return, does it touch memory 0..7?), then `LoadSeg("nonexistent")` and prints IoErr and the free counts.
+Status 2026-11-11: P5 and P6 done with the debugger on the real ROM (§5.3, §2.3); P1 and P3 done by running the
+implementation-side program `tests/dosmisc_probe.s` unchanged on the real ROM (Amiberry A500 cycle-exact, 512 KB
+chip + 512 KB slow, OFS probe disk built by `tests/dosmisc_probe.sh`'s `xdftool` command, results on the serial
+line, three runs); P4 re-measured (no residue reproduced); P2 still open.
+
+- **P1 — UnLoadSeg(0) and LoadSeg(missing) — done [O]**, §3.5: UnLoadSeg(0) returns D0 = 0 and leaves the
+  longs at 0 and 4 unchanged; LoadSeg of a missing file returns 0 with IoErr 205 and no memory change.
 - **P2 — getvec edge sizes**: through a BCPL command stub's GV (global 29), call getvec(0), getvec(−1) and
   freevec of an `AllocMem` block; report the AllocMem size seen and whether an alert follows.
-- **P3 — 2.0-style memory attribute long**: hunk file whose header size has bits 31-30 = 11 and a following
-  attribute long `MEMF_CHIP`, loaded on a machine where the allocation of flag 8 is made to succeed by the
-  debugger, to see whether 1.3 consumes the extra long.
-- **P4 — 56-byte Shell residue**: the AllocMem/FreeMem tracer of this page on the Workbench `Shell` icon then
-  `endcli`, to attribute the 56 bytes of `dos-cli-v34.md` (NEWCON handler, Shell-Seg, or the Workbench).
-- **P5 — lock failure via the LVO**: a program calling `Lock` while the file system's lock allocation is made
-  to fail, with a watchpoint on `$0-$7`, to confirm or refute the null-pointer write of §5.3.
-- **P6 — packets on the stack**: breakpoint on exec `PutMsg` during an LVO `Lock`, comparing the message
-  address with the caller's `tc_SPLower..tc_SPUpper` (confirms §2.3).
+- **P3 — 2.0-style memory attribute long — done [O]**, §3.3: 103 as it stands; with the flag-8 request made to
+  succeed by the debugger (breakpoint on the exec `AllocMem` vector in RAM, flags 8 rewritten to `MEMF_CHIP`
+  for that one call), 121: 1.3 does not consume the attribute long.
+- **P4 — 56-byte Shell residue — re-measured, not reproduced [O]** (2026-11-11, Workbench 1.3.3 disk copy,
+  cycle-exact): with the disk window and Shells 1 and 2 open (title bar 769 408, as in `dos-cli-v34.md` §2
+  step (d)), Shell 3 opened from the icon then `endcli` gave back **769 408**, twice: once with `endcli` typed
+  straight away, once after the window juggling of `dos-cli-v34.md` §1 (Shell 3 sent to the back, backdrop
+  clicked, Shells cycled with the depth gadget until Shell 3 was in front, clicked, then `endcli`). The free
+  lists of both memory headers, read with the debugger before and after, had the same totals; only the
+  fragmentation differed. So a Shell cycle leaks nothing in dos, Shell-Seg or the Newcon handler once that
+  handler is loaded. The 56 bytes of `dos-cli-v34.md` (non cycle-exact run) match one 56-byte IntuiMessage
+  block kept for the disk window, which `newshell-memory-v34.md` §2.5 identified by content and which is
+  returned when that window closes [D]. The breakpoint tracer itself was not usable for this: each stop cost
+  about 1.5 s of host time through the GDB server, and the Workbench double-click was lost while it ran.
+- **P5 — lock failure via the LVO — done [O]**, §5.3: the file system writes the lock at address 0 (ExecBase
+  pointer overwritten).
+- **P6 — packets on the stack — done [O]**, §2.3: in the caller's stack, below its SP (LVO from C), or in the
+  command's stack (BCPL command under a CLI).
 
 ## 9. Uncertain points
 
 - Role of the 244-byte boot block of §2.10, of the 20-byte block of §4.2, and of the file system's
   608/448/408/328-byte blocks (only their sizes and lifetimes are observed).
-- Cause of the crash of §5.3.
-- §2.3 (packets) is deduced from the absence of allocations.
+- (Settled 2026-11-10: the cause of the crash of §5.3, and where packets live, §2.3.)
 
 ---
 
@@ -473,3 +521,7 @@ Review of 2026-11-04.
   ("Unable to load", "NEWCLI failed", "Unable to create new process", "Can't open", Why texts).
 - [x] Test files: copies of a Workbench command with one longword changed or truncated; their content is
   not reproduced.
+- [x] 2026-11-10 additions (§2.3, §3.5, §5.3, §8): breakpoints on exec/dos jump-table entries in RAM, a write
+  watchpoint on `$0-$7`, one `AllocMem` size changed at the call; results given as relations (inside / below a
+  stack range, offsets in bytes) and as the values written at `$0-$7` described by meaning, no RAM or ROM
+  address, no ROM code read, no code written.

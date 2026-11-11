@@ -12,6 +12,10 @@
 ;   "EXP BM <BytesPerRow> <Rows> <Depth> <Flags,pad> <Planes[0]> <d1>"   InitBitMap on a $AA-filled BitMap
 ;   "EXP REM <key after FreeRemember(FALSE)> <AvailMem drop>"   two AllocRemember (100, 50) then FALSE
 ;   "EXP PRIV <1 if graphicsPrivate1 returns a6>"
+;   "EXP OLZ <$0000 | Z after a successful OpenLibrary (Seq) << 8 | Z after a failed one>"   programs branch on the
+;            flags straight after the call (Paccer's CLS: movea.l d0,a6 then beq)
+;   "EXP INT6 <servers in the EXTER chain after AddIntServer> <calls of ours after one INTREQ EXTER>"   INT6 is a
+;            server chain holding ciab.resource (custom-chips-v34 §3.3), so a program's server joins it
 ;   "EXP fin"
 ; Run as a CLI command; tests/explvo_probe.sh checks every line.
 
@@ -35,6 +39,10 @@ LVO_AllocSignal  EQU -330
 LVO_FreeSignal   EQU -336
 LVO_AllocTrap    EQU -342
 LVO_CloseLibrary EQU -414
+LVO_AddIntServer EQU -168
+LVO_RemIntServer EQU -174
+INTB_EXTER       EQU 13
+EB_IntVects      EQU $54
 LVO_OpenLibrary  EQU -552
 LVO_GetCC        EQU -528
 LVO_InitBitMap   EQU -390
@@ -272,6 +280,49 @@ start:
         move.l  d2,d0
         bsr     phex8
         bsr     nl
+        lea     gfxname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OpenLibrary(a6)
+        seq     d3
+        move.l  d0,a1
+        jsr     LVO_CloseLibrary(a6)
+        lea     gfxname(pc),a1
+        move.l  #999,d0              ; present but too old: fails without a load
+        jsr     LVO_OpenLibrary(a6)
+        seq     d4
+        lea     m_olz(pc),a0
+        bsr     puts
+        moveq   #0,d0
+        move.b  d3,d0
+        lsl.w   #8,d0
+        move.b  d4,d0
+        bsr     phex8
+        bsr     nl
+        moveq   #INTB_EXTER,d0       ; INT6: our server joins the chain, then one software request of EXTER
+        lea     i6is(pc),a1
+        jsr     LVO_AddIntServer(a6)
+        move.l  EB_IntVects+INTB_EXTER*12(a6),a0  ; iv_Data = the chain's list header
+        moveq   #0,d3
+.i6c:   move.l  (a0),a0
+        tst.l   (a0)
+        beq.s   .i6d
+        addq.l  #1,d3
+        bra.s   .i6c
+.i6d:   lea     i6cnt(pc),a2
+        move.w  #$A000,$DFF09C       ; INTREQ SET | EXTER
+        move.w  #20000,d0
+.i6w:   tst.l   (a2)
+        dbne    d0,.i6w
+        moveq   #INTB_EXTER,d0
+        lea     i6is(pc),a1
+        jsr     LVO_RemIntServer(a6)
+        lea     m_int6(pc),a0
+        bsr     puts
+        move.l  d3,d0
+        bsr     phex8
+        move.l  i6cnt(pc),d0
+        bsr     phex8
+        bsr     nl
         lea     m_fin(pc),a0
         bsr     puts
         movem.l (sp)+,d2-d7/a2-a6
@@ -411,6 +462,9 @@ vecs:     dc.l  dummy,dummy,dummy,dummy,dummy,-1
 istab:    dc.b  $C0,$00,$00,$04,$12,$34,$56,$78,$A1,$0A,$AB,$CD,$62,$77,$00
           even
 dummy:    rts
+i6code:   addq.l  #1,(a1)            ; a1 = is_Data = the counter
+          moveq   #0,d0              ; continue the chain
+          rts
 cname:    dc.b  "explvo child",0
 gfxname:  dc.b  "graphics.library",0
 intname:  dc.b  "intuition.library",0
@@ -423,5 +477,12 @@ m_is:     dc.b  "EXP IS",0
 m_bm:     dc.b  "EXP BM",0
 m_rem:    dc.b  "EXP REM",0
 m_priv:   dc.b  "EXP PRIV",0
+m_olz:    dc.b  "EXP OLZ",0
+m_int6:   dc.b  "EXP INT6",0
+                even
+i6cnt:    dc.l  0
+i6is:     dc.l  0,0
+          dc.b  2,10
+          dc.l  0,i6cnt,i6code
 m_fin:    dc.b  "EXP fin",10,0
                 even

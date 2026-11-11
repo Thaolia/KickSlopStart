@@ -23,7 +23,8 @@ characters is reported as such: run the probe again.
 `tests/sched_probe.sh <out_dir> [rom]` runs `tests/sched_probe.s` (CLI command, our ROM under Amiberry): ExecBase
 Quantum and Elapsed read by a busy loop on 8 frames (timer.device's quantum, `timer-v34.md` §3), the D0 that Signal
 returns (the previous tc_SigRecvd, `exec-scheduling-v34.md` §2.7), and SR and INTENAR inside a software interrupt
-(SR $2000, SOFTINT off, §8). Success: `SCHED OK`.
+(SR $2000, SOFTINT off, §8), and the order in which six software interrupts Caused under Disable run ("SP ORD":
+CEBDFA, five priority queues with FIFO inside each, §8). Success: `SCHED OK`.
 
 ## Native task startup arguments and initial CLI priority
 
@@ -60,8 +61,20 @@ then the cover window closes and every pixel of the destination is read back (`g
 `tests/explvo_probe.sh <out_dir> [rom]` runs `tests/explvo_probe.s`: a fresh task made by AddTask (masks preset to
 garbage) plays the signal/trap vectors of `exec-partial-lvos-v34.md` §4.6, then GetCC, Insert after the tail
 sentinel, FindTask of the probe's own name, MakeLibrary with five vectors, the InitStruct vector of §6.1, InitBitMap
-on a `$AA`-filled BitMap, AllocRemember/FreeRemember(FALSE) and graphicsPrivate1. Every `EXP` line is compared with
-the spec's values. Success: `EXPLVO OK`.
+on a `$AA`-filled BitMap, AllocRemember/FreeRemember(FALSE) and graphicsPrivate1; then the Z flag right after a
+successful and a failed OpenLibrary (`EXP OLZ`, issue #35) and a server added to the EXTER chain and called by a
+software INT6 (`EXP INT6`: two servers, ciab.resource's and ours). Every `EXP` line is compared with the spec's
+values. Success: `EXPLVO OK`.
+
+`tests/dosmisc_probe.sh <out_dir> [rom]` runs `tests/dosmisc_probe.s` from a disk that mounts NEWCON: (C:Run, C:Mount,
+L:Newcon-Handler and DEVS:MountList copied from `assets/wb133.adf`): four instances started with Run time Delay(50),
+Delay(-50), Delay(-49), Delay(-1) by DateStamp, and one in the foreground prints Seek on the console, on RAW: and
+NEWCON: handles and after a buffered read, Info into a buffer + 2, UnLoadSeg(0) with the longs at 0 and 4, LoadSeg
+of a missing file and of a 2.0-style hunk header (size bits 31-30 = 11 and an attribute long). The `DM` lines go to
+`<out_dir>/dosmisc.txt` (dos-lvo-partial-v34 §4 items 2, 3, 7, dos-memory-v34 §8 P1, P3) and are compared with the
+real 1.3's values. Success: `DOSMISC OK`. `tests/kicktag_test.s`
+(warm reset survival) now also prints whether CoolCapture ran in user mode and stores the SR it saw at
+KickTagPtr − 16.
 
 ## Large files, moved disks, clipped lines, WaitTOF
 

@@ -417,6 +417,7 @@ exec_OpenLibrary:
         jsr     LVO_PERMIT(a6)
         movem.l (sp)+,d0/a0
         movem.l (sp)+,d2/a2-a3
+        tst.l   d0                   ; callers test the flags straight after the call (Paccer's CLS: movea + beq)
         rts
 
 ; ol_walk(a3 = name, d2.w = version) -> d0 = the first LibList node of that name whose lib_Version >= d2 (signed

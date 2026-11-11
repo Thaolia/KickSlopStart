@@ -345,6 +345,8 @@ def check(path, oracle=False):
             continue
         regs = f.get('x', '-')
         errs = [] if regs == '-' else ['registers changed: ' + regs]
+        if oracle and name == 'R5 d7':
+            errs = []                 # 1.3 does not save D7: the PutChProc's D7 reaches the caller (spec §8a)
         read = s32(f['r'])
         ours = False
         k = c['kind']
@@ -364,7 +366,7 @@ def check(path, oracle=False):
             wread, ours = c['ours_read'], True
         if got != want:
             errs.append('output %s want %s' % ((got, want) if isinstance(got, int) else (show(got), show(want))))
-        if read != wread and not (oracle and k == TOL['a1']):
+        if read != wread and not (oracle and k in (TOL['a1'], BUMP)):   # R4's PutChProc moves A1 (spec §8a)
             errs.append('read %d want %d' % (read, wread))
         if k == REC:
             errs += check_rec(f, rep, oracle)
@@ -398,7 +400,7 @@ def check_rec(f, rep, oracle):
         if int(a3, 16) != 0:
             errs.append('call %d A3 moved' % j)
         wa1 = 0 if j < 2 else 4 if j < 4 else 8
-        if s32(a1) != wa1:
+        if s32(a1) != wa1 and not oracle:   # 1.3 sets A1 only when a conversion fetches: the PutChProc's A1 (§8a)
             errs.append('call %d A1 = data+%d want +%d' % (j, s32(a1), wa1))
         hi_ok &= d0 >> 8 == 0
         a6_ok &= int(a6, 16) == eb

@@ -115,6 +115,7 @@ BB_NOQ   EQU 2
 BB_REPLY EQU 3
 BB_A6    EQU 4
 BB_JUNK  EQU 5
+BB_KEEPA2 EQU 6          ; with BB_JUNK: A2 left alone (a library Open must keep A2 on 1.3, §4.1)
 
 CALL            macro                ; CALL lvo,d0,d1,a0,a1
                 move.w  #\1,c_lvo-vars(a5)
@@ -1247,8 +1248,8 @@ t_lib:          lea     fl1(pc),a0           ; AL1
                 CALL    L_OpenLibrary,#0,#M1V,#M8V,#n_lib
                 PV      d0,rout(pc)
                 bsr     pstd
-                LINE    OL16                 ; OL16: the Open changes A6, A1, A0, D1
-                BEH     (1<<BB_D0)|(1<<BB_A6)|(1<<BB_JUNK),0,$1234
+                LINE    OL16                 ; OL16: the Open changes A6, A1, A0, D1, D2 (not A2)
+                BEH     (1<<BB_D0)|(1<<BB_A6)|(1<<BB_JUNK)|(1<<BB_KEEPA2),0,$1234
                 CALL    L_OpenLibrary,#0,#M1V,#M8V,#n_lib
                 PV      d0,rout(pc)
                 PV      d1,rout+4(pc)
@@ -1533,6 +1534,8 @@ stub:           movem.l d0-d1/a0-a1/a6,(a5)
                 move.l  #$D2D2D2D2,d2
                 move.l  #$A0A0A0A0,a0
                 move.l  #$A1A1A1A1,a1
+                btst    #BB_KEEPA2,(a4)
+                bne.s   .s6
                 move.l  #$A2A2A2A2,a2
 .s6:            move.l  (sp)+,a4
                 move.l  (sp)+,a5

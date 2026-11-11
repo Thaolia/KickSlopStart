@@ -673,7 +673,11 @@ Output must not use mathffp itself (print through dos `Write` with the probe's o
    kept between calls (no register or memory other than the stack was seen to change), so they are expected to be
    re-entrant and mode-independent [S].
 6. **Known users**: only the Workbench use is documented on our side; FFP-compiled programs were not analysed.
-7. The probe of §8 has not been run on the real ROM; the figures come from debugger-injected calls.
+7. ~~The probe of §8 has not been run on the real ROM.~~ Done 2026-11-10 [O]: `tests/mathffp_probe.sh` run
+   unchanged with its analysis switch on `kick34005.A500` (Amiberry A500, cycle-exact, 512 KB chip + 512 KB
+   slow, the probe started from a floppy's startup-sequence, i.e. from a CLI process with interrupts enabled):
+   `mathffp_check.py check` gave **264 checks, 0 failures**. Every value, flag and register expectation of §7
+   holds on the real ROM; no correction to this page.
 
 ## Clean-room review
 
@@ -691,3 +695,5 @@ Review of 2026-11-05.
   flags, ID string as visible to any program), stack depths, counts, and the inputs/outputs of our own test vectors.
   RAM addresses of the base, the stub and the stopped task are not given.
 - [x] No probe code was written by the analysis track.
+- [x] 2026-11-10: the existing implementation-side probe was assembled and run unchanged on the real ROM; only
+  its output buffer was read back. No ROM code read, no address recorded.

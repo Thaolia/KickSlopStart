@@ -7,6 +7,9 @@
 ;                                       each call (the second one has the bit)
 ;   "SP SOFT <sr> <intena>"            SR and INTENAR read inside a software interrupt (Cause): SR $2000, SOFTINT
 ;                                       (bit 2) off in INTENA meanwhile
+;   "SP ORD <letters>"                 order in which six software interrupts Caused under Disable run once Enable
+;                                       lets SOFTINT in: A pri -32, B 0, C +32, D 0, E +16, F 5 (§8: highest queue
+;                                       first, FIFO inside a queue, 1..15 share the 0 queue) -> CEBDFA
 ; then "SP END". Run by tests/sched_probe.sh as a CLI command from a startup-sequence.
 
 SERDAT   EQU $DFF030
@@ -17,6 +20,8 @@ LVO_FindTask    EQU -294
 LVO_SetSignal   EQU -306
 LVO_Signal      EQU -324
 LVO_Cause       EQU -180
+LVO_Disable     EQU -120
+LVO_Enable      EQU -126
 LVO_OpenLibrary EQU -552
 LVO_CloseLibrary EQU -414
 LVO_WaitTOF     EQU -270
@@ -91,6 +96,25 @@ start:
         move.w  softena(pc),d0
         bsr     phex4
         bsr     nl
+        jsr     LVO_Disable(a6)      ; six software interrupts queued while SOFTINT cannot be taken
+        lea     ordis(pc),a2
+        moveq   #6-1,d7
+.cq:    move.l  a2,a1
+        jsr     LVO_Cause(a6)
+        lea     IS_SZ(a2),a2
+        dbra    d7,.cq
+        jsr     LVO_Enable(a6)
+        move.l  a6,-(sp)
+        move.l  a5,a6
+        jsr     LVO_WaitTOF(a6)
+        move.l  (sp)+,a6
+        lea     m_ord(pc),a0
+        bsr     puts
+        moveq   #' ',d1
+        bsr     putc
+        lea     ordbuf(pc),a0
+        bsr     puts
+        bsr     nl
         lea     m_end(pc),a0
         bsr     puts
         move.l  a5,a1
@@ -118,6 +142,14 @@ softcode:
         lea     softsr(pc),a0
         move.w  sr,(a0)
         move.w  INTENAR,softena-softsr(a0)
+        rts
+
+ordcode:                             ; a1 = is_Data = the interrupt's letter
+        lea     ordbuf(pc),a0
+.oc:    tst.b   (a0)+
+        bne.s   .oc
+        move.l  a1,d0
+        move.b  d0,-1(a0)            ; ordbuf ends with spare NULs
         rts
 
 puts:
@@ -170,6 +202,26 @@ softis:   dc.l  0,0                  ; struct Interrupt: ln_Succ, ln_Pred
           dc.l  0                    ; ln_Name
           dc.l  0                    ; is_Data
           dc.l  softcode             ; is_Code
+IS_SZ     EQU   22
+ordis:    dc.l  0,0
+          dc.b  2,-32
+          dc.l  0,'A',ordcode
+          dc.l  0,0
+          dc.b  2,0
+          dc.l  0,'B',ordcode
+          dc.l  0,0
+          dc.b  2,32
+          dc.l  0,'C',ordcode
+          dc.l  0,0
+          dc.b  2,0
+          dc.l  0,'D',ordcode
+          dc.l  0,0
+          dc.b  2,16
+          dc.l  0,'E',ordcode
+          dc.l  0,0
+          dc.b  2,5
+          dc.l  0,'F',ordcode
+ordbuf:   dcb.b 8,0
 elap:     ds.w  8
 softsr:   dc.w  $FFFF
 softena:  dc.w  $FFFF
@@ -180,5 +232,6 @@ m_q:      dc.b  "SP Q",0
 m_e:      dc.b  " E",0
 m_sig:    dc.b  "SP SIG",0
 m_soft:   dc.b  "SP SOFT",0
+m_ord:    dc.b  "SP ORD",0
 m_end:    dc.b  "SP END",10,0
                 even

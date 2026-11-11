@@ -360,8 +360,8 @@ naming the **original unit**, which closes on its own only when the disk is back
      **"You MUST replace volume / Data3 / in unit  1 !!!"** (§2.2.1 point 2), not "Please replace".
      **Retry** with the disk in DF2: the same requester again at once (four screenshots over 4 s), the
      `Read` does not return. **One Cancel**: the pending `Read` returns at once with **Res1 = −1**,
-     **IoErr = 286** (two sessions, identical) [the meaning of 286 is not established; it is not one of the
-     documented dos codes, and may be 256 + a device error code ?]. No requester came back for that call;
+     **IoErr = 286** (two sessions, identical) [286 is the file system's own Res2 for that aborted
+     `ACTION_READ`: §2.4.2, 2026-11-11]. No requester came back for that call;
      the program's next call (`Close`) raised the next requester. Bytes delivered before the failing call
      were correct (count and sum checked).
    - **Close** of that read FileHandle (disk in DF2, the FS having detached the volume): **one**
@@ -388,8 +388,53 @@ naming the **original unit**, which closes on its own only when the disk is back
      refuses it again, the same requester is shown again within the same call. **Cancel** ends the call at
      once with the failure: `Read`/`Write` Res1 = −1 with IoErr = the code the file system gave (218 for a
      packet refused because the volume is not in the FileHandle's drive; 286 after Cancel on the "You MUST
-     replace" requester); `Open` returns 0; `Close` returns normally (the handle is gone for the program).
+     replace" requester, §2.4.2); `Open` returns 0; `Close` returns normally (the handle is gone for the program).
      dos never re-asks after a Cancel; any second requester comes from the program's next call.
+
+#### 2.4.2 IoErr 286: Cancel on "You MUST replace" during a read (probe 2026-11-11)
+
+Method: real ROM, headless Amiberry (`amiberry-session start --analysis`, cycle-exact A500), **512 KB chip RAM
+only** (`--slow 0`: with this Amiberry build, data watchpoints placed in the `$C00000` slow-RAM area never fired,
+so every structure was kept in chip RAM), three drives as in §2.4.1. DF0 = the non-Workbench boot floppy running
+`tests/fhmove_probe.s` (assembled unchanged, as in §2.4.1 point 6); DF1 = data disk `Data3` with `longfile`.
+DF1 ejected with IPC `EJECT_FLOPPY 1` right after the probe printed its third 2,048-byte `Read`, and **not
+reinserted anywhere**. While the requester was up, chip RAM was dumped and searched for the outstanding packet: one
+structure shaped as a StandardPacket (`dp_Link` → message whose `ln_Name` points back to the packet) with
+`dp_Type` = 82 (ACTION_READ), `dp_Port` = the probe process's `pr_MsgPort`, `dp_Arg3` = 2048. gdb write
+watchpoints were then set on its `dp_Res1`, `dp_Res2` and on the probe process's `pr_Result2`; at each hit the
+running task (`ExecBase->ThisTask`) was read. Cancel was given with Left-Amiga + B. Screens read on IPC
+screenshots. Two more sessions used the Workbench 1.3.3 boot disk (startup-sequence reduced to SetPatch) in DF0
+and the CLI commands below (the first of them with the usual 512 KB slow RAM too).
+
+1. **Requester** [O]: "You MUST replace volume / Data3 / in unit  1 !!!" (§2.2.1 point 2), raised while the probe's
+   `ACTION_READ` was held by the DF1 file system (the probe's process was waiting for its reply).
+2. **Who returns 286** [O]: after Cancel, the **DF1 "File System" task** writes `dp_Res1` = −1, then `dp_Res2` =
+   **286** into that `ACTION_READ` packet and returns it. Then, in the probe's own process (dos, inside `Read`),
+   `pr_Result2` becomes 286, and `Read` returns −1: the probe printed `FM RDLAST FFFFFFFF 0000011E` (Res1, IoErr).
+   So 286 is the **file system's Res2 for an `ACTION_READ` ended by Cancel on its own "You MUST replace"
+   requester**; dos passes it through unchanged. Same value with the disk left out (this run) and with the disk
+   moved to DF2 (§2.4.1 point 6): three sessions, always 286.
+3. **C:Fault / C:Why** [O]: `Fault 286` on the 1.3 CLI prints **"Fault 286: Error 286"**, i.e. the 1.3 fault
+   table has **no text** for it (compare `Fault 218` → "Fault 218: device (or volume) not mounted").
+   `Copy df1:longfile to ram:x` with the same ejection during its read (Copy reads in 102,400-byte requests; the
+   outstanding packet was an `ACTION_READ` of 102,400 bytes) → "You MUST replace…", Cancel → `Copy` prints **"Error
+   while Reading"**; its next call raises "Please replace volume / Data3 / in unit  1" (the volume is now
+   detached, §2.4); Cancel there → `Destination file "ram:x" removed`; then `Why` → "The last command did not set a
+   return code". `Type df1:longfile` interrupted the same way and cancelled twice returns silently, `Why` → same
+   text. So no 1.3 command tried ever **printed** 286 with a message.
+4. **Cancel during the open phase** [O, single runs]: when the ejection fell during `Copy`'s opening of the source
+   (directory and header reads), Cancel ended with `Can't open df1:longfile for input - object not found` and
+   `Why` → "Last command failed because object not found" (205), not 286. In another such run the packet
+   outstanding when the requester was up was an `ACTION_EXAMINE_OBJECT` (23); after Cancel the file system replied
+   to it with Res1 = −1 (success) and Res2 = 0, and a "Please replace" requester (dos's) followed for `Copy`'s next
+   call. Whether that requester belonged to the examine itself or to an internal read of the file system was not
+   established [?].
+5. **Value** [?]: 286 = 256 + 30, and 30 is trackdisk's `TDERR_SeekError`; nothing observed ties the two (the file
+   system may build 286 that way from the aborted transfer, or use it as a private code). Only 286 was ever seen
+   for a cancelled read. A **write** cancelled at "You MUST replace" was not probed (its Res2 may be the same).
+6. **Rule for an implementation** [O for the read; D for the rest]: when the user cancels "You MUST replace" while
+   the file system serves an `ACTION_READ`, reply the packet with Res1 = −1, Res2 = 286; `Read` then returns −1
+   with `IoErr()` = 286. Fault text: none (dos/Fault print "Error 286").
 
 ### 2.5 Revalidation on insertion (A5) [O ROM + O probe]
 
@@ -580,8 +625,9 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
   device request inside the operation (indistinguishable from outside). Split "replace" / "insert" and
   "in any drive" / "in unit  n" between dos and the FS (§2.4). The `Copy` hang of §2.4 (header never
   written back) is not explained.
-- §2.4.1 point 6: IoErr **286** after Cancel on "You MUST replace" is unexplained (not a documented dos
-  code). A `Read` reaching the dos "Please replace" requester (volume already detached when the call
+- §2.4.1 point 6: IoErr **286** after Cancel on "You MUST replace": **settled 2026-11-11** (§2.4.2): the file
+  system's Res2 for the cancelled `ACTION_READ`, no Fault text in 1.3. Still open: the Res2 of a cancelled
+  **write**, and why 286. A `Read` reaching the dos "Please replace" requester (volume already detached when the call
   starts) was not produced: the probe's 0.5 s cadence always caught I/O in flight. Probe wanted: open a
   file, `Delay` 20 s (disk moved meanwhile), then one `Read`, printing Res1 and IoErr per Cancel/Retry
   [expected as for `Write`: one requester, Res1 −1, IoErr 218].
@@ -620,3 +666,6 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
 - [x] 2026-11-09 additions (§1 last point, §2.2.1 point 2, §2.4 FileHandles, V17–V22): pure black box
   (IPC eject/insert, screenshots, exec task list, disk images read with `xdftool`); no ROM code read, no
   address.
+- [x] 2026-11-11 addition (§2.4.2): RAM dumps searched for a public structure (DosPacket), write watchpoints on
+  its result fields and on `pr_Result2`, the running task's name read at each hit, screenshots; no ROM code read,
+  no address.

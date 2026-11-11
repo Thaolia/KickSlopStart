@@ -1658,6 +1658,23 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
+  REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
+  the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room
+  audit PASS for the three (`docs/audit/pr-36.md`, `pr-37.md`, `pr-38.md`), merged in the order #37, #36, #38 at the
+  user's request ("merge 37 puis 36 puis 38"), conflicts of #36/#38 resolved by keeping both sides; #38's
+  AddIntServer rule exposed that our EXTER was an exclusive vector, now a server chain as on 1.3. Also: patterned
+  lines on the blitter (lineclip 1,150 → 390 ticks, same pixels), CoolCapture in user mode, -1/286 for a transfer
+  queued under a cancelled "You MUST replace", timer TR_GETSYSTIME `ln_Type`, the D8 probe fixes (exec-messages-io
+  OL16 keeps A2, check13 expectations of `exec_msgio_check.py` and `rawdofmt_check.py`) and `tests/dosmisc_probe.sh`.
+  The dosmisc probe on the real 1.3 led to three dos fixes (negative Delay, id_InUse, LoadSeg 103).
+  Analysis pages updated: wb12-demos §3 (Lines and Clock timing on 1.3), disk-change §2.4.2 (286), graphics-gels §13.7
+  (SHF list overflow, a 1.3 defect).
+  **A7 Lines and Clock, C5 SoftInts (2026-11-10)**: user request "fais A7 puis C5, et lance D8 en parallèle".
+  ARCHITECTURE "Clipped line pieces on the blitter, SoftInts queues". Workbench 1.2 Clock shrunk and grown with its
+  size gadget leaves no sliver (screenshots). Lines 93 → 274 Draw calls per emulated second (1.3: 431), clipped
+  pieces now blitted, pixel-identical (`tests/lineclip_probe.sh`). Cause/SOFTINT use the five SoftInts priority
+  queues; `tests/sched_probe.sh` gains the order case (CEBDFA, the previous ROM gives ABCDEF).
   **Real-A500 soft-kick report, CIA state, "You MUST replace" in fhmove (2026-11-10)**: user report on v0.2.44 (real
   A500, KS 1.3, 512 KB chip + 512 KB slow): Guru 30000001 before the insert-disk screen, SysInfo MEMORY/BOARDS dead,
   keys dead after SPEED + EXPAND, no window in Andromeda D.O.S. The Guru was the strap's AN_BootError for our own

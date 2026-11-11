@@ -63,7 +63,13 @@ held" qualifier bits of mouse events are not set yet.
   every READ, and the CLI reads `s/Startup-Sequence` in small pieces (818 of the boot's 1,460 block reads were its two
   data blocks). Each READ now reuses the block already in the handle's buffer (`SS_BUFBLK`, `src/dos/ofs.s`).
   PLAN "Boot time (2026-11-09)".
-- Clock's speed parity with 1.3 is still open (PLAN "Drawing acceleration").
+- Clock's speed parity with 1.3 is still open (PLAN "Drawing acceleration"). 1.3 baselines (wb12-demos §3,
+  2026-11-11): growing the Workbench 1.2 Clock from 170 × 105 to 300 × 200 takes 38 frames from the button release
+  to the last EndRefresh (one refresh pass per message), a per-second tick 1.94-2.10 frames at 300 × 200. Ours,
+  same method and production ROM (2026-11-11): NEWSIZE pass 20.0 frames (1.3: 15.1), REFRESHWINDOW pass 12.7
+  (10.4), release to last EndRefresh 48.8 (38; the first poll came 16 frames after the release, 1.3: 11.7). The
+  passes are 1.2-1.3 times slower; Clock's face is AreaMove/AreaDraw/AreaEnd plus Draw, so the area fill is the
+  next place to look.
 
 ### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
@@ -76,15 +82,16 @@ held" qualifier bits of mouse events are not set yet.
 - **Idle desktop:** 1,024 bytes more than before (the RAM handler's stack): about 13,384 above 1.3 (860,992).
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
-### A7. Workbench 1.2 Lines and Clock — [src], S–M (specified 2026-11-10)
+### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10
 
 `docs/analysis/wb12-demos-v34.md`, probed on the real 1.3:
-- Clock (SIMPLE_REFRESH) leaves nothing at its old size: about 40 ms after the size gadget is released the whole new
-  window is blank and fully damaged, then Clock redraws everything inside BeginRefresh/EndRefresh (twice after each
-  SizeWindow). Ours can leave a sliver: the resized SIMPLE layer must be cleared and wholly damaged before Clock's
-  refresh.
-- Lines draws 431 lines per second on 1.3 (Draw calls counted over 995 frames); ours about 37, 11 times slower.
-  Measure by Draw count, not by watching the 78 × 30 window.
+- Clock (SIMPLE_REFRESH): shrinking and growing it with the size gadget on the Workbench 1.2 disk leaves no sliver
+  on our ROM (checked on screenshots, 2026-11-10); the resized SIMPLE layer is already cleared and damaged since the
+  #10 work.
+- Lines draws 431 lines per second on 1.3. Each line is one Move + one Draw, solid, JAM2; 81 % lie inside one
+  SuperClipRect, 19 % are split into two or three pieces (wb12-demos §3.1, 2026-11-11). Since 2026-11-10 each
+  clipped piece goes to the blitter (`ln_cblit`), pixel-identical to the CPU walk. Ours went from 93 to 274 lines per
+  emulated second. Left: the remaining factor of 1.6, per-call cost not located yet.
 - Lines is GIMMEZEROZERO | SUPER_BITMAP, so it cannot show the frame-copy case: only programs with non-GZZ
   SUPER_BITMAP windows meet our missing frame copy (intuition-gzz §2.5).
 
@@ -134,9 +141,19 @@ These are not work unless a doc says they should change.
   - ROM libraries are never expunged;
   - there is no ramlib node and no SetFunction patches.
 - **Interrupts:**
+  - every pending source of a level is served per entry (1.3 serves one and is re-interrupted), and VERTB is
+    acknowledged before its chain;
   - PORTS/EXTER are acknowledged before the server chain;
   - unclaimed sources are acknowledged;
   - SetIntVector(NULL) stores 0.
+- **Coldstart:** InitCode(RTF_COLDSTART) runs in supervisor mode before the first task; only CoolCapture is called
+  in user mode as on 1.3.
+- **Drives:** no unit task polls for disk changes (the handler's 1 s tick does it); the decoder keeps the good
+  sectors across retries where 1.3 fails the whole read; de_SizeBlock other than 128 on a 512-byte device is "Not a
+  DOS disk" where 1.3 says "Error validating disk / Key n checksum error" (rom-filesystem §8.7, only reachable with a
+  patched environment, and which check fails on 1.3 is not established).
+- **MrgCop:** an SHF list too small is reallocated (1.3 overflows it into the LOF list, gels §13.7).
+- **VERTB cost:** gameport's input injection and unit emulation run in the VERTB server.
 - **Small ones:**
   - input.device CMD_CLEAR replies 0.
   - GetPacket/QueuePacket are null.
@@ -180,14 +197,15 @@ working flags are not reset when a window is activated (only when a menu opens).
 - Left, small: MrgCop rebuilds the lists even when no ViewPort has a CopList (1.3 then leaves the old lists alone,
   §5.1); ClrIns is not merged (we never build one).
 
-### C5. exec scheduling — done 2026-11-10 but one point
+### C5. exec scheduling — done 2026-11-10
 
 Signal and AddTask reschedule when the task becomes the head of TaskReady, AUTOINIT goes through
 AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1 (2026-11-09). Since 2026-11-10 timer.device
 counts the quantum (Elapsed/TQE, never a preemption in the production ROM; the dev ROM keeps a round-robin server for
 its spinning demo tasks), software interrupts run at SR $2000 with SOFTINT masked, and Signal returns the previous
-tc_SigRecvd (`tests/sched_probe.sh`). Left: the software interrupts sit in one FIFO list instead of the five
-priority queues of ExecBase SoftInts (exec-scheduling §8).
+tc_SigRecvd. Cause queues in the five ExecBase SoftInts lists by `LN_PRI and $F0` and the SOFTINT server runs the
+head of the highest non-empty one, rescanning after each call (exec-scheduling §8); priorities outside -32..+47,
+which make 1.3 write outside the array, are clamped. `tests/sched_probe.sh` checks it all (order CEBDFA).
 
 ### C6. strap — done 2026-11-09
 
@@ -223,9 +241,11 @@ marked as given up and the handle is freed with nothing written. The handler of 
 driver now starts during the Initial CLI set-up, as on 1.3 (rom-filesystem §1.4): the first `Info` lists
 "DH0: 10M 7 20471 0% 0 Read/Write Work", or "DH0: Unreadable Disk" with no requester at boot. Left in the file
 system:
-- de_SizeBlock other than 128 on a 512-byte device: the root is refused as not a DOS disk, while 1.3 reports
-  "Error validating disk / Key n checksum error" (§8.7, only reachable with a patched environment);
-- IoErr 286 after Cancel on "You MUST replace volume" (§2.4.1 point 6) is not reproduced (its meaning is unknown).
+- de_SizeBlock other than 128 is kept as a deviation (section B).
+- IoErr 286 (disk-change §2.4.2, probed 2026-11-11): 1.3's file system ends the READ it held during "You MUST
+  replace volume" with -1 / 286 after Cancel. Ours raises that requester between packets, so since 2026-11-11 a
+  READ or WRITE already queued when it is cancelled gets -1 / 286 (`HC_CX286`, `src/dos/handler.s`); not staged
+  by a test (our ejection only meets a queued transfer by chance).
 
 ### C8. console.device — done 2026-11-09
 
@@ -273,20 +293,27 @@ line 14 and WaitTOF's earliest return from line 18 to 16 (1.3: 12; `tests/waitto
 starts at the first point whose major coordinate is inside its ClipRect instead of walking from the line's start
 (`tests/lineclip_probe.sh`: same pixels, 24 % less time for 1,000 patterned lines in a covered window). Later the
 same day: a VSprite's VSTART is its clipped top plus the View's DyOffset only, without the ViewPort's DyOffset or a
-LACE halving (gels §5.8; vector G9d: LACE ViewPort with DyOffset 20 gives POS $3659 / CTL $3B01 as G9a). Left:
-- The rest of the VERTB cost is gameport's input injection and unit emulation, which 1.3 does not run there.
-- Patterned lines are walked by the CPU; only solid lines use the blitter's line mode.
+LACE halving (gels §5.8; vector G9d: LACE ViewPort with DyOffset 20 gives POS $3659 / CTL $3B01 as G9a). Since 2026-11-11 patterned lines use the blitter's line mode too: LinePtrn is the texture in B, BSH starts it at the
+bit the CPU walk would use (LN_PH, or linpatcnt − major coordinate + C for a clipped piece), and Agnus walks it one
+bit per pixel downwards as `ln_plot` does (`tests/lineclip_probe.sh`: same plane fingerprints, 1,150 → 390 ticks;
+`tests/gline_probe.sh`: same output as the previous ROM). ONE_DOT and the COMPLEMENT first dot keep the CPU walk.
+Kept: the rest of the VERTB cost is gameport's input injection and unit emulation, which 1.3 does not run there
+(section B).
 
-### C11. Coldstart — done 2026-11-10 but one point
+### C11. Coldstart — done 2026-11-11
 
-LED toggle after ColdCapture, RAM zeroed on the cold path, and no self-test while KickMem areas must survive. Left:
-CoolCapture runs in supervisor mode without tasks, because our InitCode(RTF_COLDSTART) still runs before the first
-task exists; moving it into the initial task in user mode is larger than S.
+LED toggle after ColdCapture, RAM zeroed on the cold path, and no self-test while KickMem areas must survive. Since
+2026-11-11 CoolCapture runs in user mode as on 1.3 (coldstart-hardware §4.4), A6 = ExecBase, on a 4 KB stack of its
+own; Supervisor() brings the boot back (`cool_call`, `src/exec/boot.s`). `tests/kicktag_test.s` stores the SR it
+saw: $0000 after a warm reset (the previous ROM: $2000). InitCode(RTF_COLDSTART) itself still runs in supervisor
+mode (section B).
 
-### C12. Paula autovectors — done 2026-11-10
+### C12. Paula autovectors — done 2026-11-11
 
-INTEN test at entry, 1.3 service order, 22-byte chain headers (custom-chips §3.3). We still serve every pending
-source of a level per entry where 1.3 serves one and is re-interrupted, and acknowledge VERTB before its chain.
+INTEN test at entry, 1.3 service order, 22-byte chain headers (custom-chips §3.3). Since 2026-11-11 EXTER (INT6)
+is a server chain holding ciab.resource at priority 0, as on 1.3: a program's AddIntServer(INTB_EXTER) joins it
+instead of replacing the CIA-B dispatcher (`tests/explvo_probe.sh` "EXP INT6 00000002 00000001"; the previous ROM:
+1 server). Serving every pending source per entry and acknowledging VERTB before its chain are kept (section B).
 
 ### C13. trackdisk — done 2026-11-10 but one point
 
@@ -302,7 +329,8 @@ Kept deliberately:
 - Write protection is checked at CMD_WRITE (28 at once); 1.3 fills its single track buffer and fails at the flush,
   then every other track fails with 28 until CMD_CLEAR. Our multi-track cache has no such stuck state.
 - The motor-off timer: 1.3's trackdisk has none, its file system sends TD_MOTOR 0; ours only does after a write-back.
-Left: no unit task for change polling (larger than S).
+Kept (section B): no unit task for change polling (the handler's 1 s tick does it), and the decoder keeps the good
+sectors across retries where 1.3 fails the whole read.
 
 ### C14. dos — done 2026-11-10
 
@@ -310,6 +338,9 @@ Left: no unit task for change polling (larger than S).
   that has it now (its locks were handed over), without a requester when that happened meanwhile; until then it went
   back to the refusing handler, which refused again. 1.3 restarts the whole call (dos-lvo-partial §1.4); with a
   lock argument that reaches the same handler. A FileHandle stays with its own handler (§2.4.1).
+- OpenLibrary returns with the condition codes of D0 (2026-11-11, issue #35): Paccer's `CLS` does `movea.l d0,a6`
+  then `beq`, and stopped the game's startup-sequence since v0.2.20 because the flags left by Permit said zero.
+  `tests/explvo_probe.sh` "EXP OLZ 000000FF" (the previous ROM: 0000FFFF). Paccer reaches its game screen and plays.
 - The mouse moves the pointer while a dos requester is up on a CLI-only boot (checked 2026-11-10 with Cancel clicks
   on "Please replace volume" over the boot CLI).
 - The GV that bcpl_starthandler makes for a handler goes into the handler process's tc_MemEntry, so RemTask frees it
@@ -327,21 +358,19 @@ Left: no unit task for change polling (larger than S).
 
 These need a spec or a probe on the real ROM first, run by an analysis agent.
 
-### D1. Workbench selection and menu rules
+### D1. Workbench selection and menu rules — done
 
-Neither is in workbench-task-v34:
-- extended selection (Shift-click);
-- the 1.3 rule for enabling or ghosting Workbench menu items when nothing is selected.
+Specified and implemented with A3/A4 (2026-11-09).
 
-### D2. VSprite allocation by band in DrawGList — specified 2026-11-10
+### D2. VSprite allocation by band in DrawGList — done 2026-11-11
 
-graphics-gels §13: the CLI probe stopped at G9b because of its own register clobber (fixed in `tests/gels_probe.s`);
-G9c/G9d on 1.3 match ours; MrgCop already emits the `$F000|reg` MOVEs as `reg & $1FE` and halves the VSprite WAITs of a
-LACE ViewPort. Left [?]: 1.3's SHF list seemed not to grow when the VSprite lists appeared (§13.5).
+graphics-gels §13: G9c/G9d on 1.3 match ours; MrgCop already emits the `$F000|reg` MOVEs as `reg & $1FE` and halves
+the VSprite WAITs of a LACE ViewPort. §13.7 (2026-11-11) settles the last point: 1.3's MrgCop reuses an existing SHF
+list whatever its size and overflows into the LOF list, a 1.3 defect; ours sizes both lists (kept, section B).
 
-### D3. Empty Trash and Initialize
+### D3. Empty Trash and Initialize — done
 
-How 1.3 runs them: what it deletes or launches, and which requesters it shows.
+Specified and implemented (`wb_emptytrash`, `wb_initialize`, `src/dos/workbench.s`).
 
 ### D4. File system — specified 2026-11-10
 
@@ -381,11 +410,24 @@ layer locked, EndRefresh's word `complete` and LAYERREFRESH, AllocRemember nodes
 FreeRemember's word `reallyForget`. `tests/explvo_probe.sh`: EXPLVO OK (the previous ROM crashed in Insert).
 Kept: FreeRaster(NULL) is ignored (1.3: dead-end alert); SetFunction keeps its Forbid.
 
-### D8. Probes described but never written
+### D8. Probes described but never written — done 2026-11-11 but P2
 
-- dos-lvo-partial §4. Item 4, overlay UnLoadSeg, is now useful to check PR #28.
-- dos-memory §8, P1–P6.
-- The exec-messages-io, exec-rawdofmt and mathffp probes were never run on the real ROM.
+Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages updated, each marked [O]):
+- mathffp probe: 264 checks, 0 failures. rawdofmt probe: R3/R4 were artefacts of the probe's own PutChProcs, R5
+  shows that 1.3 RawDoFmt does not save D7 (ours restoring it is harmless); `rawdofmt_check.py check13` now expects
+  that.
+- exec-messages-io probe (§8a): its OL16 fake Open no longer clobbers A2 (that crashes OpenLibrary on 1.3);
+  `exec_msgio_check.py check13` follows the ramlib values (D0 = 16 for CD1/RD1/CL1/RL1, OD5's A0); timer.device
+  sets `ln_Type` 5 on TR_GETSYSTIME as 1.3 does (IO5). Our ROM: 131 vectors, 0 failures.
+- `tests/dosmisc_probe.sh` (new, dos-lvo-partial §4 items 2, 3, 7, dos-memory §8 P1, P3) prints the same lines as
+  the real 1.3 since 2026-11-11 (`DOSMISC OK`): a negative Delay waits as long as the timer allows (1.3 never came
+  back within 30 minutes; ours used to return at once), DISK_INFO's id_InUse is the head of the lock list (was 0),
+  and a hunk header with size bits 31-30 = 11 fails with 103 (1.3 asks AllocMem for flag 8 and never reads the
+  attribute long; ours said 121). Seek on the console, RAW:, NEWCON:, after a buffered read, Info into a buffer + 2,
+  UnLoadSeg(0) and LoadSeg of a missing file already matched.
+- dos-lvo-partial §4 items 1, 4, 5, 6 (T22–T26); dos-memory P4 re-measured (no Shell leak, the 56 bytes were an
+  IntuiMessage of the disk window), P5, P6. OpenLibrary and AllocMem return their flags for D0 on 1.3 (EXP OLZ).
+- Left: dos-memory P2 (getvec(0), getvec(−1) through a BCPL stub) needs an injected BCPL call.
 - Done 2026-11-10: the exec-partial-lvos §8 probe, as `tests/explvo_probe.sh` (with the graphics §10 and intuition
   §6c vectors).
 

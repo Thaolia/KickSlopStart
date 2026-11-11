@@ -48,7 +48,8 @@
   **terminating zero is sent** (last call). Inside PutChProc, **A6 is a pointer into RawDoFmt's stack frame, not
   ExecBase**. RawDoFmt relies on PutChProc preserving **D2, D3, D5, D6, A2, A4, A5, A6** (A6 corrupted = crash); it
   does not rely on D0, D1, D4, D7, A0, A1, nor on A3 being preserved. [O]
-- **Exit** (§1.2): D2–D7 and A2, A4–A6 preserved, **A3 restored** to its entry value; D0, D1, A0 undefined; **A1 =
+- **Exit** (§1.2): D2–D7 and A2, A4–A6 preserved (D7 only when PutChProc preserves it: a D7 changed by
+  PutChProc reaches the caller, 2026-11-10), **A3 restored** to its entry value; D0, D1, A0 undefined; **A1 =
   address just past the last data item read** (when PutChProc preserves A1). Stack: PutChProc is entered **68 bytes**
   below the caller's SP (72 when padding is involved), return addresses included. [O]
 
@@ -75,7 +76,7 @@ Markers `$1111000n` were placed in D0–D7, A4, A5 before every call of §7 (A0�
 
 | Register | After the call |
 |---|---|
-| D2–D7, A2, A4, A5, A6 | preserved (every vector) |
+| D2–D7, A2, A4, A5, A6 | preserved (every vector, with a PutChProc that preserves them). **D7 is not saved by RawDoFmt**: a PutChProc that set D7 at every call left that value in D7 on exit, while a D4 set the same way was restored (probe run of 2026-11-10, §8a) |
 | A3 | **restored to its entry value**, even when PutChProc advanced it (store PutChProc: A3 back at the buffer start; a PutChProc that only added 1 to A3 at each of 4 calls: A3 back to its entry value) |
 | A1 | **just past the last data item read** (vectors: "Data read" column = A1 after − A1 before). It is the A1 left by the **last PutChProc call**: a PutChProc that changed A1 at every call made A1 on exit equal to that value, while the output stayed right (RawDoFmt keeps its data cursor elsewhere) |
 | D0 | undefined: the D0 of the last PutChProc call (the terminating zero), upper bits varying (`$00000000`, `$FFFF0000`, `$FFFFFF00`, or the caller's upper bits when no conversion ran) |
@@ -199,7 +200,9 @@ there) must know which bytes follow. The V10 vectors of §7 had zero bytes after
   the entry value again (§1.2).
 - **A6**: a pointer into RawDoFmt's own stack frame, **not ExecBase**, even when RawDoFmt was entered with A6 =
   ExecBase. A PutChProc that needs a library base must load it itself.
-- **A1**: the data pointer, already past the item being printed. **A2**: PutChProc. **A4**: just past the format
+- **A1**: the data pointer, already past the item being printed — set when a conversion fetches its item, not
+  before every call: after a PutChProc that changed A1, the following calls of the same literal run or field
+  saw that changed value (probe run of 2026-11-10, §8a). **A2**: PutChProc. **A4**: just past the format
   character being processed. **A5**: just past the field-text character being sent. The other registers carry
   RawDoFmt's working values. These are observations, not a contract.
 - SP: 68 or 72 bytes below the caller's SP (§1.3).
@@ -213,7 +216,8 @@ the address of a zeroed area; A2 with the address of another valid PutChProc) du
 
 | Register overwritten | Result |
 |---|---|
-| D0, D1, D4, D7, A0 | output unchanged |
+| D0, D1, D4, A0 | output unchanged (D4 restored on exit) |
+| D7 | output unchanged; **D7 on exit = the overwritten value** (2026-11-10) |
 | A1 | output unchanged; A1 on exit = the overwritten value |
 | A3 | (each call sees the previous call's A3, §3.1) |
 | D2 | pad characters after the first become zero bytes (`C␣\0\0-9`) |
@@ -226,7 +230,7 @@ the address of a zeroed area; A2 with the address of another valid PutChProc) du
 | A6 | crash (the machine went to an exception and lost the debugger connection) |
 
 So a 1.3-compatible PutChProc must preserve D2–D7 and A2, A4–A6 (D4/D7 are not used by this RawDoFmt but are
-callee-saved by convention) and may change D0, D1, A0, A1 and A3 (A3 changes are kept for the next call) [O for the
+callee-saved by convention; a D7 change is passed on to RawDoFmt's caller, a D4 change is not) and may change D0, D1, A0, A1 and A3 (A3 changes are kept for the next call) [O for the
 table; the rule is the usual exec convention, D for D4/D7].
 
 ### 3.3 Common PutChProcs [D]
@@ -571,6 +575,24 @@ line per vector, so that the same program gives the oracle on the real ROM and t
 
 Output must not use RawDoFmt itself (print through dos `Write` with the probe's own hex routine).
 
+## 8a. Run of `tests/rawdofmt_probe.s` on the real ROM (2026-11-10) [O]
+
+`tests/rawdofmt_probe.sh` run unchanged with its analysis switch on `kick34005.A500` (Amiberry A500, cycle-exact,
+512 KB chip + 512 KB slow; the probe is a CLI command in the startup-sequence of an OFS floppy, so the calls come
+from a CLI process with interrupts enabled), output checked with `rawdofmt_check.py check13`: **203 checks, 200
+pass**. Every V1–V12 vector, the §2.6 cases, R2, R5 (D0, D1, D4, A0, A1) and R6 (68 / 72 bytes) match this page.
+The three differences are:
+
+| Check | Real ROM | Meaning |
+|---|---|---|
+| R3 (recording PutChProc) | output and D0/A3/A6/SP records as in §7; the A1 seen by calls 2, 4, 6, 7, 8 and A1 on exit are the value the **previous** call left in A1 | the probe's recording PutChProc uses A1 as its own cursor; RawDoFmt sets A1 only when a conversion fetches its item (§3.1) and returns the last A1 (§1.2). Not a spec error: the R3 row of §7 assumes a PutChProc that leaves A1 alone |
+| R4 (A3 bump) | A3 seen entry, +1, +2, +3, A3 restored; "data read" = A1 on exit − A1 on entry = the PutChProc's own A1 | same cause: that PutChProc also changes A1 |
+| R5 D7 | output unchanged, **D7 on exit = `$DEAD0000`** | RawDoFmt does not save D7 (§1.2, §3.2 corrected). A PutChProc that changes D4 does not leak (D4 saved) |
+
+For the checker (implementation side): in `check13` mode, R3's A1 column and R4's "data read" must be compared
+with the A1 the probe's PutChProc leaves, and R5 D7 expects D7 to change; on our ROM, restoring D7 is harmless
+(no 1.3 caller can depend on D7 being clobbered).
+
 ## Open points
 
 1. **Limit values 32768–65535**: printed a 5-character string whole; whether they act as "no limit" or as a large
@@ -579,11 +601,12 @@ Output must not use RawDoFmt itself (print through dos `Write` with the probe's 
 3. **Calls from supervisor mode and interrupts**: not exercised here (the Guru path uses RawDoFmt in supervisor
    mode, `alert-v34.md` §3); no difference expected, since RawDoFmt needs no library base [S].
 4. **PutChProc preserving D4 and D7**: this RawDoFmt does not need it (§3.2); whether any 1.3 user relies on
-   RawDoFmt tolerating a PutChProc that changes them is unknown.
+   RawDoFmt tolerating a PutChProc that changes them is unknown. Seen 2026-11-10: D4 is restored on exit, D7 is
+   not (§8a).
 5. Whether RawDoFmt writes anything besides its stack frame was only checked around the output buffer and the stack
    area [S].
-6. The observations were made with debugger-injected calls in the boot strap task with interrupts masked; the
-   probe of §8 run from a CLI process should give the same figures but has not been run on the real ROM.
+6. ~~The probe of §8 has not been run on the real ROM.~~ Done 2026-11-10 (§8a): same figures from a CLI
+   process, interrupts enabled.
 
 ## Clean-room review
 
@@ -599,3 +622,5 @@ Review of 2026-11-05.
 - [x] The only numbers are the public LVO, register names, stack depths, counts, and inputs/outputs of our own test
   vectors (the RAM addresses of the test buffers are not given).
 - [x] No probe code was written by the analysis track.
+- [x] 2026-11-10 (§8a): the existing implementation-side probe was assembled and run unchanged on the real ROM;
+  only its output buffer (results of public calls) was read back; no ROM code read, no address recorded.

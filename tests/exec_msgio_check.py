@@ -94,7 +94,7 @@ e('IO1', b2=lambda v, line, sym: (v >> 8) & 0xFF == 1, bt=0x55, ba6='FD', ba1='I
 e('IO2', d0=5)
 e('IO3', d0=0xFFFFFFFE)
 e('IO4', ty=7, L=[], sg=0, d0=0, el=ge(80000))
-e('IO5', ty=0x55, fl=1, d0=0)
+e('IO5', ty=5, fl=1, d0=0)   # timer.device sets NT_MESSAGE on its quick path (§8a)
 e('IO6', ty=7, L=[], sg=1, d0=4)
 e('IO7', ty=7, L=['IOR'], fl=1, d0=0)
 e('IO8', d1=JD1, d2=JD2, a0=JA0, a1='IOR', a2=JA2, rm=0x41)
@@ -167,9 +167,13 @@ e('RR1', d0=M0V, d1=M1V, **{'in': 0})
 # This ROM's deliberate differences from 1.3 (docs/PLAN.md, rank 12): key -> expected value on our side.
 OURS = {
     'N1': dict(d0=0),         # CloseLibrary(NULL) returns 0 (1.3: illegal-instruction Guru, not reproduced)
-    # P4: the softint runs from the level-1 interrupt here (SR $2100), 1.3 runs it at IPL 0 (SR $2000); the
-    # softint dispatch belongs to exec-scheduling-v34 §8, not to this page.
-    'P4': dict(ssr=0x2100),
+}
+# 1.3 values that only hold under ramlib, in front of exec on a booted 1.3 (§8a): a Close/Expunge returning a
+# seglist BPTR gives the caller D0 = 16 (ramlib-v34 §2.2), OpenDevice's A0 is not 0 when its DEVS: load failed.
+# Our ROM passes Close/Expunge's D0 through and leaves A0 = 0, which no known program tests.
+RAMLIB13 = {
+    'CD1': dict(d0=0x10), 'RD1': dict(d0=0x10), 'CL1': dict(d0=0x10), 'RL1': dict(d0=0x10),
+    'OD5': dict(a0=SKIP),
 }
 # vectors that only exist on our side (not run on 1.3)
 OURS_ONLY = {'N1'}
@@ -232,6 +236,9 @@ def check(path, mode, alert):
         if mode == 'check' and cid in OURS:
             exp.update(OURS[cid])
             tags.append('ours')
+        if mode == 'check13' and cid in RAMLIB13:
+            exp.update(RAMLIB13[cid])
+            tags.append('ramlib')
         total += 1
         line = lines.get(cid)
         if line is None:

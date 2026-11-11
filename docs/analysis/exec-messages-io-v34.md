@@ -252,6 +252,10 @@ WaitIO: the request (CK10, CK11).
 Registers: D0 result; A0 = device (found) or 0 (not found); A6 restored; D1 and A1 preserved unless the device's Open
 changes them (they then leak, OD8). `lib_OpenCnt` of the device is not touched by exec.
 
+Condition codes [O, one sample, 2026-11-11]: dos's Delay opening `timer.device` in a booted system (ramlib's
+OpenDevice in front) got D0 = 0 back with **Z set** (N clear). A failing OpenDevice (D0 negative) was not observed
+at the return, so whether N follows the sign-extended `io_Error` is not established [?].
+
 With ramlib installed (after dos starts) the vector is ramlib's replacement, which calls this exec function and then
 loads from `DEVS:` on failure (`ramlib-v34.md` §3); a 1.3 caller sees the values of the last attempt.
 
@@ -293,12 +297,25 @@ words). Other pairs (OL11): `lib_Version` `$8001` with 40 → fail; `$FFFF` with
 fail. Rule: open iff `(signed 16-bit) lib_Version >= (signed 16-bit) D0`.
 
 Registers: D0 result; D1 = the name pointer; A0 = the library opened, or a pointer left by the name scan when nothing
-was opened; A1 and A6 restored by exec only for A6 (A1 changed by an Open vector leaks out, OL16). `lib_OpenCnt` is
+was opened; A1 and A6 restored by exec only for A6 (A1 changed by an Open vector leaks out, OL16). **A2 must be
+preserved by the Open vector** [O, 2026-11-10]: in a booted system (ramlib's OpenLibrary replacement in front of
+exec's), an Open that returned with A2 changed made the OpenLibrary call unwind through a stack frame derived from
+that A2: SP was loaded from the junk A2 and the CPU ran off into low memory before returning to the caller. Whether
+exec's own OpenLibrary or ramlib's wrapper relies on A2 was not separated. D2 changed by the Open vector was restored
+before the return. OpenDevice (OD8), AbortIO (AB3) and DoIO/SendIO (IO8/IO9) tolerated an A2 change (passed it on
+or restored it). `lib_OpenCnt` is
 not touched by exec: counting is the library's Open (graphics.library 34 itself left its count at 1 across an
 OpenLibrary/CloseLibrary pair, OL17).
 
 **OldOpenLibrary** (−408, A1 = name): the same with version 0; D0 on entry is ignored (D0 = 99 opened a version-40
 library, OL12).
+
+**Condition codes on return** [O, 2026-11-11]: the implementation-side probe `tests/explvo_probe.s` (line `EXP OLZ`),
+run unchanged on the real ROM from a booted probe disk (so through ramlib's OpenLibrary replacement in front of this
+function), printed `000000FF`: **Z clear** after a successful `OpenLibrary("graphics.library", 0)` and **Z set** after
+`OpenLibrary("graphics.library", 999)` (present, version too low, so no disk load). Programs branch on the flags
+straight after the call (a `movea.l d0,a6` then `beq` was seen in a third-party program), so the result must leave
+Z = (D0 = 0). Exec's own function without ramlib in front was not checked separately.
 
 With ramlib installed, the vector is ramlib's replacement (`ramlib-v34.md` §3): it calls this exec function first, then
 its base name, then loads from `LIBS:`; its step 2 ("name present, version too low → fail without disk access") and
@@ -494,7 +511,7 @@ vectors, the fake library five; their stubs preserve every register unless the v
 | IO2 | same, `io_Error` 5 | DoIO | D0 = 5 |
 | IO3 | same, `io_Error` `$FE` | DoIO | D0 = −2 |
 | IO4 | timer TR_ADDREQUEST 100 ms | DoIO | one Wait; type 7; removed from port; sig clear; D0 = 0 |
-| IO5 | timer TR_GETSYSTIME | DoIO | no Wait; type unchanged (5); flags `$01` |
+| IO5 | timer TR_GETSYSTIME | DoIO | no Wait; flags `$01`; `ln_Type` **5 on return even when it was `$55` before** (2026-11-10, §8a): timer.device writes NT_MESSAGE on this quick path; exec's DoIO itself leaves `ln_Type` alone (IO1) |
 | IO6 | BeginIO clears IOF_QUICK and calls ReplyMsg | DoIO | no Wait; type 7; removed; sig **set**; D0 = `io_Error` |
 | IO7 | BeginIO keeps IOF_QUICK and calls ReplyMsg | DoIO | no Wait; type 7; request **still in the port**; flags `$01` |
 | IO8 | BeginIO (quick) sets D1, D2, A0, A1, A2 to junk | DoIO | D1, D2, A0, A2 come back as junk; A1 = request |
@@ -521,14 +538,14 @@ vectors, the fake library five; their stubs preserve every register unless the v
 | OD2 | Open sets `io_Error` `$FD`, D0 `$0BADBAD0` | OpenDevice | D0 = −3, `io_Device` = device |
 | OD3 | Open sets `io_Error` 5 | OpenDevice | D0 = 5, `io_Device` = device |
 | OD4 | Open sets `io_Error` 0, D0 `$12345678` | OpenDevice | D0 = 0 |
-| OD5 | name not in DeviceList, request filled as OD1 | OpenDevice | D0 = −1; byte 31 = `$FF`; bytes 20–23 = 0; 24–30 unchanged; A0 = 0, A1 = name; Forbid/Permit seen |
+| OD5 | name not in DeviceList, request filled as OD1 | OpenDevice | D0 = −1; byte 31 = `$FF`; bytes 20–23 = 0; 24–30 unchanged; A0 = 0, A1 = name; Forbid/Permit seen. Under ramlib (booted system, its failed `DEVS:` load included): the same except **A0 = a RAM pointer, not 0** (2026-11-10) |
 | OD6 | Open leaves `io_Error` (`$77` before the call) | OpenDevice | D0 = 0 (exec cleared it before Open) |
 | OD7 | two devices of the same name, the first Open fails | OpenDevice | only the first Open called; D0 = −1; `io_Device` = first |
 | OD8 | Open changes A6, A1, D1 | OpenDevice | A1, D1 leak; A6 = ExecBase |
-| CD1 | Close returns D0 `$C105ED` | CloseDevice | D0 = `$C105ED`; Close entered with A6 = device, A1 = ior, TDNestCnt 0; `io_Device`/`io_Unit` unchanged |
+| CD1 | Close returns D0 `$C105ED` | CloseDevice | D0 = `$C105ED`; Close entered with A6 = device, A1 = ior, TDNestCnt 0; `io_Device`/`io_Unit` unchanged. Under ramlib, with a vector returning the BPTR of a one-hunk 16-byte seglist: that seglist is freed and **the caller gets D0 = 16**, not the BPTR (2026-11-10, `ramlib-v34.md` §2.2) |
 | ADV1 | device pri 3, type `$77`, flags 0 | AddDevice | first in DeviceList; type `$77`; flags/sum unchanged; Forbid |
 | ADV2 | flags 6, `lib_Sum` `$5A5A5A5A` | AddDevice | flags 4, `lib_Sum` = word sum in the upper half, `$5A5A` kept |
-| RD1 | Expunge returns `$5E6`, does not unlink | RemDevice | D0 = `$5E6`; still listed; Expunge entered with A6 = A1 = D0 = device, TDNestCnt 0 |
+| RD1 | Expunge returns `$5E6`, does not unlink | RemDevice | D0 = `$5E6`; still listed; Expunge entered with A6 = A1 = D0 = device, TDNestCnt 0. Under ramlib, with a vector returning the BPTR of a one-hunk 16-byte seglist: that seglist is freed and **the caller gets D0 = 16**, not the BPTR (2026-11-10, `ramlib-v34.md` §2.2) |
 
 #### V7 Libraries, checksum, resources
 
@@ -540,17 +557,18 @@ vectors, the fake library five; their stubs preserve every register unless the v
 | OL13 | "r12" v40 pri 0, then "r12" v50 pri −5 | OpenLibrary(45) / (40) | the v50 one / the v40 one |
 | OL14 | Open returns 0 / `$1234` | OpenLibrary | 0 / `$1234` |
 | OL15 | two libraries of the same name, first Open returns 0 | OpenLibrary(0) | 0; second Open not called |
-| OL16 | Open changes A6, A1, A0, D1, returns `$1234` | OpenLibrary | D0 `$1234`; A0, A1, D1 leak; A6 = ExecBase |
+| OL16 | Open changes A6, A1, A0, D1, returns `$1234` | OpenLibrary | D0 `$1234`; A0, A1, D1 leak; A6 = ExecBase. **An Open that also changes A2 crashes the caller** (booted system, 2026-11-10, §4.1); D2 changed by Open is restored |
 | OL17 | `graphics.library` (count 1) | OpenLibrary(34) / (35), CloseLibrary | base / 0; count stays 1 throughout |
 | OL18 | any found library | OpenLibrary | Open entered with A6 = A0 = D0 = base, A1 = D1 = name, TDNestCnt 0 |
 | OL19 | name absent | OpenLibrary | D0 = 0; Forbid/Permit seen |
-| CL1 | Close returns `$C105ED` | CloseLibrary | D0 = `$C105ED`; A6 = A1 = base in Close; TDNestCnt 0 |
-| RL1 | Expunge returns `$5E6` | RemLibrary | D0 = `$5E6`; node still listed; A6 = A1 = D0 = base in Expunge |
+| OL20 | `graphics.library` version 0 / version 999 (booted system) | OpenLibrary, flags tested right after | Z clear / Z set (2026-11-11) |
+| CL1 | Close returns `$C105ED` | CloseLibrary | D0 = `$C105ED`; A6 = A1 = base in Close; TDNestCnt 0. Under ramlib, with a vector returning the BPTR of a one-hunk 16-byte seglist: that seglist is freed and **the caller gets D0 = 16**, not the BPTR (2026-11-10, `ramlib-v34.md` §2.2) |
+| RL1 | Expunge returns `$5E6` | RemLibrary | D0 = `$5E6`; node still listed; A6 = A1 = D0 = base in Expunge. Under ramlib, with a vector returning the BPTR of a one-hunk 16-byte seglist: that seglist is freed and **the caller gets D0 = 16**, not the BPTR (2026-11-10, `ramlib-v34.md` §2.2) |
 | N1 | — | CloseLibrary(NULL) | illegal-instruction exception (Guru `00000004`) |
 | AL1 | pri 0, type `$66`, flags 0 | AddLibrary | last in LibList, type `$66`, flags/sum unchanged, Forbid |
 | AL2 | flags 6 / 2 / 1 / `$FB`, `lib_Sum` `$5A5A5A5A` | AddLibrary | `lib_Sum` upper word = word sum and flags 4 / unchanged ×3 |
 | AL3 | flags 4 with the sum left by AL2 | AddLibrary | accepted, nothing changed |
-| AL4 | flags 4, `lib_Sum` `$5A5A5A5A` (wrong) | AddLibrary | dead-end `Alert($81000003)` |
+| AL4 | flags 4, `lib_Sum` `$5A5A5A5A` (wrong) | AddLibrary | dead-end `Alert($81000003)`: from a CLI program on a booted 1.3 the screen showed "Software Failure.   Press left mouse button to continue." / "Guru Meditation #81000003.00000000"; nothing on the serial port (2026-11-10) |
 | SL1–SL4 | flags 0 / 2 / 4 (correct sum) / 6 | SumLibrary | nothing / nothing / D0 low word = D1 = sum / sum stored, flags 4 |
 | SL5 | 6 vectors, `lib_NegSize` = 30 | AddLibrary (flags 6) | sum of the 30 bytes only |
 | AR1 | resource pri 7, type `$44`, `lib_Version` 5 | AddResource | first in ResourceList; type `$44`; Forbid |
@@ -559,6 +577,30 @@ vectors, the fake library five; their stubs preserve every register unless the v
 
 Vector count: 13 PutMsg (P1–P13, P13 = 7 flag values), 5 GetMsg, 6 ReplyMsg, 4 WaitPort, 4 port-list, 11 DoIO/SendIO,
 6 WaitIO, 11 CheckIO, 3 AbortIO, 12 device, 31 library/checksum/resource.
+
+### 8a. Run of `tests/exec_msgio_probe.s` on the real ROM (2026-11-10) [O]
+
+`tests/exec_msgio_probe.s` assembled and run unchanged (argument "" so that N1 is skipped) from the startup-sequence
+of an OFS floppy with empty `libs`/`devs` directories, on `kick34005.A500` (Amiberry A500, cycle-exact, 512 KB chip +
+512 KB slow; booted system, so ramlib's replacements sit in front of OpenLibrary/OpenDevice/Close*/Rem*). Output
+checked with `exec_msgio_check.py check13`.
+
+- **First run**: the probe stopped at **OL16**: its fake Open vector clobbers D1, D2, A0, A1, A2 and A6; the system
+  crashed before OpenLibrary returned. A per-instruction trace from the vector's return (registers only) showed A6
+  and D2 restored, then SP taken from the clobbered A2 (§4.1). Every line printed before OL16 (P*, G*, R*, WP*, AP*,
+  IO*, WI*, CK*, AB*, OD*, CD1, RD1, ADV*, AL1–AL3, SL*, OL1–OL15) was kept from this run; IO8/IO9 (A2 leak through
+  DoIO/SendIO) pass there.
+- **Second run** with the debugger turning the fake vector's A2 clobber into no-ops before the probe started (the
+  only change; IO8/IO9 then naturally show A2 unchanged): reached the end: **130 vectors, 122 pass**; the 8 others are IO8/IO9 (expected once the A2 clobber is gone) and the six below.
+- Differences from §8 (rows updated above): **IO5** (`ln_Type` set to 5 by timer.device on the quick
+  TR_GETSYSTIME path); **OD5** (A0 not 0 under ramlib); **CD1, RD1, CL1, RL1** (with a Close/Expunge returning a
+  real seglist BPTR, ramlib frees it and the caller gets D0 = 16 (equal to the size longword of the freed hunk [D]) instead of the
+  BPTR: `ramlib-v34.md` §2.2 corrected). The §8 rows themselves, observed without ramlib, stay valid for exec.
+- **AL4** (separate boot with the argument `A`): dead-end alert, Guru `#81000003.00000000` shown on screen. The
+  real ROM prints nothing on the serial port for it, so the harness's serial check of AL4 cannot be used as is on
+  the real ROM (a screenshot is the oracle).
+- For the probe (implementation side): the OL16 fake Open must not clobber A2 (it crashes 1.3); `check13`
+  expectations for IO5, OD5's A0 and the D0 of CD1/RD1/CL1/RL1 must follow the rows above.
 
 ## 9. Probe to write on the implementation side (`tests/exec_msgio_probe.s`)
 
@@ -610,8 +652,7 @@ not-found cases use names whose load fails quickly — print `IoErr()` too).
    graphics specs did not mention it (noted in `graphics-display-v34.md` §1.8 since 2026-11-05).
 7. `PutMsg` with `mp_SigBit` ≥ 32 behaves as bit modulo 32 (P5, P6); behaviour with an unallocated bit is just
    `Signal`'s.
-8. All observations come from debugger-injected calls in the `input.device` task with interrupts enabled; the probe
-   of §9 from a CLI process should give the same values but has not been run on the real ROM.
+8. ~~The probe of §9 has not been run on the real ROM.~~ Run 2026-11-10, §8a.
 
 ## Clean-room review
 
@@ -631,3 +672,7 @@ Review of 2026-11-05.
   `00000004`, register values and the inputs/outputs of our own test vectors (the RAM addresses of the test buffers
   are not given).
 - [x] No probe code was written by the analysis track.
+- [x] 2026-11-10 (§8a, OL16 note of §4.1): the existing implementation-side probe was assembled and run unchanged
+  (one debugger patch turned its own A2-clobbering instruction into no-ops in RAM); its output buffer was read back.
+  The OL16 crash was located with a per-instruction register trace whose program counters were only classified
+  as ROM / RAM; no ROM code was read or disassembled, no address is recorded.

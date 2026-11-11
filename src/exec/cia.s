@@ -224,7 +224,7 @@ cia_SetICR:
         bra     cia_ena
 
 ; --- CIA interrupt server (M6b -> M7b) ---
-; cia_server(a1 = IS_DATA = resource base): PORTS server (ciaa) / EXTER vector (ciab), called by the by-number
+; cia_server(a1 = IS_DATA = resource base): PORTS server (ciaa) / EXTER server (ciab), called by the by-number
 ; dispatcher (interrupts.s). The base comes from IS_DATA, never from a low-RAM global: demos that take over low chip
 ; RAM overwrote such a pointer, and the next CIA interrupt jumped through garbage. Reads+acknowledges the chip's ICR
 ; via cia_dispatch. Server convention: preserves d2-d7/a2-a4; cia_dispatch clobbers d2/d3/a2 -> we save them.

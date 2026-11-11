@@ -83,7 +83,10 @@ HC_WPROT        EQU HC_INOK+1        ; byte: the disk was write-protected when i
 HC_BADBS        EQU HC_WPROT+1       ; byte: de_SizeBlock is not 128 longs: the root block never passes (rom-filesystem §8.7)
 HC_IOPORT       EQU HC_BADBS+1       ; reply port of the device requests (MP_SIZE, even)
 HC_FLUSHMSG     EQU HC_IOPORT+36     ; APTR: Message of an ACTION_FLUSH held until the write-back | 0
-HC_SIZE         EQU HC_FLUSHMSG+4
+HC_CX286        EQU HC_FLUSHMSG+4    ; byte: "You MUST replace" cancelled with packets queued: a READ/WRITE among them
+                                     ; ends with -1 / 286, as the one 1.3 held during its requester (disk-change §2.4.2)
+HC_SIZE         EQU HC_CX286+2
+ERR_MUSTCANCEL  EQU 286              ; Res2 of that READ/WRITE (no fault text on 1.3)
 ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
 WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
 HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
@@ -102,6 +105,7 @@ dos_handler:
                 bsr     hnd_ctx
                 beq.s   .hl_port             ; no context: packets only
                 move.l  d0,a0
+                sf      HC_CX286(a0)         ; queue empty: a later READ is not the one the requester held
                 move.l  HC_SIGS(a0),d0
                 jsr     LVO_WAIT(a6)         ; packet or tick
                 bsr     hnd_tick
@@ -120,6 +124,21 @@ dos_handler:
                 cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4), at once, or
                 beq     .flush                        ; when the pending write-back is done
                 clr.l   DP_RES2(a4)
+                bsr     hnd_ctx
+                beq.s   .no286
+                move.l  d0,a0
+                tst.b   HC_CX286(a0)
+                beq.s   .no286
+                move.l  DP_TYPE(a4),d0
+                cmp.l   #ACTION_READ,d0
+                beq.s   .is286
+                cmp.l   #ACTION_WRITE,d0
+                bne.s   .no286
+.is286:
+                sf      HC_CX286(a0)
+                move.l  #ERR_MUSTCANCEL,d0
+                bra     .refuse
+.no286:
                 bsr     hnd_gate             ; lock or file of another volume, no disk: refused
                 tst.l   d0
                 bne     .refuse
@@ -757,6 +776,7 @@ dos_handler:
                 move.l  (sp)+,a0
                 bsr     hnd_ctx
                 move.l  d0,a1
+                move.l  HC_LOCKS(a1),32(a0)           ; id_InUse: head of the lock list, 0 if none (disk-change §3)
                 tst.b   HC_WPROT(a1)
                 beq.s   .di_rw
                 cmp.l   #ID_VALIDATED,8(a0)
@@ -1474,7 +1494,7 @@ hnd_unwritten:
                 moveq   #0,d0                         ; no IDCMP class answers for the user
                 jsr     vr_req
                 tst.l   d0
-                beq.s   .uw_eject                     ; Cancel
+                beq.s   .uw_cancel
                 moveq   #TD_CHANGESTATE,d0
                 bsr     hnd_tdcmd
                 tst.l   d0
@@ -1487,6 +1507,10 @@ hnd_unwritten:
                 move.l  d0,HC_CHG(a3)
                 moveq   #0,d0                         ; Z = 1: stays mounted
                 bra.s   .uw_ret
+.uw_cancel:
+                move.l  MP_MSGLIST(a2),a0             ; packets waiting: one transfer among them gets 286
+                tst.l   (a0)
+                sne     HC_CX286(a3)
 .uw_eject:
                 moveq   #1,d0                         ; Z = 0
 .uw_ret:

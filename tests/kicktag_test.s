@@ -8,9 +8,10 @@
 ;       write "KICKTAG WRONG";
 ;   - KickCheckSum = SumKickData(), CoolCapture = a routine writing "COOLCAPTURE", ExecBase ChkSum recomputed.
 ; Writes "KICK ARMED" through dos and then sleeps; the harness resets the machine. After a warm reset the serial
-; port must show "COOLCAPTURE" then "KICKTAG INIT", and never "KICKTAG WRONG". Each routine also counts its calls
-; in the three longs just before table1 (KickTagPtr - 12: cool, tag1, tag2), for a debugger to read when the
-; serial port is not drained after an emulated reset (the serial wait gives up after a while).
+; port must show "COOLCAPTURE USER" then "KICKTAG INIT", and never "KICKTAG WRONG". Each routine also counts its calls
+; in the three longs just before table1 (KickTagPtr - 12: cool, tag1, tag2; the SR CoolCapture saw at - 16), for a
+; debugger to read when the serial port is not drained after an emulated reset (the serial wait gives up after a
+; while).
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o kicktag_test tests/kicktag_test.s
 
         section code,code
@@ -76,7 +77,12 @@ cool:
         lea     hits(pc),a0
         addq.l  #1,(a0)
         lea     m_cool(pc),a0
-        bsr.s   serout
+        move.w  sr,d0                ; 1.3 calls CoolCapture in user mode (coldstart-hardware-v34 §4.4)
+        move.w  d0,coolsr+2-m_cool(a0)
+        btst    #13,d0
+        beq.s   .user
+        lea     m_cools(pc),a0
+.user:  bsr.s   serout
         movem.l (sp)+,d0/a0
         rts
 
@@ -107,6 +113,8 @@ tag2:
         dc.l    tag2,codeend
         dc.b    $01,1,8,0            ; RTF_COLDSTART, version 1, NT_RESOURCE, pri 0
         dc.l    name2,name2,init2
+coolsr:
+        dc.l    0                    ; SR seen by the last CoolCapture call (KickTagPtr - 16)
 hits:
         dc.l    0,0,0                ; calls of cool, init1, init2
 table1:
@@ -125,7 +133,8 @@ memlist:
 dosname: dc.b    "dos.library",0
 name1:   dc.b    "kicktest",0
 name2:   dc.b    "keymap.resource",0
-m_cool:  dc.b    "COOLCAPTURE",13,10,0
+m_cool:  dc.b    "COOLCAPTURE USER",13,10,0
+m_cools: dc.b    "COOLCAPTURE SUPERVISOR",13,10,0
 m_init:  dc.b    "KICKTAG INIT",13,10,0
 m_wrong: dc.b    "KICKTAG WRONG",13,10,0
 m_armed: dc.b    "KICK ARMED",10

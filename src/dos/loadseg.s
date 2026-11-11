@@ -11,8 +11,8 @@
 ;
 ; Seglist (AmigaDOS convention): each segment = AllocMem block [LONG size][BPTR next][contents...]; the BPTR
 ; points to the next field (block+4) -> contents at (BPTR<<2)+4 = block+8; size at block+0 (for UnLoadSeg).
-; HUNK_HEADER memory flags honoured (bit 30 -> MEMF_CHIP, bit 31 -> MEMF_FAST; 11 = V37 extended attributes ->
-; clean failure). D2 deviations/scope ACCEPTED: resident libs, RELOC32SHORT -> not supported (clean failure).
+; HUNK_HEADER memory flags honoured (bit 30 -> MEMF_CHIP, bit 31 -> MEMF_FAST; 11 = V37 extended attributes -> 103
+; as on 1.3). D2 deviations/scope ACCEPTED: resident libs, RELOC32SHORT -> not supported (clean failure).
 ; Overlays (DPaint III): the root load stops at HUNK_OVERLAY, keeps the overlay table and the hunk table and leaves
 ; the file open, all three published in the root code's overlay manager header (OVL_*); the manager then calls
 ; LoadSeg(0, table, fh) per node (HUNK_HEADER whose first = last = node hunk, ... HUNK_BREAK). Contract observed
@@ -188,7 +188,8 @@ ls_load_stream:
                 rol.l   #2,d3
                 and.l   #3,d3                ; d3 = bits 31-30 -> 1-0: bit0 = CHIP, bit1 = FAST
                 cmp.w   #3,d3
-                beq     .fail_fmt            ; 11 = extended attributes (V37+) -> not supported in 1.3
+                beq     .fail_mem            ; 11 (V37 attribute long): 1.3 asks AllocMem for flag 8, which fails
+                                             ; -> 103 (dos-memory-v34 §3.3); the attribute long is never read
                 and.l   #$3FFFFFFF,d0
                 lsl.l   #2,d0                ; content bytes
                 addq.l  #8,d0                ; + header [size][next]
