@@ -38,6 +38,16 @@ hands control to an ordinary priority-zero worker when Forbid ends. It reproduce
 that delayed narrator.device between utterances. The old ROM fails; the corrected and official ROMs pass.
 Success requires `CLIPRI OK` and `CLIPRI END`; logs are in `build/clipri-results/`.
 
+## Native interrupt-chain wrapper regression
+
+`make test-exec-irqchain` (normal and quick Exec groups) installs a VBlank server, wraps the public dispatch
+entry in an authored RAM JMP, and adds a second server. Both counters must keep advancing; removing the second
+must leave the first running. The public header and installed wrapper must survive the add. Hardware beam
+polling bounds the check independently of the timer services that the bug removes. The test restores the
+dispatch entry and removes its servers on success. No ROM instructions are copied into the test.
+The pre-fix ROM fails; the corrected ROM and official Kickstart 1.3 pass. Success requires `IRQCHAIN OK` and
+`IRQCHAIN END`; logs are in `build/irqchain-results/`.
+
 ## ClipBlit within one RastPort
 
 `tests/clipblit_probe.sh <out_dir> [rom]` runs `tests/clipblit_probe.s`: a borderless SMART_REFRESH window filled
@@ -358,3 +368,39 @@ tools only print statistics and locations in the first argument (our code).
 python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom <reference_kick13_rom> [--temoin NAME files...] [--selftest]
 python3 -I tests/audit_aros_similarity.py src <aros_clone>
 ```
+
+## Native menu pens and spacing-only text
+
+`gmake test-intuition-menupens` opens authored-font menus whose five-plane window colors differ from their screen
+colors. Six-pixel character spacing with an eight-pixel nominal width checks that title strings stay complete.
+The test reads visible pixels for the bar, item, submenu, two-pixel frame and disabled-title stipple, checks
+low-resolution screen borders, draws text wider than its item rectangle, and checks the bar row restored when switching
+menus. It fails on the previous production ROM and passes with official Kickstart 1.3 and the corrected ROM.
+It is registered beneath both `test-intuition` and `test-intuition-quick`.
+
+`gmake test-graphics-textblank` uses an authored font with zero-width images and nonzero character spacing. It
+checks pen advance, unchanged pixels in JAM1/COMPLEMENT, visible output in JAM2/inverse video/underline, and allocation
+guards. Thirty-two sixteen-character spacing-only runs must complete within 4,000 PAL scanlines: the previous ROM
+uses about 6,300, official Kickstart 1.3 about 2,600, and the corrected ROM about 840. This observable workload gate
+is registered beneath both `test-graphics` and `test-graphics-quick`.
+
+The bitmap-copy oracle also includes five-plane menu-strip backups, 167-pixel popup edges, partial masks and
+unequal bitmap depths, through all three copy APIs in CHIP and non-DMA RAM.
+
+The menu-pen test also repeatedly enters and leaves a HIGHIMAGE text item without ITextFont. An authored
+24×8 glyph block must change from pen 30 to brighter pen 1 and return exactly to pen 30; surrounding pixels
+are also checked in full-popup game captures against the original ROM. This reproduces the visible-popup default-font overprint
+regression independently of the game and passes with official Kickstart 1.3.
+
+## Proportional composition and menu latency
+
+`gmake test-graphics-textcompose` covers 2,304 authored cases, each in CHIP and non-DMA destination memory.
+An independent per-pixel model fingerprints the entire allocation, including guards: glyph widths 1–9,
+source/destination bit phases 0–7, odd strike rows/addresses, kerning, character spacing, plane masks and four
+text draw modes with varied foreground/background pens. A 64-line workload must stay below 16,000 PAL
+scanlines; the previous ROM uses about 30,000. Both normal and quick Graphics groups include the test.
+
+The menu test also opens twenty 24-character items, returns while RMB remains held, and changes the source
+text color before another visit. It checks all twenty displayed rows, latency bounds (including older bitmap
+copy fallbacks), and that releasing the menu does not retain its CHIP surfaces. Production game timing is
+measured separately against Kickstart 1.3 with the same A500/512K/512K profile and pointer route.

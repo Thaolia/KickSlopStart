@@ -3006,7 +3006,7 @@ bt_one:
 .bo_ret:
         rts
 
-; A word-aligned CHIP template beginning at bit zero can be shifted into the destination by B DMA.
+; A word-aligned CHIP template with a nonnegative source-to-destination shift can use B DMA.
 ; A supplies the destination edge masks; C/D preserve pixels outside the template. Other cases use the CPU.
 TB_SRC          EQU 0
 TB_DOFF         EQU 4
@@ -3016,18 +3016,19 @@ TB_BLTSIZE      EQU 12
 TB_SMOD         EQU 14
 TB_DMOD         EQU 16
 TB_SHIFT        EQU 18
-TB_SIZE         EQU 20
+TB_BG           EQU 20               ; shifted background pen for JAM2
+TB_SIZE         EQU 22
 bt_blit:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -TB_SIZE(sp),sp
         move.l  sp,a4
-        tst.w   BT_XS(a5)
-        bne     .tb_no
+        cmp.w   #15,BT_XS(a5)
+        bhi     .tb_no
         cmp.w   BT_X(a5),d0         ; left-clipped masks need a different source alignment
         bne     .tb_no
         move.l  DC_RP(a5),a1
         move.b  rp_DrawMode(a1),d4
-        and.b   #JAM2|INVERSVID,d4
+        and.b   #INVERSVID,d4
         bne     .tb_no
         tst.w   BT_MOD(a5)
         ble     .tb_no
@@ -3070,6 +3071,8 @@ bt_blit:
         moveq   #-1,d4
         lsr.w   d0,d4
         move.w  d4,TB_FWM(a4)
+        sub.w   BT_XS(a5),d0
+        bmi     .tb_no              ; ascending B DMA needs a nonnegative source-to-destination shift
         ror.w   #4,d0
         move.w  d0,TB_SHIFT(a4)
         and.w   #15,d2
@@ -3111,14 +3114,15 @@ bt_blit:
         move.l  DC_RP(a5),a3
         move.b  rp_Mask(a3),d6
         move.b  rp_FgPen(a3),d5
+        move.b  rp_BgPen(a3),TB_BG(a4)
         moveq   #0,d7
         move.b  bm_Depth(a2),d7
         lea     bm_Planes(a2),a2
-        bra.s   .tb_test
+        bra     .tb_test
 .tb_plane:
         move.l  (a2)+,a1
         btst    #0,d6
-        beq.s   .tb_next
+        beq     .tb_next
         bsr     db_wait
         move.w  #$07ea,d0          ; A=edge mask, B=template: set where AB
         btst    #1,rp_DrawMode(a3)
@@ -3126,9 +3130,25 @@ bt_blit:
         move.w  #$076a,d0          ; invert where AB
         bra.s   .tb_regs
 .tb_pen:
+        btst    #0,rp_DrawMode(a3)
+        bne.s   .tb_jam2
         btst    #0,d5
         bne.s   .tb_regs
         move.w  #$072a,d0          ; clear where AB
+        bra.s   .tb_regs
+.tb_jam2:
+        move.w  #$07ca,d0          ; replace inside A: B, ~B, one, or zero according to the two pens
+        btst    #0,d5
+        beq.s   .tb_bg
+        btst    #0,TB_BG(a4)
+        beq.s   .tb_regs
+        move.w  #$07fa,d0
+        bra.s   .tb_regs
+.tb_bg:
+        move.w  #$073a,d0
+        btst    #0,TB_BG(a4)
+        bne.s   .tb_regs
+        move.w  #$070a,d0
 .tb_regs:
         move.w  d0,BLT_CON0(a0)
         move.w  TB_SHIFT(a4),BLT_CON1(a0)
@@ -3147,6 +3167,9 @@ bt_blit:
 .tb_next:
         lsr.b   #1,d6
         lsr.b   #1,d5
+        move.b  TB_BG(a4),d4
+        lsr.b   #1,d4
+        move.b  d4,TB_BG(a4)
 .tb_test:
         dbra    d7,.tb_plane
         bsr     db_leave
@@ -3645,6 +3668,7 @@ TL_GW           EQU 32               ; WORD: width of the current glyph
 TL_STY          EQU 34               ; WORD: algorithmic styles
 TL_ROW          EQU 36               ; WORD: current row
 TL_OWN          EQU 38               ; BYTE: the buffer was allocated here (not the RastPort's TmpRas)
+TL_EMPTY        EQU 39               ; BYTE: every accepted glyph has zero image width
 TL_FRAME        EQU 40
 tx_line:
         movem.l d2-d7/a1-a4/a6,-(sp)
@@ -3660,6 +3684,7 @@ tx_line:
         moveq   #0,d4                ; d4 = maxX
         moveq   #0,d5                ; d5 = characters accepted
         clr.w   TL_GMAX(a3)
+        st      TL_EMPTY(a3)
 .p1:
         cmp.l   d7,d5
         bhs     .p1e
@@ -3707,12 +3732,26 @@ tx_line:
         ble.s   .p1g
         move.w  d1,TL_GMAX(a3)
 .p1g:
+        tst.w   TL_GW(a3)
+        beq.s   .p1_empty
+        sf      TL_EMPTY(a3)
+.p1_empty:
         addq.l  #1,d5
         bra     .p1
 .p1e:
         add.w   d2,rp_cp_x(a1)
         move.l  d5,TL_N(a3)
         beq     .tl_ret
+        tst.b   TL_EMPTY(a3)
+        beq.s   .tl_image
+        ; A spacing-only run still advances cp_x and obeys the line-buffer limit. With no background,
+        ; inverse video or underline it cannot touch a pixel, so no template or buffer is needed.
+        move.b  rp_DrawMode(a1),d0
+        and.b   #JAM2|INVERSVID,d0
+        bne.s   .tl_image
+        btst    #0,rp_AlgoStyle(a1)  ; underline can create pixels even without glyph images
+        beq     .tl_ret
+.tl_image:
         move.w  d3,TL_MINX(a3)
         move.w  d4,TL_MAXX(a3)
         moveq   #FSF_UNDERLINED|FSF_BOLD|FSF_ITALIC,d0
@@ -3784,9 +3823,15 @@ tx_line:
 .tl_alloc:
         st      TL_OWN(a3)
         move.l  d1,d0
-        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        move.l  #MEMF_CHIP|MEMF_CLEAR,d1 ; composed lines can feed BltTemplate's DMA path
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        bne.s   .tl_buffer
+        move.l  TL_SIZE(a3),d0     ; CHIP pressure must not turn a drawable CPU fallback into missing text
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+.tl_buffer:
         move.l  d0,TL_BUF(a3)
         beq     .tl_ret
 .tl_have:
@@ -3812,6 +3857,11 @@ tx_line:
         move.w  0(a0,d4.w),d3        ; d3 = bit offset in the strike
         move.w  2(a0,d4.w),d4        ; d4 = width
         beq.s   .p2n
+        cmp.w   #8,d4
+        bhi.s   .p2_wide
+        bsr     tl_byteglyph
+        bra.s   .p2n
+.p2_wide:
         clr.w   TL_ROW(a3)
 .p2r:
         move.w  TL_ROW(a3),d0
@@ -3835,7 +3885,7 @@ tx_line:
         bra.s   .p2r
 .p2n:
         addq.l  #1,d5
-        bra.s   .p2
+        bra     .p2
 .p2e:
         move.l  TL_FONT(a3),a2
         clr.w   TL_ROW(a3)           ; styles, row by row
@@ -3932,6 +3982,57 @@ tx_line:
 .tl_ret:
         lea     TL_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a1-a4/a6
+        rts
+
+; Compose a glyph up to eight pixels wide with one extraction and two destination bytes per row.
+; Establish offsets and strides once; retain the cursor/index for the general composition loop.
+; a2 = font, a3 = TL frame; d1 = buffer bit, d3 = strike bit, d4 = width.
+tl_byteglyph:
+        movem.l d0-d7/a0-a2/a6,-(sp)
+        move.l  tf_CharData(a2),a0
+        move.w  d3,d0
+        lsr.w   #3,d0
+        adda.w  d0,a0
+        and.w   #7,d3
+        move.l  TL_BUF(a3),a1
+        move.w  d1,d0
+        lsr.w   #3,d0
+        adda.w  d0,a1
+        and.w   #7,d1
+        moveq   #16,d0
+        sub.w   d4,d0
+        moveq   #-1,d5
+        lsl.w   d0,d5
+        add.w   d3,d4
+        cmp.w   #8,d4
+        shi     d4                  ; read the second source byte only for a crossing glyph
+        moveq   #0,d6
+        move.w  tf_Modulo(a2),d6
+        move.l  d6,a6
+        moveq   #0,d6
+        move.w  TL_STR(a3),d6
+        move.w  tf_YSize(a2),d7
+        beq.s   .bg_done
+        subq.w  #1,d7
+.bg_row:
+        moveq   #0,d0
+        move.b  (a0),d0
+        lsl.w   #8,d0
+        tst.b   d4
+        beq.s   .bg_extract
+        move.b  1(a0),d0
+.bg_extract:
+        lsl.w   d3,d0
+        and.w   d5,d0
+        lsr.w   d1,d0
+        or.b    d0,1(a1)
+        lsr.w   #8,d0
+        or.b    d0,(a1)
+        adda.l  a6,a0
+        adda.l  d6,a1
+        dbra    d7,.bg_row
+.bg_done:
+        movem.l (sp)+,d0-d7/a0-a2/a6
         rts
 
 ; tl_or(a0 = source row, d0.l = source bit, a1 = destination row, d1.l = destination bit, d2.w = width): ORs the
@@ -5621,8 +5722,9 @@ br_blit:
         movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 
-; Copy a disjoint byte-aligned rectangle without rebuilding row alignment or multiplying row indices.
-; All active planes are validated before writing. Odd strides/parities use byte copies; other cases use
+; Copy a disjoint rectangle with byte-aligned origins without rebuilding row alignment or multiplying row indices.
+; All active planes are validated before writing. CHIP rectangles can use template DMA; odd strides/parities use
+; byte copies, and other CPU cases use
 ; register blocks plus long/word/byte tails. Z clear when handled. Preserves registers.
 BR_BYTES        EQU 0
 BR_ROWS         EQU 2
@@ -5638,12 +5740,17 @@ BR_LEAD         EQU 28
 BR_BLOCKS       EQU 30
 BR_LONGS        EQU 32
 BR_TAIL         EQU 34
-BR_SIZE         EQU 36
+BR_EDGE         EQU 36               ; byte: mask for a partial final byte (0 = whole bytes only)
+BR_ARGS         EQU 38               ; source/destination x,y and width,height
+BR_GFX          EQU 50
+BR_SIZE         EQU 54
 br_copy:
         movem.l d0-d7/a0-a4/a6,-(sp)
         move.l  a4,a2
         lea     -BR_SIZE(sp),sp
         move.l  sp,a4
+        movem.w d0-d5,BR_ARGS(a4)
+        move.l  a6,BR_GFX(a4)
         cmp.b   #$c0,DC_MINTERM(a5)
         bne     .bc_no
         move.w  d0,d6
@@ -5653,9 +5760,18 @@ br_copy:
         bmi     .bc_no
         move.w  d0,d6
         or.w    d2,d6
-        or.w    d4,d6
         and.w   #7,d6
         bne     .bc_no
+        clr.b   BR_EDGE(a4)
+        moveq   #7,d6
+        and.w   d4,d6
+        beq.s   .bc_edge_ready
+        moveq   #8,d7
+        sub.w   d6,d7
+        moveq   #-1,d6
+        lsl.b   d7,d6
+        move.b  d6,BR_EDGE(a4)
+.bc_edge_ready:
         tst.w   bm_BytesPerRow(a2)
         ble     .bc_no
         tst.w   bm_BytesPerRow(a3)
@@ -5730,6 +5846,11 @@ br_copy:
         move.w  bm_BytesPerRow(a3),d6
         sub.w   d7,d6
         move.w  d6,BR_DMOD(a4)
+        tst.b   BR_EDGE(a4)
+        beq.s   .bc_ranges
+        addq.l  #1,BR_SRANGE(a4)     ; alias checks include the masked edge read and write
+        addq.l  #1,BR_DRANGE(a4)
+.bc_ranges:
         move.w  bm_BytesPerRow(a2),d6
         or.w    bm_BytesPerRow(a3),d6
         and.w   #1,d6
@@ -5770,6 +5891,8 @@ br_copy:
         addq.w  #1,d0
         bra.s   .bc_validate
 .bc_valid:
+        bsr     br_templatecopy
+        bne     .bc_done
         clr.w   BR_INDEX(a4)
 .bc_plane:
         moveq   #0,d0
@@ -5852,6 +5975,10 @@ br_copy:
         beq.s   .bc_32next
         move.b  (a0)+,(a1)+
 .bc_32next:
+        tst.b   BR_EDGE(a4)
+        beq.s   .bc_32advance
+        bsr     .bc_edge
+.bc_32advance:
         adda.w  BR_SMOD(a4),a0
         adda.w  BR_DMOD(a4),a1
         cmpa.l  a6,a0
@@ -5885,6 +6012,10 @@ br_copy:
         beq.s   .bc_wordnext
         move.b  (a0)+,(a1)+
 .bc_wordnext:
+        tst.b   BR_EDGE(a4)
+        beq.s   .bc_wordadvance
+        bsr     .bc_edge
+.bc_wordadvance:
         adda.w  BR_SMOD(a4),a0
         adda.w  BR_DMOD(a4),a1
         dbra    d6,.bc_wordrow
@@ -5895,6 +6026,10 @@ br_copy:
 .bc_byte:
         move.b  (a0)+,(a1)+
         dbra    d7,.bc_byte
+        tst.b   BR_EDGE(a4)
+        beq.s   .bc_byteadvance
+        bsr.s   .bc_edge
+.bc_byteadvance:
         adda.w  BR_SMOD(a4),a0
         adda.w  BR_DMOD(a4),a1
         dbra    d6,.bc_byterow
@@ -5908,6 +6043,105 @@ br_copy:
         moveq   #0,d0
 .bc_return:
         lea     BR_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+; The row pointers already follow its complete bytes; modulos advance from this position after the edge.
+.bc_edge:
+        move.b  BR_EDGE(a4),d0
+        move.b  (a0),d1
+        and.b   d0,d1
+        not.b   d0
+        and.b   d0,(a1)
+        or.b    d1,(a1)
+        rts
+
+; Prevalidated disjoint rectangles in CHIP RAM can copy each selected plane through JAM2 B DMA.
+; Keep non-DMA/odd-addressed data on the streaming CPU path; no writes occur during preflight.
+br_templatecopy:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        move.w  bm_BytesPerRow(a2),d0
+        or.w    bm_BytesPerRow(a3),d0
+        btst    #0,d0
+        bne     .tc_no
+        move.w  BR_ARGS+4(a4),d0
+        and.w   #15,d0
+        move.w  BR_ARGS(a4),d1
+        and.w   #15,d1
+        sub.w   d1,d0
+        bmi     .tc_no
+        cmp.w   #1024,BR_ARGS+10(a4)
+        bhi     .tc_no
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d6
+        moveq   #0,d7
+        move.l  4.w,a6
+.tc_check:
+        cmp.b   bm_Depth(a3),d7
+        bhs.s   .tc_ready
+        btst    d7,d6
+        beq.s   .tc_checknext
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),a1
+        move.l  a1,d1
+        btst    #0,d1
+        bne     .tc_no
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .tc_no
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a3,d0.w),a1
+        move.l  a1,d1
+        btst    #0,d1
+        bne     .tc_no
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .tc_no
+.tc_checknext:
+        addq.w  #1,d7
+        bra.s   .tc_check
+.tc_ready:
+        lea     -rp_SIZEOF(sp),sp
+        move.l  sp,a1
+        move.l  BR_GFX(a4),a6
+        jsr     LVO_INITRASTPORT(a6) ; pen A all ones, pen B zero, JAM2
+        move.l  a3,rp_BitMap(a1)
+        moveq   #0,d7
+.tc_plane:
+        cmp.b   bm_Depth(a3),d7
+        bhs.s   .tc_done
+        btst    d7,d6
+        beq.s   .tc_next
+        moveq   #1,d0
+        lsl.b   d7,d0
+        move.b  d0,rp_Mask(a1)
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),a0
+        moveq   #0,d0
+        move.w  BR_ARGS+2(a4),d0
+        mulu    bm_BytesPerRow(a2),d0
+        adda.l  d0,a0
+        move.w  BR_ARGS(a4),d0
+        lsr.w   #4,d0
+        add.w   d0,d0
+        adda.w  d0,a0
+        move.w  BR_ARGS(a4),d0
+        and.w   #15,d0
+        move.w  bm_BytesPerRow(a2),d1
+        movem.w BR_ARGS+4(a4),d2-d5
+        bsr     gfx_BltTemplate
+.tc_next:
+        addq.w  #1,d7
+        bra.s   .tc_plane
+.tc_done:
+        lea     rp_SIZEOF(sp),sp
+        moveq   #1,d0
+        bra.s   .tc_ret
+.tc_no:
+        moveq   #0,d0
+.tc_ret:
         movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 ; dr_bits(a2 = source row | 0 | -1, d0 = source bit, a1 = destination row, d2 = destination bit, d4 = width,
@@ -6261,6 +6495,8 @@ gfx_BltBitMap:
         clr.l   BB_BUF(a5)
         bsr     bb_solid
         bne     .bm_ret
+        bsr     bb_copy
+        bne     .bm_ret
         cmp.l   a3,a4
         bne.s   .bm_go
         moveq   #0,d0                ; same BitMap: row buffer (+1 byte of margin on each side)
@@ -6365,6 +6601,64 @@ gfx_BltBitMap:
         move.w  BB_COUNT(a5),d0
         lea     BB_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; Distinct bitmap copies can use the existing rectangle-copy engines instead of rebuilding row/plane
+; addresses for every scanline. A temporary unlayered RastPort retains BltBitMap's common-plane/count rules.
+; Those engines validate alignment and aliasing before acceleration; unsupported cases keep their forward walk.
+bb_copy:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        cmp.b   #$c0,DC_MINTERM(a5)
+        bne.s   .bc_no
+        cmpa.l  a3,a4
+        beq.s   .bc_no
+        lea     -rp_SIZEOF(sp),sp
+        move.l  sp,a1
+        move.l  a1,a0
+        moveq   #rp_SIZEOF/4-1,d0
+.bc_zero:
+        clr.l   (a0)+
+        dbra    d0,.bc_zero
+        move.l  a3,rp_BitMap(a1)
+        moveq   #0,d2
+        moveq   #0,d3
+        move.b  bm_Depth(a3),d3
+        cmp.b   bm_Depth(a4),d3
+        bls.s   .bc_depth
+        move.b  bm_Depth(a4),d3
+.bc_depth:
+        cmp.w   #8,d3
+        bls.s   .bc_test
+        moveq   #8,d3
+.bc_test:
+        cmp.w   d3,d2
+        bhs.s   .bc_draw
+        move.b  BB_MASK(a5),d0
+        btst    d2,d0
+        beq.s   .bc_next
+        move.w  d2,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a3,d0.w),d0
+        beq.s   .bc_next
+        cmp.l   #-1,d0
+        beq.s   .bc_next
+        bset    d2,rp_Mask(a1)
+        addq.w  #1,BB_COUNT(a5)
+.bc_next:
+        addq.w  #1,d2
+        bra.s   .bc_test
+.bc_draw:
+        move.l  a4,a0
+        movem.w BB_SX(a5),d0-d5
+        moveq   #-$40,d6
+        bsr     gfx_BltBitMapRastPort
+        lea     rp_SIZEOF(sp),sp
+        moveq   #1,d0
+        bra.s   .bc_ret
+.bc_no:
+        moveq   #0,d0
+.bc_ret:
+        movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 
 ; Source-independent minterms, including identical source/destination pixels reduced to their diagonal truth

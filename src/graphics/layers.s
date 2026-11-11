@@ -6,8 +6,8 @@
 ; LAYERSIMPLE layer it has nothing: the re-exposed area is filled with pen 0, added to the DamageList
 ; (coordinates relative to the layer) and LAYERREFRESH is set.
 ; Origin of a backup BitMap: (MinX & ~15, MinY) of the ClipRect that created it, stored in cr_p1 (two
-; words): the bit position modulo 16 is the same as on screen. Backups live in any RAM
-; (MEMF_PUBLIC): graphics fills them with the CPU.
+; words): the bit position modulo 16 is the same as on screen. Backups prefer CHIP for DMA copies,
+; with a public-memory fallback when CHIP is exhausted.
 ;
 ; REBUILD (lr_rebuild), after any change of order or bounds, creation or deletion:
 ;   1. new ClipRects for each layer (ly_crnew list), computed by subtracting rectangles;
@@ -1373,9 +1373,17 @@ lr_allocbm:
         move.b  d7,d1
         mulu    d1,d0                ; planes x depth
         add.l   #bm_SIZEOF,d0
-        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        move.l  d0,-(sp)
+        move.l  #MEMF_CHIP|MEMF_CLEAR,d1
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        bne.s   .ab_allocated
+        move.l  (sp),d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+.ab_allocated:
+        addq.l  #4,sp
         move.l  d0,CR_BITMAP(a3)
         beq.s   .ab_r
         move.l  d0,a0

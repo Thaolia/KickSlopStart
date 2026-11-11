@@ -39,7 +39,7 @@ GFX_OBJ   += $(BUILD)/loadscreen.o
 endif
 # --- intuition track (M5+): objects linked AFTER graphics ---
 INT_DIR   := src/intuition
-INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/screens.o $(BUILD)/menus.o $(BUILD)/requester.o $(BUILD)/request.o $(BUILD)/pointer.o $(BUILD)/prefs.o $(BUILD)/gadgets.o $(BUILD)/sysreq.o $(BUILD)/alert.o
+INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/screens.o $(BUILD)/menus.o $(BUILD)/menucache.o $(BUILD)/requester.o $(BUILD)/request.o $(BUILD)/pointer.o $(BUILD)/prefs.o $(BUILD)/gadgets.o $(BUILD)/sysreq.o $(BUILD)/alert.o
 # --- dos track (M6+): objects linked AFTER intuition ---
 DOS_DIR   := src/dos
 # ofs.o: read-only OFS (D1) — relies on trackdisk CMD_READ (disk.i); includes exec.i + disk.i + ofs.i.
@@ -155,6 +155,15 @@ test-exec-clipri: kick-prod $(BUILD)/clipri
 	  --seconds 20 --tag CLIPRI --pass-marker "CLIPRI OK" --workloads
 $(BUILD)/clipri: tests/clipri.s $(EXEC_DIR)/exec.i | $(BUILD)
 	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -o $@ $<
+.PHONY: test-exec-irqchain
+test-exec: test-exec-irqchain
+test-exec-quick: test-exec-irqchain
+test-exec-irqchain: kick-prod $(BUILD)/irqchain
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/irqchain \
+	  --out $(BUILD)/irqchain-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 20 --tag IRQCHAIN --pass-marker "IRQCHAIN OK" --workloads
+$(BUILD)/irqchain: tests/irqchain.s $(EXEC_DIR)/exec.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -o $@ $<
 .PHONY: test-graphics-rectpens
 test-graphics: test-graphics-rectpens
 test-graphics-quick: test-graphics-rectpens
@@ -219,6 +228,34 @@ $(BUILD)/mousepoll: tests/mousepoll.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $
 test: test-graphics test-exec test-intuition
 test-quick: test-graphics-quick test-exec-quick test-intuition-quick
 .PHONY: test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
+.PHONY: test-intuition-menupens test-graphics-textblank
+.PHONY: test-graphics-textcompose
+test-graphics: test-graphics-textcompose
+test-graphics-quick: test-graphics-textcompose
+test-graphics-textcompose: kick-prod $(BUILD)/textcompose
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/textcompose \
+	  --out $(BUILD)/textcompose-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 360 --tag TEXTCOMPOSE --pass-marker "TEXTCOMPOSE OK" --workloads
+$(BUILD)/textcompose_cases.i: tests/mk_textcompose_cases.py | $(BUILD)
+	$(PYTHON) -I $< > $@
+$(BUILD)/textcompose: tests/textcompose.s $(BUILD)/textcompose_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(BUILD) -o $@ $<
+test-intuition: test-intuition-menupens
+test-intuition-quick: test-intuition-menupens
+test-intuition-menupens: kick-prod $(BUILD)/menupens
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/menupens \
+	  --out $(BUILD)/menupens-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 50 --tag MENUPENS --pass-marker "MENUPENS OK" --workloads
+$(BUILD)/menupens: tests/menupens.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-graphics: test-graphics-textblank
+test-graphics-quick: test-graphics-textblank
+test-graphics-textblank: kick-prod $(BUILD)/textblank
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/textblank \
+	  --out $(BUILD)/textblank-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag TEXTBLANK --pass-marker "TEXTBLANK OK" --workloads
+$(BUILD)/textblank: tests/textblank.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 test-intuition: test-intuition-smallwindow test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
 test-intuition-quick: test-intuition-smallwindow test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
 test-intuition-menufont: kick-prod $(BUILD)/menufont

@@ -180,6 +180,11 @@ intuition_OpenScreen:
         move.b  #1,SC_BARVBORDER(a3)
         move.b  #5,SC_BARHBORDER(a3)
         move.b  #2,SC_MENUVBORDER(a3)
+        tst.w   NS_VIEWMODES(a2)     ; low-resolution menu geometry uses narrower bar and taller box margins
+        bmi.s   .os_margins
+        move.b  #2,SC_BARHBORDER(a3)
+        move.b  #4,SC_MENUVBORDER(a3)
+.os_margins:
         move.b  #4,SC_MENUHBORDER(a3)
         move.b  #2,SC_WBORTOP(a3)
         move.b  #4,SC_WBORLEFT(a3)

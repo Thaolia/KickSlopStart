@@ -30,6 +30,16 @@ def cases():
     for width in [1024, 1040]:
         stride = (width + 7) // 8
         yield [stride, stride, 16, 8192, 2, 2, 3, 0, 0, 0, 0, width, 8, 0xC0, 8, 8192]
+    # Menu-strip backups, masked popup edges and unequal depths through every bitmap API.
+    for mt in [0xC0, 0xCC]:
+        for sb, db, sx, dx, width, height, sd, dd, mask in [
+                (40, 40, 0, 0, 320, 11, 5, 5, 31),
+                (22, 40, 0, 0, 167, 72, 5, 5, 31),
+                (40, 22, 0, 0, 167, 72, 5, 5, 21),
+                (40, 40, 3, 9, 167, 72, 2, 5, 3),
+                (40, 14, 72, 8, 87, 176, 5, 5, 31),
+                (14, 40, 8, 72, 87, 176, 5, 5, 5)]:
+            yield [sb, db, 16, 51232, sd, dd, mask, sx, 0, dx, 1, width, height, mt, 256, 27648]
     # Four repeated copies/clears remain idempotent, so the same independent pixel oracle checks the timing runs.
     yield [6, 40, 16, 8192, 5, 5, 31, 0, 0, 27, 0, 40, 40, 0xC0, 40, 8192]
     yield [40, 40, 16, 16, 5, 5, 31, 27, 0, 27, 0, 40, 40, 0x20, 40, 8192]
