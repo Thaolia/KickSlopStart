@@ -1681,6 +1681,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   400-line console run (41.42 -> 41.46 s): the profile's Text time is in the shifted loop (the console window's text
   is presumably not byte-aligned, not measured). Withdrawn at the user's choice; the probe stays as the text-path
   non-regression check.
+  Then the blitter (user: "via utilisation du blitter par exemple plutot que du CPU"): a `BLTTRACE` build counted the
+  copy paths in Workbench, menus, Clock, Shell and Deluxe Paint III use; only DPaint's brushes sent much to the CPU
+  (source phase beyond the destination's, other minterms). `br_blit` now takes any minterm, larger source phases by a
+  descending blit, and the oversized ones with only a 1-15 column right strip left to the CPU. That run also showed
+  DPaint losing its picture under every menu; an analysis probe confirmed the real 1.3 keeps it, and menu boxes now
+  save and restore the screen under them. `tests/bltrp_probe.sh` extended to every phase pair and five minterms (800
+  copies, BAD 0 on the old and new ROMs, a ROM with unswapped descending masks fails with 110,140 bad pixels).
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

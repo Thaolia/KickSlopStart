@@ -101,7 +101,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - Install exception vectors that report on the serial line early; in a burst of exceptions, chase the **first** one.
 - Prefer low-RAM counters read back at the end of a run to breakpoints; when serial is silent, trace into an
   AllocMem'd buffer whose pointer sits at a fixed address and dump it with the debugger.
-- Build trace variants with `-D` flags (`MEMTRACK`, `DOSTRACE`, `GFXTRACE`) in a separate `BUILD=` directory and
+- Build trace variants with `-D` flags (`MEMTRACK`, `DOSTRACE`, `GFXTRACE`, `BLTTRACE`) in a separate `BUILD=` directory and
   resolve addresses with the `vlink -M` map. Never leave a trace flag on in the dev or prod ROM.
 - Name the cause with a discriminating experiment (pure delay vs interrupt mask, A/B variant removing one
   component). An unexplained timing fix is not a fix.

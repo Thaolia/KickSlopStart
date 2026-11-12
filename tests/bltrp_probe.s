@@ -1,10 +1,12 @@
 ; tests/bltrp_probe.s - BltBitMapRastPort phase probe for OUR ROM (implementation track, authored).
 ; Copies rectangles between two 2-plane 320 x 64 CHIP BitMaps (source and destination filled with different
-; pseudo-random patterns before each case) with minterm $C0, for every source phase 0-15 in its word, destination
-; phases from the source phase to 15 (step 3, plus 15), widths 37 and 150, height 30: large enough for the blitter
-; path. Each case checks every pixel of the destination rows dy-1..dy+h and columns dx-16..dx+w+15 of both planes:
-; the source pixel inside the rectangle, the destination as filled (a pristine copy) outside. Prints "BR CASES <n> BAD <pixels>" and,
-; on a mismatch, "BR FIRST <sx> <dx> <w>" for the first bad case, then "BR END". Run by tests/bltrp_probe.sh.
+; pseudo-random patterns before each case): minterm $C0 for every source phase 0-15 in its word against every
+; destination phase 0-15, then minterms $30, $60, $80 and $E0 for source and destination phases 0, 3, ..., 15; widths
+; 37 and 150, height 30: large enough for the blitter path. Each case checks every pixel of the destination rows
+; dy-1..dy+h and columns dx-16..dx+w+15 of both planes: inside the rectangle the minterm of the source pixel and the
+; destination as filled (bit 4 + 2 * source + destination of the minterm), outside the destination as filled (a
+; pristine copy). Prints "BR CASES <n> BAD <pixels>" and, on a mismatch, "BR FIRST <sx> <dx> <w> <minterm>" for the
+; first bad case, then "BR END". Run by tests/bltrp_probe.sh.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -57,9 +59,16 @@ start:
         lea     rport(pc),a1
         lea     dstbm(pc),a0
         move.l  a0,4(a1)             ; rp_BitMap
+        lea     mterms(pc),a3
+.mt:
+        move.b  (a3)+,d0
+        beq     .mtend
+        move.b  d0,cmt+1
+        moveq   #0,d5
+        move.b  (a3)+,d5             ; d5 = phase step
         moveq   #0,d7                ; d7 = source phase
 .sph:
-        move.w  d7,d6                ; d6 = destination phase
+        moveq   #0,d6                ; d6 = destination phase
 .dph:
         move.w  #37,cw
         bsr     onecase
@@ -67,15 +76,20 @@ start:
         bsr     onecase
         cmp.w   #15,d6
         beq.s   .dnext
-        addq.w  #3,d6
+        add.w   d5,d6
         cmp.w   #15,d6
         bls.s   .dph
         moveq   #15,d6
         bra.s   .dph
 .dnext:
-        addq.w  #1,d7
-        cmp.w   #16,d7
-        blo.s   .sph
+        cmp.w   #15,d7
+        beq.s   .mt
+        add.w   d5,d7
+        cmp.w   #15,d7
+        bls.s   .sph
+        moveq   #15,d7
+        bra.s   .sph
+.mtend:
         lea     m_cases(pc),a0
         bsr     puts
         move.l  ncases(pc),d0
@@ -95,6 +109,8 @@ start:
         bsr     phex4
         move.w  fw(pc),d0
         bsr     phex4
+        move.w  fmt(pc),d0
+        bsr     phex4
         bsr     nl
 .ok:
         move.l  4.w,a6
@@ -113,7 +129,7 @@ start:
 
 ; onecase(d7 = source phase, d6 = destination phase, cw = width): sx = 32 + d7, dx = 16 + d6
 onecase:
-        movem.l d6-d7,-(sp)
+        movem.l d5-d7,-(sp)
         move.l  mem(pc),a0           ; fill all four planes, source and destination differently
         move.l  #$13579BDF,d0
         move.w  #PLANE-1,d1          ; 4 planes in longs = PLANE longs
@@ -145,7 +161,8 @@ onecase:
         moveq   #DY,d3
         move.w  cw(pc),d4
         moveq   #H,d5
-        move.l  #$C0,d6
+        moveq   #0,d6
+        move.w  cmt(pc),d6
         jsr     LVO_BltBitMapRastPort(a6)
         jsr     LVO_WaitBlit(a6)
         addq.l  #1,ncases
@@ -177,6 +194,14 @@ onecase:
         bmi.s   .outside
         cmp.w   #H,d1
         bhs.s   .outside
+        movem.w d0-d1,-(sp)
+        move.w  d4,d0                ; destination as filled
+        lsl.w   #2,d0
+        lea     origbm(pc),a0
+        move.l  0(a0,d0.w),a0
+        bsr     getbit
+        move.b  d0,d6
+        movem.w (sp)+,d0-d1
         add.w   csx(pc),d0           ; source pixel
         move.w  d0,d2
         move.w  d1,d3
@@ -186,6 +211,13 @@ onecase:
         lea     srcbm(pc),a0
         move.l  8(a0,d0.w),a0
         bsr     getbit
+        add.b   d0,d0                ; minterm bit 4 + 2 * source + destination
+        add.b   d6,d0
+        addq.b  #4,d0
+        move.w  cmt(pc),d1
+        btst    d0,d1
+        sne     d0
+        and.b   #1,d0
         bra.s   .cmp
 .outside:                            ; the destination as filled: the same generator, recomputed
         move.w  d4,d0
@@ -213,10 +245,11 @@ onecase:
         move.w  csx(pc),fsx
         move.w  cdx(pc),fdx
         move.w  cw(pc),fw
+        move.w  cmt(pc),fmt
 .acc:
         add.l   d5,nbad
 .ret:
-        movem.l (sp)+,d6-d7
+        movem.l (sp)+,d5-d7
         rts
 
 ; getbit(a0 = plane, d2 = x, d3 = y) -> d0.b = 0/1. Clobbers d0/d1/a0.
@@ -289,6 +322,8 @@ cw:       dc.w  0
 fsx:      dc.w  0
 fdx:      dc.w  0
 fw:       dc.w  0
+fmt:      dc.w  0
+cmt:      dc.w  0
 srcbm:    dc.w  BPR,ROWS
           dc.b  0,2
           dc.w  0
@@ -299,6 +334,7 @@ dstbm:    dc.w  BPR,ROWS
           dc.l  0,0,0,0,0,0,0,0
 origbm:   dc.l  0,0              ; planes of a pristine copy of the destination fill
 rport:    dcb.b 100,0
+mterms:   dc.b  $C0,1,$30,3,$60,3,$80,3,$E0,3,0   ; minterm, phase step
 gfxname:  dc.b  "graphics.library",0
 m_cases:  dc.b  "BR CASES",0
 m_bad:    dc.b  " BAD",0

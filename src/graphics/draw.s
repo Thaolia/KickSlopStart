@@ -5841,6 +5841,7 @@ gfx_BltBitMapRastPort:
         move.l  DC_CBM(a5),a3        ; a3 = destination BitMap
         cmpa.l  a4,a3                ; the same BitMap (ClipBlit within one RastPort): through BltBitMap, whose rows
         bne.s   .bb_two              ; go through a buffer and run bottom-up for a downward copy, where the forward
+        BTRACE  4,d4,d5
         move.l  a4,a0                ; walk below would smear a copy to the right
         move.l  a3,a1
         moveq   #0,d6
@@ -5854,7 +5855,15 @@ gfx_BltBitMapRastPort:
         bsr     br_blit
         bne     .bb_oret
         bsr     br_copy
+                ifne    BLTTRACE
+        beq.s   .bb_gen
+        BTRACE  5,d4,d5
+        bra     .bb_oret
+.bb_gen:
+        BTRACE  6,d4,d5
+                else
         bne     .bb_oret
+                endc
         moveq   #0,d7                ; d7 = plane
 .bb_plane:
         moveq   #0,d6
@@ -5906,8 +5915,14 @@ gfx_BltBitMapRastPort:
 .bb_oret:
         rts
 
-; A source whose phase in its word is not beyond the destination's is shifted right into place by the blitter's B
-; channel (the bits it shifts in from the previous word fall under the first-word mask).
+; The source goes through the blitter's B channel, the destination through C and D, and A is a constant whose
+; first/last-word masks keep the destination outside the rectangle: D = A ? minterm(B, C) : C, so any BltBitMap
+; minterm works. A source whose phase in its word is not beyond the destination's is shifted right into place (the
+; bits shifted in from the previous word fall under the first-word mask). A larger source phase is shifted left by a
+; descending blit (the bits shifted in at the right edge fall under its mask). When the source's last pixel lies one
+; word further than the destination's, the blit stops its right-edge mask at the last column it can fill from the
+; fetched words, and the 1-15 columns left at the right (RB_STRIP) go back to the CPU engines: br_blit then rewrites
+; the caller's saved sx/dx/width for that strip and reports the copy as not handled.
 ; Validate all selected planes, including the final masked B fetch and cross-plane aliasing, before any DMA.
 ; Unsupported alignment, constants, non-CHIP memory and aliasing retain the CPU engines below.
 RB_SOFF         EQU 0
@@ -5923,15 +5938,22 @@ RB_BLTSIZE      EQU 26
 RB_PLANE        EQU 28
 RB_MASK         EQU 30
 RB_GFX          EQU 32
-RB_SIZE         EQU 36
+RB_CON0         EQU 36               ; BLTCON0: channels B, C, D and the minterm
+RB_DESC         EQU 38               ; byte: descending blit (left shift)
+RB_STRIP        EQU 40               ; WORD: right-edge columns left to the CPU
+RB_SIZE         EQU 42
 br_blit:
         movem.l d0-d7/a0-a4/a6,-(sp)
         move.l  a4,a2
         lea     -RB_SIZE(sp),sp
         move.l  sp,a4
         move.l  a6,RB_GFX(a4)
-        cmp.b   #$c0,DC_MINTERM(a5)
-        bne     .rb_no
+        BTRACE  0,d4,d5
+        moveq   #0,d6
+        move.b  DC_MINTERM(a5),d6
+        and.w   #$f0,d6
+        or.w    #$070a,d6            ; USEB, USEC, USED; where A is 0, D = C
+        move.w  d6,RB_CON0(a4)
         move.w  d0,d6
         or.w    d1,d6
         or.w    d2,d6
@@ -5941,8 +5963,21 @@ br_blit:
         and.w   #15,d6
         move.w  d2,d7
         and.w   #15,d7
+        sf      RB_DESC(a4)
+        clr.w   RB_STRIP(a4)
         cmp.w   d7,d6
-        bhi     .rb_no              ; a source phase beyond the destination's needs a left shift: CPU path
+        bls.s   .rb_phok
+        st      RB_DESC(a4)
+        sub.w   d7,d6                ; source phase - destination phase
+        move.w  d2,d7
+        add.w   d4,d7
+        subq.w  #1,d7
+        and.w   #15,d7               ; phase of the destination's last pixel
+        add.w   d6,d7
+        sub.w   #15,d7
+        ble.s   .rb_phok             ; signed: the source ends in the same word count
+        move.w  d7,RB_STRIP(a4)      ; the source's last pixel is one word further
+.rb_phok:
         move.w  bm_BytesPerRow(a2),d6
         or.w    bm_BytesPerRow(a3),d6
         btst    #0,d6
@@ -5995,8 +6030,16 @@ br_blit:
         move.w  d7,RB_FWM(a4)
         move.w  d0,d7
         and.w   #15,d7
-        sub.w   d7,d6              ; B shift = destination phase - source phase
+        sub.w   d7,d6              ; destination phase - source phase
+        tst.b   RB_DESC(a4)
+        beq.s   .rb_asc
+        neg.w   d6                 ; descending: B shifted left by source phase - destination phase
         ror.w   #4,d6
+        addq.w  #2,d6              ; BLTCON1 DESC
+        bra.s   .rb_shift
+.rb_asc:
+        ror.w   #4,d6              ; B shifted right
+.rb_shift:
         move.w  d6,RB_SHIFT(a4)
         move.w  d2,d6
         add.w   d4,d6
@@ -6005,6 +6048,7 @@ br_blit:
         and.w   #15,d7
         moveq   #15,d4
         sub.w   d7,d4
+        add.w   RB_STRIP(a4),d4      ; the right-edge strip is left out
         moveq   #-1,d7
         lsl.w   d4,d7
         move.w  d7,RB_LWM(a4)
@@ -6135,33 +6179,60 @@ br_blit:
 .rb_plane:
         move.w  RB_PLANE(a4),d7
         cmp.b   bm_Depth(a3),d7
-        bhs.s   .rb_done
+        bhs.w   .rb_done
         btst    d7,RB_MASK(a4)
         beq.s   .rb_next
         bsr     db_wait
-        move.w  #$07ca,BLT_CON0(a0) ; D = A ? B : C, A constant with destination word-edge masks
+        move.w  RB_CON0(a4),BLT_CON0(a0)
         move.w  RB_SHIFT(a4),BLT_CON1(a0)
         clr.w   BLT_BDAT(a0)
         move.w  #$ffff,BLT_ADAT(a0)
-        move.w  RB_FWM(a4),BLT_AFWM(a0)
-        move.w  RB_LWM(a4),BLT_ALWM(a0)
         move.w  RB_SMOD(a4),BLT_BMOD(a0)
         move.w  RB_DMOD(a4),BLT_CMOD(a0)
         move.w  RB_DMOD(a4),BLT_DMOD(a0)
         lsl.w   #2,d7
         move.l  bm_Planes(a2,d7.w),a1
         adda.l  RB_SOFF(a4),a1
+        move.l  bm_Planes(a3,d7.w),d6
+        add.l   RB_DOFF(a4),d6
+        tst.b   RB_DESC(a4)
+        bne.s   .rb_dsc
+        move.w  RB_FWM(a4),BLT_AFWM(a0)
+        move.w  RB_LWM(a4),BLT_ALWM(a0)
+        bra.s   .rb_ptr
+.rb_dsc:                           ; descending: from the last word, the right edge mask comes first
+        move.w  RB_LWM(a4),BLT_AFWM(a0)
+        move.w  RB_FWM(a4),BLT_ALWM(a0)
+        adda.l  RB_SRANGE(a4),a1
+        subq.l  #2,a1
+        add.l   RB_DRANGE(a4),d6
+        subq.l  #2,d6
+.rb_ptr:
         move.l  a1,BLT_BPT(a0)
-        move.l  bm_Planes(a3,d7.w),a1
-        adda.l  RB_DOFF(a4),a1
+        move.l  d6,a1
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)
         move.w  RB_BLTSIZE(a4),BLT_SIZE(a0)
 .rb_next:
         addq.w  #1,RB_PLANE(a4)
-        bra.s   .rb_plane
+        bra.w   .rb_plane
 .rb_done:
         bsr     db_leave
+                ifne    BLTTRACE
+        movem.l RB_SIZE(sp),d0-d5
+        BTRACE  3,d4,d5
+                endc
+        move.w  RB_STRIP(a4),d6
+        beq.s   .rb_whole
+        lea     RB_SIZE(a4),a0       ; saved d0-d5 (longs): sx, sy, dx, dy, width, height
+        move.w  16+2(a0),d7
+        sub.w   d6,d7                ; columns the blitter did
+        add.w   d7,2(a0)
+        add.w   d7,8+2(a0)
+        move.w  d6,16+2(a0)
+        BTRACE  2,d6,20+2(a0)
+        bra.s   .rb_no               ; the strip goes on to the CPU engines (db_leave waited for the blit)
+.rb_whole:
         moveq   #1,d0
         bra.s   .rb_return
 .rb_no:
@@ -6941,11 +7012,28 @@ gfx_BltBitMap:
         tst.w   d5
         ble     .bm_ret
         movem.w d0-d5,BB_SX(a5)
+        BTRACE  7,d4,d5
         clr.l   BB_BUF(a5)
         bsr     bb_solid
+                ifne    BLTTRACE
+        beq.s   .bm_nsol
+        BTRACE  8,d4,d5
+        bra     .bm_ret
+.bm_nsol:
+                else
         bne     .bm_ret
+                endc
         bsr     bb_copy
         bne     .bm_ret
+                ifne    BLTTRACE
+        cmp.l   a3,a4
+        bne.s   .bm_tdis
+        BTRACE  9,d4,d5
+        bra.s   .bm_tsame
+.bm_tdis:
+        BTRACE  10,d4,d5
+.bm_tsame:
+                endc
         cmp.l   a3,a4
         bne.s   .bm_go
         moveq   #0,d0                ; same BitMap: row buffer (+1 byte of margin on each side)
@@ -7363,3 +7451,25 @@ gfx_AttemptLockLayerRom:
         movem.l (sp)+,d1/a0-a1/a6
 .alo_r:
         rts
+                ifne    BLTTRACE
+; bt_count(d0 = pixels, d1 = path 0-15): BLTTRACE table (exec.i); allocated on the first call. Clobbers d0/d1/a0/a1/a6.
+bt_count:
+        tst.l   ($7E0).w
+        bne.s   .bt_have
+        movem.l d0-d1,-(sp)
+        move.l  #16*8,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        move.l  ($4).w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,($7E0).w
+        movem.l (sp)+,d0-d1
+        tst.l   ($7E0).w
+        beq.s   .bt_ret
+.bt_have:
+        move.l  ($7E0).w,a0
+        lsl.w   #3,d1
+        addq.l  #1,0(a0,d1.w)
+        add.l   d0,4(a0,d1.w)
+.bt_ret:
+        rts
+                endc

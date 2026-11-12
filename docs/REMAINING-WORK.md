@@ -518,7 +518,8 @@ Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages up
   - Directory Opus 4.12 runs.
   - Deluxe Paint III v3.00 (since PR #28, 2026-11-08): reaches the paint screen, quits to the CLI and can be run
     again. Selected requester gadgets show their text (format chooser checked on a screenshot, 2026-11-12; fixed
-    by the RectFill minterm work of 2026-11-09).
+    by the RectFill minterm work of 2026-11-09). The picture under a menu stays as on 1.3 (2026-11-12, menu box
+    save/restore).
 - **Games:**
   - Holiday Lemmings: menu and a playable level. The Lemmings demo works too.
   - Caesar reaches its game menu.

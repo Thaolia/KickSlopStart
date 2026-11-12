@@ -131,6 +131,23 @@ GTRACE       macro
         move.l  (sp),$7E4+8*\1
                 endc
              endm
+; BLTTRACE=1 (trace build only, never dev or prod): BTRACE n, wreg, hreg counts a call of path n of the copy
+; engines and its pixels (wreg.w * hreg.w) in a table of 16 (calls, pixels) long pairs allocated on first use, its
+; address in the free long at $7E0; read back with the debugger. Changes the flags, preserves the registers.
+                ifnd    BLTTRACE
+BLTTRACE        EQU 0
+                endc
+BTRACE       macro
+                ifne    BLTTRACE
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        moveq   #0,d0
+        move.w  \2,d0
+        mulu    \3,d0
+        moveq   #\1,d1
+        jsr     bt_count
+        movem.l (sp)+,d0-d1/a0-a1/a6
+                endc
+             endm
 ; INT_ENTRY: first instructions of a level 1-6 autovector: with INTEN (bit 14) clear in INTENAR, plain RTE, nothing
 ; acknowledged and no schedule check (custom-chips-v34 §3.3).
 INT_ENTRY    macro

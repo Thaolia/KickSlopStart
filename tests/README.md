@@ -91,6 +91,10 @@ KickTagPtr − 16.
 - `tests/contype_probe.sh <out_dir> [rom]`: C:Type of a 400-line file to the boot console of a Workbench 1.3.3
   copy, between two DateStamp stamps printed on SERDAT by `tests/contype_probe.s`; prints `CONTYPE <s>` and keeps
   `end.png`. Compare two ROMs.
+- `tests/bltrp_probe.sh <out_dir> [rom]`: BltBitMapRastPort between two 2-plane CHIP BitMaps, minterm $C0 for every
+  source phase 0-15 against every destination phase, $30/$60/$80/$E0 every third phase, widths 37 and 150; every
+  pixel of the destination and its surroundings checked against the minterm of the source and the destination as
+  filled. Success: `BLTRP OK` (about 17 minutes of host time).
 - `tests/textpix_probe.sh <out_dir> [rom] [reference]`: Text with topaz 8 on a layerless 2-plane BitMap in JAM1,
   JAM2, COMPLEMENT and both INVERSVID modes, four pen pairs, write masks $FF and $01, at every x offset 0-17;
   `tests/textpix_probe.s` prints one checksum per plane per case on SERDAT. With the output of the ROM before a

@@ -2374,9 +2374,25 @@ differs.
     register writes fall between two plane blits (Lines 416 → 420 lines/s).
   - `br_blit` (BltBitMapRastPort, since 2026-11-12): a source whose phase in its word does not exceed the
     destination's goes to the blitter too (B shift = destination phase − source phase, source pointer at its first
-    word); the bits shifted in from the previous word fall under the first-word mask. A larger source phase keeps
-    the CPU rows. Clock's resize copies took the CPU rows before (release to last refresh 48.4 → 44.5 frames).
-    `tests/bltrp_probe.sh`: every pixel of 122 copies, source phases 0-15 against destination phases.
+    word); the bits shifted in from the previous word fall under the first-word mask. Clock's resize copies took
+    the CPU rows before (release to last refresh 48.4 → 44.5 frames). Since the evening of 2026-11-12, any minterm
+    (BLTCON0 = USEB|USEC|USED with LF = minterm & $F0 | $0A: where the A edge mask is 0, D = C), and a larger source
+    phase by a descending blit with B shifted left by source − destination phase, the edge masks swapped and the
+    pointers at the last word. When the source's last pixel lies one word further than the destination's, the blit's
+    right-edge mask stops at the last column the fetched words can fill and the 1-15 columns left (`RB_STRIP`) go
+    back to the CPU engines: `br_blit` rewrites the caller's saved sx/dx/width and reports "not handled", after
+    `db_leave` waited for the blit. `tests/bltrp_probe.sh`: every pixel of 800 copies (minterm $C0 for all 16 × 16
+    phase pairs, $30/$60/$80/$E0 every third phase).
+  - Trace build `BLTTRACE` (never in dev or prod; `BTRACE` in `exec.i`): calls and pixels of each copy path
+    (br_blit entered / phase strip / blitter / br_copy / generic CPU, BltBitMap entered / solid / one-BitMap CPU /
+    distinct CPU) in a table whose address is the long at `$7E0`, allocated on first use.
+  - Menu boxes (`mn_save` / `mn_restore`, `src/intuition/menus.s`): 1.3 swaps a box with the screen
+    (intuition-input-menus §0 point 5), so the windows under it keep their pixels and get no REFRESHWINDOW. Ours are
+    layers, whose deletion cleared and damaged the SIMPLE_REFRESH layers they covered: a Deluxe Paint III picture
+    lost everything under each menu (the real 1.3 keeps it, black-box comparison 2026-11-12). The screen pixels under
+    an item or sub-item box are now saved in CHIP memory before its layer is created and put back after DeleteLayer
+    (all the screen's layers stay locked during the menu), and the damage the deletion gave the layers that had none
+    is dropped (`IB_MENUSAVE`, `IB_SUBSAVE`). Without CHIP memory for the save, the box behaves as before.
   - BCPL getvec (`rt_getvec_raw`, `g_getvec`, `src/dos/bcpl.s`): (n+2)×4 bytes for any n ≥ −1, 0 with pr_Result2
     103 otherwise and on failure (dos-memory §1.1).
   - Trace build `PCPROF` (never in dev or prod): CIA-B timer A at about 1 kHz, `int6_dispatch` stores the

@@ -119,7 +119,9 @@ IB_OWTIME        EQU IB_STRPWIN+4      ; 2 LONGs: time of the last event handled
 IB_MVQUAL        EQU IB_OWTIME+8       ; WORD: ie_Qualifier of the last movement (IB_MOVED), for its MOUSEMOVE
 IB_RCDONE        EQU IB_MVQUAL+2       ; BYTE: Preferences row/column size change applied (once, intuition-prefs §3.3)
 IB_MENUCACHE     EQU IB_RCDONE+2      ; private staged text-menu surfaces, owned by the active menu session
-INTUITIONBASE_SIZE EQU IB_MENUCACHE+4
+IB_MENUSAVE      EQU IB_MENUCACHE+4    ; screen pixels under the item box and the layers that had no damage | 0
+IB_SUBSAVE       EQU IB_MENUSAVE+4     ; the same for the sub-item box | 0
+INTUITIONBASE_SIZE EQU IB_SUBSAVE+4
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -146,6 +148,7 @@ LVO_INSTALLCLIPREGION   EQU -174
 LVO_DELETELAYER         EQU -90
 LVO_LOCKLAYERS          EQU -108
 LVO_UNLOCKLAYERS        EQU -114
+IL_BACK         EQU 4                ; struct Layer: next layer behind (Layer_Info top_layer is its first field)
 IL_RP           EQU 12               ; struct Layer: RastPort
 IL_MINX         EQU 16               ; bounds (screen coordinates)
 IL_MINY         EQU 18

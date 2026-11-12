@@ -537,6 +537,8 @@ it_menubutton:
         clr.l   IB_SUBBOX(a5)
         clr.l   IB_SUBITEM(a5)
         clr.l   IB_SUBCUR(a5)
+        clr.l   IB_MENUSAVE(a5)
+        clr.l   IB_SUBSAVE(a5)
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
         moveq   #0,d0
@@ -1238,7 +1240,7 @@ mn_openbox:
 .ob_allocated:
         move.l  d0,a3
         tst.l   d0
-        beq.s   .ob_nobuf
+        beq.w   .ob_nobuf
         bsr     mn_paintbox
         move.w  IB_BOX+4(a5),IB_DOX(a5)
         move.w  IB_BOX+6(a5),IB_DOY(a5)
@@ -1250,6 +1252,8 @@ mn_openbox:
         move.l  (sp)+,a2
 .ob_ready:
         movem.w (sp)+,d0-d3
+        bsr     mn_save
+        move.l  a0,IB_MENUSAVE(a5)
         move.l  a2,-(sp)
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
@@ -1269,6 +1273,10 @@ mn_openbox:
         bsr     mn_cache_dispose
         bra.s   .ob_ret
 .ob_layerfail:
+        move.l  IB_MENUSAVE(a5),a0
+        clr.l   IB_MENUSAVE(a5)
+        moveq   #0,d0
+        bsr     mn_restore
         bsr     mn_cache_dispose
         tst.l   IB_MENUCACHE(a5)
         beq.s   .ob_ret
@@ -1486,6 +1494,8 @@ mn_opensub:
         ext.l   d1
         ext.l   d2
         ext.l   d3
+        bsr     mn_save
+        move.l  a0,IB_SUBSAVE(a5)
         moveq   #IL_SIMPLE,d4
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
@@ -1495,7 +1505,7 @@ mn_opensub:
         jsr     LVO_CREATEUPFRONTLAYER(a6)
         move.l  (sp)+,a2
         move.l  d0,IB_SUBBOX(a5)
-        beq     .os_ret
+        beq     .os_fail
         move.l  a2,IB_SUBITEM(a5)
         move.w  4*4+2(sp),IB_SUBPNUM(a5)   ; input d6 (low word of the 5th long of the movem)
         clr.l   IB_SUBCUR(a5)
@@ -1517,6 +1527,12 @@ mn_opensub:
 .os_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
+.os_fail:
+        move.l  IB_SUBSAVE(a5),a0
+        clr.l   IB_SUBSAVE(a5)
+        moveq   #0,d0
+        bsr     mn_restore
+        bra.s   .os_ret
 
 ; mn_closesub(a5): removes the sub-item box (if there is one) and repairs what it covered. Preserves
 ; d2-d7/a2-a4.
@@ -1531,6 +1547,10 @@ mn_closesub:
         suba.l  a0,a0
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_DELETELAYER(a6)
+        move.l  IB_SUBSAVE(a5),a0
+        clr.l   IB_SUBSAVE(a5)
+        moveq   #1,d0
+        bsr     mn_restore
         bsr     it_refresh
         move.l  (sp)+,a2
 .cs_ret:
@@ -2137,9 +2157,185 @@ mn_closebox:
         suba.l  a0,a0
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_DELETELAYER(a6)
+        move.l  IB_MENUSAVE(a5),a0
+        clr.l   IB_MENUSAVE(a5)
+        moveq   #1,d0
+        bsr     mn_restore
         bsr     it_refresh
         move.l  (sp)+,a2
 .cb_ret:
+        rts
+
+; 1.3 swaps a menu box with the screen (intuition-input-menus §0 point 5): what was under it comes back when it
+; closes, and no window gets damage or REFRESHWINDOW from it. Our boxes are layers, whose removal clears and damages
+; the SIMPLE_REFRESH layers they covered (a Deluxe Paint III picture lost its pixels under every menu). So the screen
+; pixels under a box are saved before its layer is made and put back after the layer is deleted, all layers of the
+; screen being locked for the whole menu, and the damage the deletion gave the layers that had none is dropped.
+SV_X            EQU bm_SIZEOF        ; WORDs: rectangle on the screen
+SV_Y            EQU SV_X+2
+SV_W            EQU SV_X+4
+SV_H            EQU SV_X+6
+SV_SIZE         EQU SV_X+8           ; LONG: size of the block
+SV_N            EQU SV_X+12          ; WORD: layers without damage when the box opened
+SV_LAYERS       EQU SV_X+16          ; their addresses, then the planes
+MN_BLTBITMAP    EQU -30              ; graphics.library BltBitMap
+MN_WAITBLIT     EQU -228             ; graphics.library WaitBlit
+
+; mn_save(d0-d3.w = x0, y0, x1, y1 of the box on the screen, a4 = screen, a5) -> a0 = block | 0 (no CHIP memory: the
+; box then behaves as before). Preserves the other registers.
+mn_save:
+        movem.l d0-d7/a1-a6,-(sp)
+        move.w  d2,d4
+        sub.w   d0,d4
+        addq.w  #1,d4                ; d4 = width
+        move.w  d3,d5
+        sub.w   d1,d5
+        addq.w  #1,d5                ; d5 = height
+        moveq   #0,d6                ; d6 = layers of the screen
+        move.l  SC_LAYERINFO(a4),a0
+.sv_cnt:
+        move.l  a0,d7
+        beq.s   .sv_cnted
+        addq.w  #1,d6
+        move.l  IL_BACK(a0),a0
+        bra.s   .sv_cnt
+.sv_cnted:
+        move.w  d0,d7
+        and.w   #15,d7
+        add.w   d4,d7
+        add.w   #15,d7
+        lsr.w   #4,d7
+        add.w   d7,d7                ; d7 = bytes per row of the saved planes (even)
+        movem.w d0-d1/d4-d7,-(sp)    ; x0, y0, width, height, layers, bytes per row
+        mulu    d5,d7                ; bytes per plane
+        moveq   #0,d0
+        move.b  SC_BITMAP+bm_Depth(a4),d0
+        mulu    d0,d7
+        moveq   #0,d0
+        move.w  d6,d0
+        lsl.l   #2,d0
+        add.l   d0,d7
+        add.l   #SV_LAYERS,d7        ; d7 = size of the block
+        move.l  d7,d0
+        move.l  #MEMF_CHIP|MEMF_PUBLIC,d1
+        move.l  ($4).w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a3                ; a3 = block
+        tst.l   d0
+        bne.s   .sv_have
+        lea     12(sp),sp
+        bra     .sv_none
+.sv_have:
+        move.l  d7,SV_SIZE(a3)
+        movem.w (sp)+,d0-d1/d4-d7
+        movem.w d0-d1/d4-d5,SV_X(a3)
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a3,a0
+        moveq   #0,d0
+        move.b  SC_BITMAP+bm_Depth(a4),d0
+        move.w  d7,d1
+        lsl.w   #3,d1
+        move.w  d5,d2
+        jsr     LVO_INITBITMAP(a6)
+        lea     SV_LAYERS(a3),a1     ; layers without damage
+        moveq   #0,d0
+        move.l  SC_LAYERINFO(a4),a0
+.sv_lay:
+        cmpa.w  #0,a0
+        beq.s   .sv_layed
+        btst    #ILB_REFRESH,IL_FLAGS+1(a0)
+        bne.s   .sv_lnext
+        move.l  a0,(a1)+
+        addq.w  #1,d0
+.sv_lnext:
+        move.l  IL_BACK(a0),a0
+        bra.s   .sv_lay
+.sv_layed:
+        move.w  d0,SV_N(a3)
+        lsl.w   #2,d6                ; planes after the room for every layer
+        lea     SV_LAYERS(a3,d6.w),a1
+        mulu    d5,d7
+        moveq   #0,d0
+        lea     bm_Planes(a3),a0
+.sv_pl:
+        cmp.b   SC_BITMAP+bm_Depth(a4),d0
+        bhs.s   .sv_copy
+        move.l  a1,(a0)+
+        add.l   d7,a1
+        addq.w  #1,d0
+        bra.s   .sv_pl
+.sv_copy:
+        lea     SC_BITMAP(a4),a0     ; screen -> block, same phase in the word
+        move.l  a3,a1
+        movem.w SV_X(a3),d0-d1/d4-d5
+        move.w  d0,d2
+        and.w   #15,d2
+        moveq   #0,d3
+        move.l  #$C0,d6
+        moveq   #-1,d7
+        suba.l  a2,a2
+        jsr     MN_BLTBITMAP(a6)
+        move.l  a3,a0
+        bra.s   .sv_ret
+.sv_none:
+        suba.l  a0,a0
+.sv_ret:
+        movem.l (sp)+,d0-d7/a1-a6
+        rts
+
+; mn_restore(a0 = block of mn_save | 0, d0.b = 0: only freed, else its pixels put back and the damage of its clean
+; layers dropped first; a4 = screen, a5). Preserves d2-d7/a2-a6.
+mn_restore:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a0,d1
+        beq.s   .sr_ret
+        move.l  a0,a3
+        move.l  IB_GFXBASE(a5),a6
+        tst.b   d0
+        beq.s   .sr_free
+        move.l  a3,a0                ; block -> screen
+        lea     SC_BITMAP(a4),a1
+        movem.w SV_X(a3),d2-d5
+        move.w  d2,d0
+        and.w   #15,d0
+        moveq   #0,d1
+        move.l  #$C0,d6
+        moveq   #-1,d7
+        suba.l  a2,a2
+        jsr     MN_BLTBITMAP(a6)
+        move.l  SC_LAYERINFO(a4),a2
+.sr_lay:
+        cmpa.w  #0,a2
+        beq.s   .sr_free
+        btst    #ILB_REFRESH,IL_FLAGS+1(a2)
+        beq.s   .sr_lnext
+        lea     SV_LAYERS(a3),a0
+        move.w  SV_N(a3),d2
+        bra.s   .sr_find
+.sr_fl:
+        cmpa.l  (a0)+,a2
+        beq.s   .sr_clean
+.sr_find:
+        dbra    d2,.sr_fl
+        bra.s   .sr_lnext
+.sr_clean:
+        move.l  IL_DAMAGE(a2),d0
+        beq.s   .sr_nodmg
+        move.l  d0,a0
+        jsr     LVO_CLEARREGION(a6)
+.sr_nodmg:
+        bclr    #ILB_REFRESH,IL_FLAGS+1(a2)
+.sr_lnext:
+        move.l  IL_BACK(a2),a2
+        bra.s   .sr_lay
+.sr_free:
+        jsr     MN_WAITBLIT(a6)
+        move.l  a3,a1
+        move.l  SV_SIZE(a3),d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+.sr_ret:
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 ; mn_keyshort(a0 = active window, a1 = IntuitionBase, a3 = InputEvent, d0.w = raw code of a key pressed with
