@@ -83,7 +83,25 @@ The contracts of getvec (29), freevec (30), getmem (19) and makeglobvec (13) are
   `bcpl-runtime-v34.md` §8.1 (not re-probed here). The `FreeMem` size passed is the header value. [O]
 - Failure: getvec/getmem return 0 and set **pr_Result2 = 103** (`ERROR_NO_FREE_STORE`); observed through
   every failure path of §5 (`Why` prints "insufficient free store"). [O]
-- **Not probed**: getvec(0), getvec of a negative size, freevec of a block from plain `AllocMem`.
+- **Edge sizes [O]** (probe P2, 2026-11-12, §8): getvec(0) = `AllocMem(8, MEMF_PUBLIC)`, header 8, one usable
+  long; getvec(−1) = `AllocMem(4, MEMF_PUBLIC)`, header **4**, returns the BPTR of block +4 (no usable long; exec
+  rounds the block to 8 bytes, so writing index 0 stays inside it); getvec(−2) and getvec(−100): **no `AllocMem`
+  call**, result 0, pr_Result2 = 103. So the rule is "block size `(n+2)×4` ≤ 0 ⇒ fail with 103 without
+  allocating"; any n ≥ −1 allocates. No alert in any of these cases.
+- **freevec of a plain `AllocMem` block [O]** (P2): freevec reads the long **before** the block as the size.
+  - That long is someone else's memory. When it passes the header check (it was 0 in the probe), freevec calls
+    `FreeMem(block − 4, that long)` without complaint: with 0 nothing is freed and the block leaks; with any other
+    valid-looking value the wrong range is freed [D].
+  - When it fails the check (forced to `$DEADBEEF` in the probe), **no exec `Alert` is raised at once**: the
+    calling process shows the system requester **"Software error - task held / Finish ALL disk activity / Select
+    CANCEL to reset/debug"** with **Retry** and **Cancel** on the Workbench screen; the process stays held.
+    **Retry**: the requester closes and opens again at once (seen twice, the second time after the debugger
+    had set the long back to 0; meanwhile the requester's own allocations had overwritten it) [O]; so Retry does
+    not appear to re-check the header, but this is not settled [?]. **Cancel**: an **address error** (vector 3) in the held process, at a
+    moment when D7 holds `$07000005`; exec then shows **"Software Failure. Press left mouse button to continue."
+    / `Guru Meditation #00000003.<process address>`**, and the left button resets the machine (seen). The number
+    `$07000005` (`AN_FreeVec`) itself never reached the screen in this run (512 KB chip, no slow RAM, ExecBase
+    in chip RAM).
 
 ### 1.2 What happens below getvec when memory is short [O, mechanism D]
 
@@ -467,6 +485,9 @@ Other real-side figures useful to `docs/MEMORY-USAGE.md` [O]:
 | 16 | LVO UnLoadSeg(0) | D0 = 0; longs at 0 and 4 unchanged |
 | 17 | LVO LoadSeg of a missing file | D0 = 0, IoErr 205, free memory unchanged |
 | 18 | LoadSeg, bits 31-30 = 11 in a header size followed by a 2.0 attribute long | D0 = 0, IoErr 103 (not 121: the allocation fails before any further long is read) |
+| 19 | getvec(0) / getvec(−1) | `AllocMem(8, MEMF_PUBLIC)` / `AllocMem(4, MEMF_PUBLIC)`; header 8 / 4; non-zero BPTR |
+| 20 | getvec(−2), getvec(−100) | 0, pr_Result2 103, no `AllocMem` call |
+| 21 | freevec(v) where the long at BADDR(v)−4 has a bit of `$FF000003` set | "Software error - task held" requester (Retry / Cancel), no immediate alert; Cancel → Guru `#00000003.<task>` |
 
 ---
 
@@ -475,12 +496,18 @@ Other real-side figures useful to `docs/MEMORY-USAGE.md` [O]:
 Status 2026-11-11: P5 and P6 done with the debugger on the real ROM (§5.3, §2.3); P1 and P3 done by running the
 implementation-side program `tests/dosmisc_probe.s` unchanged on the real ROM (Amiberry A500 cycle-exact, 512 KB
 chip + 512 KB slow, OFS probe disk built by `tests/dosmisc_probe.sh`'s `xdftool` command, results on the serial
-line, three runs); P4 re-measured (no residue reproduced); P2 still open.
+line, three runs); P4 re-measured (no residue reproduced); P2 done 2026-11-12 with the debugger (§1.1).
 
 - **P1 — UnLoadSeg(0) and LoadSeg(missing) — done [O]**, §3.5: UnLoadSeg(0) returns D0 = 0 and leaves the
   longs at 0 and 4 unchanged; LoadSeg of a missing file returns 0 with IoErr 205 and no memory change.
-- **P2 — getvec edge sizes**: through a BCPL command stub's GV (global 29), call getvec(0), getvec(−1) and
-  freevec of an `AllocMem` block; report the AllocMem size seen and whether an alert follows.
+- **P2 — getvec edge sizes — done [O]**, §1.1. Method: real ROM under Amiberry (A500 cycle-exact, 512 KB chip,
+  no slow RAM), a copy of the Workbench 1.3.3 disk whose startup-sequence only echoes a line, `prompt` typed at
+  the Initial CLI. Hardware breakpoint at the entry of global 29 read from the CLI's GV when the command starts;
+  the command stub's own getvec call (n = 199, its private GV) was taken over: D1 rewritten to 0, −1, −2, −100 in
+  turn, a breakpoint on the exec `AllocMem` vector's target and on the BCPL return address (frame −8) gave the
+  size, flags and result, then the call was re-issued with the original 199 so the command ran normally. For
+  freevec, the stub's final freevec of that GV was given the BPTR of the block start (block − 4 bytes is then
+  read as the header), once with the preceding long left as found (0) and once with it forced to `$DEADBEEF`.
 - **P3 — 2.0-style memory attribute long — done [O]**, §3.3: 103 as it stands; with the flag-8 request made to
   succeed by the debugger (breakpoint on the exec `AllocMem` vector in RAM, flags 8 rewritten to `MEMF_CHIP`
   for that one call), 121: 1.3 does not consume the attribute long.

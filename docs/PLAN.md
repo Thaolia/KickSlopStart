@@ -1658,6 +1658,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
+  working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
+  (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow
+  RAM, SIZEVERIFY, DMRequest observed on 1.3 and matching). PC-sampling trace build `PCPROF` for the Clock and Lines
+  profiles.
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room

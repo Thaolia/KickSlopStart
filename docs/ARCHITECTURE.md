@@ -2311,6 +2311,19 @@ differs.
     node without a task whose dn_Startup is a FileSysStartupMsg (above 255; SER:, PAR:, CON: … hold 0..2) gets its
     handler through `bcpl_starthandler`, under DOS_HSEM like `dos_resolve` (rom-filesystem §1.4).
   - VSprite VSTART (`src/graphics/gels.s`) = clipped top + View DyOffset, no ViewPort DyOffset, no LACE halving.
+  **Menu flags at activation, MrgCop without CopList, async line blits, getvec, PCPROF (2026-11-12)**:
+  REMAINING-WORK C3, C4, A7, D8.
+  - `it_setactive` (`src/intuition/screens.s`) calls `mn_actclr` (`menus.s`) before setting WINDOWACTIVE: the new
+    active window's menus lose MIDRAWN, their items MENUTOGGLED/HIGHITEM/ISDRAWN, their sub-items
+    MENUTOGGLED/HIGHITEM, as when a menu opens.
+  - `gfx_MrgCop` returns before touching the View's lists when it collected no stream.
+  - `lb_core` (`src/graphics/draw.s`) ends with DisownBlitter without waiting for the last plane; `ln_draw`
+    waits for the blitter before its CPU walk, the other CPU engines already did (`db_wait`).
+  - BCPL getvec (`rt_getvec_raw`, `g_getvec`, `src/dos/bcpl.s`): (n+2)×4 bytes for any n ≥ −1, 0 with pr_Result2
+    103 otherwise and on failure (dos-memory §1.1).
+  - Trace build `PCPROF` (never in dev or prod): CIA-B timer A at about 1 kHz, `int6_dispatch` stores the
+    interrupted PC into a 16K-entry ring whose pointer is at `$7E0` (index word at `$7E4`); dump it with gdb and map
+    it with the vlink map (`make BUILD=build/prof VASMDEF="-DPROD=1 -DPCPROF=1" KICK_ROM=build/kick13-prof.rom kick`).
   **Merged PRs #37, #36, #38 (2026-11-11, warpdesign)**: audits in `docs/audit/pr-3[678].md`.
   - #37 (`src/exec/tasks.s`, `boot.s`): AddTask builds the initial frame below a non-zero `tc_SPReg` (arguments
     placed above it survive; 0 keeps the `tc_SPUpper` path of our own callers), and the Initial CLI runs at

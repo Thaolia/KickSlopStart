@@ -86,6 +86,7 @@ LVO_WAITBLIT    EQU -228             ; graphics.library public vector
                 xref    it_menumove
                 xref    mn_lbutton
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
+                xref    mn_actclr            ; menus.s: menu working flags cleared at activation
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
                 xref    mn_defcheck          ; menus.s: internal menu check mark
                 xref    fd_init              ; dos/feeder.s: keyboard feeder run by the input task
@@ -2340,6 +2341,7 @@ sa_common:
 .sa_new:
         move.l  a3,d0
         beq.s   .sa_ret
+        bsr     mn_actclr            ; §1.11 step 3: working flags of its menus cleared
         or.l    #WINDOWACTIVE,WD_FLAGS(a3)
         bsr     wn_titlebar
         move.l  #ACTIVEWINDOW,d0

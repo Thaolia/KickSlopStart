@@ -428,6 +428,20 @@ Uses:
 - **REQVERIFY** ($800): Code 0, **only** before the opening of a DMRequest (§3.12); only 4 prevents
   the opening. Request() sends no REQVERIFY. [O]
 
+Black-box timing on the real ROM (2026-11-12, Amiberry A500 cycle-exact, Workbench 1.2 Clock, which polls its
+IDCMP port with `GetMsg` after each 10-tick `Delay` and replies every message at once; frames are PAL frames of
+the emulator, F0 = the frame in which the button press was injected, emulation paused) [O]:
+- **SIZEVERIFY**: press on the size gadget at F0 → SIZEVERIFY (Code 0) put to the window's port at F0+1 →
+  Clock's next poll gets it at F0+8 and replies at once → the drag starts (layers locked, ghost frame) at F0+9,
+  about 20 lines after the reply. The gap is the program's polling latency, not a fixed intuition delay.
+- **Slow reply**: with Clock's `Delay` stretched to 10 s by the debugger just before the press, the pointer
+  stayed **frozen** on the gadget for the whole wait although the mouse was moved and the button released
+  meanwhile (screenshots every 1-3 s). Nothing is lost: when Clock replied, the queued move and release were
+  processed in one go and the window was resized to the final pointer position (+60 pixels wide as moved), then
+  redrawn by Clock (the NEWSIZE / REFRESHWINDOW pair was not traced in this run). There is no timeout.
+- **REQVERIFY** behaves the same (pending message seen in the port while the program was delayed 30 s; the
+  requester opened only after the reply) — see §3.12.
+
 ### 2.6 Details per feature [O]
 
 - **No reply**: an application that does not read its port prevents nothing (except verifications, which
@@ -689,6 +703,24 @@ mouse position; state 2. Then, for each event:
   the current event is already treated as a menu event); button released ⇒ **MENUPICK
   MENUNULL** and bar removed.
 
+Black-box check on the real ROM (2026-11-12) [O]. No program on the test disks calls `SetDMRequest`, so the
+debugger gave the Workbench 1.2 Clock window a DMRequest directly: a 100 × 40 Requester (not POINTREL, at
+(20,20), BackFill 1, one invisible BOOLGADGET|REQGADGET with RELVERIFY|ENDGADGET) written into unused RAM,
+Window.DMRequest pointed at it, REQSET|REQVERIFY|REQCLEAR added to Window.IDCMPFlags (the port already existed).
+- **Right double-click** inside the window (press 60 ms, 100 ms gap, press 60 ms, pointer still): one
+  **REQVERIFY** (Code 0) is queued; the requester is **not** shown until the program replies (Clock was held 30 s
+  in `Delay`: the message sat in the port the whole time). After the reply: **REQSET** (Code 1) put to the port
+  about 2.6 frames later; the requester is drawn at (20,20) of the window; `FirstRequest` = the DMRequest,
+  `ReqCount` = 1; Clock keeps drawing around it.
+- **Ending it**: left click on the ENDGADGET → **REQCLEAR** (Code 0) at the release, then **REFRESHWINDOW**
+  2 frames later (SIMPLE_REFRESH window: the area under the requester is damaged); `FirstRequest` = 0,
+  `ReqCount` = 0; Window.DMRequest is **kept** (a later double-click can open it again).
+- **Single right click** (no menu strip on the window): one **MENUPICK** with Code **MENUNULL ($FFFF)**, no
+  REQVERIFY. **Two right clicks 1.5 s apart**: two MENUPICK MENUNULL, no requester (outside the double-click
+  time).
+- Not probed: the ±10 / ±5 pixel position window, POINTREL placement, a REQVERIFY reply with Code 4, and the
+  screen title bar during state 2 (the Clock window was under a CLI window covering the bar).
+
 ### 3.13 What is frozen during a menu [O unless stated]
 
 - **All the layers of the menu's screen are locked** (LockLayers): any task that draws in
@@ -828,10 +860,12 @@ IDLE
 
 ## 6. Open points
 
-1. **DMRequest** (§3.12): described from the ROM only; neither the double-click, nor REQVERIFY, nor the
-   POINTREL placement have been probed.
-2. **SIZEVERIFY** and dragging/resizing (state 12): ROM only; the exact duration during which
-   the layers stay locked during a drag is not measured.
+1. **DMRequest** (§3.12): double-click, REQVERIFY → REQSET, REQCLEAR at the end gadget and MENUNULL on a single
+   or slow double click observed on the real ROM (2026-11-12); the POINTREL placement, the position window and
+   a REQVERIFY answered with Code 4 are still not probed.
+2. **SIZEVERIFY** and dragging/resizing (state 12): message order, timing and the slow-reply case observed on the
+   real ROM (§2.5, 2026-11-12); the exact duration during which the layers stay locked during a drag is not
+   measured.
 3. **NEWSIZE sent to the active window** on a SizeWindow on another window (§2.3): read in the
    ROM, not probed (the probe did not call SizeWindow).
 4. **Blocking of other tasks** during a menu (LockLayers, state lock): deduced from the semantics

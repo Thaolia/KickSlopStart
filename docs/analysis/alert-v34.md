@@ -68,6 +68,10 @@
 - Consequence: DisplayAlert **can only complete if the VBlank interrupt is served** (WaitTOF). The
   first `Enable()` executed by a called function (exec `Wait`, etc.) re-enables the master since
   `IDNestCnt` remained negative. See §5 point 6 (blocking observed under FS-UAE) and "Open points". **[D]**
+- Observed on the real ROM under Amiberry (A500 cycle-exact, 512 KB chip, no slow RAM, 2026-11-12): while the
+  alert is on screen the INTENA master is **on again** (INTENAR `$606C`), and the CPU waits for the button in
+  supervisor mode with interrupt mask 3 (so VBlank and lower levels are held off during the polling; level 4-6
+  sources are not). After the return, the caller runs in user mode with the master still on. **[S]**
 - DMA: only **sprite** DMA is turned off while waiting for the click (§2.6); bitplanes, copper, blitter,
   disk and audio continue. **[O]**
 
@@ -248,8 +252,9 @@ Built on the stack in the §2.1 format then passed to `DisplayAlert(0, text, 40)
    of the system. **[D]**
 5. **Screen**: the `$111` background and the red are rendered as is; the empty line below the alert and the
    separation line of the shifted screens are visible. **[D]**
-6. **Immediate display of a recoverable `Alert()` without slow RAM**: blocked under FS-UAE
-   (`coldstart-hardware-v34.md` §10.7); see "Open points".
+6. **Immediate display of a recoverable `Alert()` without slow RAM**: **works** on the real ROM under
+   cycle-exact Amiberry (§6, 2026-11-12); the freeze seen under FS-UAE (`coldstart-hardware-v34.md` §10.7) is an
+   emulator artefact. **[S]**
 
 ---
 
@@ -263,6 +268,17 @@ Built on the stack in the §2.1 format then passed to `DisplayAlert(0, text, 40)
   - MODE 0: 320×200×1 screen opened, DisplayAlert(0, …, 40) + left click, then DisplayAlert($80000000, …,
     60) + right click.
   - MODE 1: height 7000 (impossible raster) in recoverable. MODE 2: same in dead-end.
+- `tests/coldhw_probe.s` MODE 2 (recoverable `Alert($35000001)` with A5 → `$12345678`, from the boot block,
+  then "RET" on serial), assembled unchanged and booted on the real ROM under **Amiberry A500 cycle-exact, 512 KB
+  chip, no slow RAM** (ExecBase in chip RAM) on 2026-11-12, four runs **[S]**:
+  - Screen: the standard alert frame at the top of the display, red text on the dark `$111` background,
+    **"Recoverable Alert.  Press left mouse button to continue."** and **"Guru Meditation #35000001.12345678"**;
+    the frame blinks; the rest of the display is dark (no screen open yet at boot-block time).
+  - Left button (press and release) → `Alert()` returns: **D0 = 1**, **D7 = `$35000000`** (low word cleared), user
+    mode, INTENA master on; the boot block goes on and prints `RET` with `LastAlert[0]` = `$FFFFFFFF` and `$0` = 0;
+    the alert is not shown again. Right button → returns **D0 = 0** the same way, **only after the button is
+    released** (§2.6 phase 3).
+  - So the system continues normally; no reset, no Guru at the next boot.
 - Results (PAL A500, 512 KB chip, without slow RAM): width 640; returns 1 (left) / 0 (right);
   frame toggle every 45-48 frames; colours `$111`/`$F20`; screens shifted by 41 lines and
   restored in recoverable, lost in dead-end; impossible height → 0 (recoverable) or reset + Guru
@@ -272,12 +288,9 @@ Built on the stack in the §2.1 format then passed to `DisplayAlert(0, text, 40)
 
 ## Open points
 
-- **Immediate display of a recoverable `Alert()` on an A500 without slow RAM**: the code leads to the display
-  then to the return, but FS-UAE stays blocked (`coldstart-hardware-v34.md` §10.7). DisplayAlert depends on
-  `WaitTOF` (VBlank) whereas Alert has turned off the INTENA master without changing `IDNestCnt`; it has not been established
-  whether the first internal `Enable()` re-enables it in time on real hardware (real blocking possible) or whether the
-  blocking is an emulator artefact. To be settled under cycle-exact WinUAE (`tests/coldhw_probe.sh` MODE 2
-  adapted) or on a real machine.
+- **Immediate display of a recoverable `Alert()` on an A500 without slow RAM** — **settled 2026-11-12**: under
+  cycle-exact Amiberry the alert is displayed, the master is re-enabled during the display, and `Alert()` returns
+  the button (§6). The FS-UAE freeze was an emulator artefact. Not yet seen on a physical A500.
 - **intuition's internal lock in dead-end**: the setup does not take it, but the restoration always
   takes it; if the faulting task held it, a dead-end DisplayAlert called directly would block
   after the click. Not probed (without effect for exec, which never passes a dead-end to DisplayAlert).

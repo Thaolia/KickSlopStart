@@ -395,6 +395,9 @@ Other facts: `VBlankFrequency` is set by graphics.library (50/60 depending on PA
    within 60 s) with the INTENA master off and the CPU looping in the entry point of the
    level 6 interrupts during alert.hook's delay. On real hardware Paula does not raise
    an IPL with INTEN = 0, so this blocking is probably an emulator artefact. **[S]** (interpretation **[D]**)
+   **Confirmed artefact (2026-11-12)**: the same probe (MODE 2, 512 KB chip, no slow RAM) under Amiberry A500
+   cycle-exact shows "Recoverable Alert" / `#35000001.12345678`, and the left button returns to the caller with
+   D0 = 1 (right button: D0 = 0); the boot block goes on (`alert-v34.md` §6). **[S]**
 8. **Keyboard reset**: FS-UAE generally triggers a direct reset without going through the `$78`/KCLK sequence;
    on a real A500, provide for the reset handshake of §7.1. **[D]**
 9. **LED**: invisible under the emulator except for an indicator; on a real machine it serves as a diagnostic

@@ -31,6 +31,7 @@
                 include "graphics.i"
 
                 xdef    intuition_SetMenuStrip
+                xdef    mn_actclr
                 xdef    it_rpsave
                 xdef    it_rprest
                 xdef    intuition_ClearMenuStrip
@@ -1833,6 +1834,21 @@ mn_paintbox:
         move.w  d0,d2
         move.w  d7,d3
         jmp     LVO_RECTFILL(a6)
+
+; mn_actclr(a3 = window being activated): the working flags of its whole menu strip cleared as when a menu opens
+; (intuition-input-menus §1.11 step 3, §3.8). Preserves all registers.
+mn_actclr:
+        movem.l d0-d2/a0,-(sp)
+        move.l  WD_MENUSTRIP(a3),d0
+        beq.s   .ac_ret
+        move.l  d0,a0
+        move.w  #MENUTOGGLED|HIGHITEM|ISDRAWN,d0
+        move.w  #MENUTOGGLED|HIGHITEM,d1
+        move.w  #MIDRAWN,d2
+        bsr.s   mn_clrflags
+.ac_ret:
+        movem.l (sp)+,d0-d2/a0
+        rts
 
 ; mn_clrflags(a0 = first Menu, d0.w = flags cleared in the items, d1.w = in the sub-items, d2.w = in the menus).
 ; Preserves all registers.

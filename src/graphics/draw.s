@@ -1617,8 +1617,8 @@ lb_core:
         bra     .lb_plane
 .lb_done:
         addq.l  #4,sp                ; depth counter, pixels
-        bsr     db_leave
-        moveq   #1,d0
+        jsr     gfx_DisownBlitter    ; the last plane may still be drawing, as after a V34 Draw: the CPU engines and
+        moveq   #1,d0                ; the next blitter user wait for it first (db_wait)
         rts
 .lc_no:
         addq.l  #2,sp                ; pixels
@@ -1813,6 +1813,7 @@ ln_iny:
 ; the line walked from its start; pixels inside are plotted, and the walk stops once it has left the ClipRect again.
 ; Preserves a3-a5.
 ln_draw:
+        bsr     db_wait              ; a piece just blitted (lb_core) may share edge words with this one
         move.l  a3,-(sp)
         move.w  DC_BX(a5),d2
         move.w  DC_BY(a5),d3
@@ -2550,6 +2551,9 @@ cl_go:
 ; graphics-line-v34). Pattern counter: decreased by the major length M by the unclipped engine (which also clears
 ; FRST_DOT), and once more with a layer, as 1.3 does (§7.3).
 gfx_Draw:
+                ifd     PCPROF
+        addq.l  #1,PROF_DRAWS        ; trace build only: Draw calls, read back with the debugger
+                endc
         cmp.w   rp_cp_y(a1),d1     ; solid horizontal spans use the cheaper row-fill engine
         beq.s   .dw_generic
         bsr     dr_directdraw

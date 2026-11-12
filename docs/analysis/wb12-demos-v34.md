@@ -54,6 +54,9 @@ Read from intuition's structures while Clock runs (started from the CLI):
 | Layer | SIMPLE (flags `$0081` = SIMPLE + LAYERREFRESH at that instant), no SuperBitMap |
 
 Clock uses `SIZEVERIFY`: intuition waits for Clock to reply before the size drag starts (the drag worked normally).
+Traced 2026-11-12 (`intuition-input-menus-v34.md` §2.5): SIZEVERIFY is put to the port one frame after the press,
+Clock gets it at its next poll (7 frames later in the run) and replies at once, the drag starts about 20 lines
+after the reply; while Clock does not reply the pointer is frozen.
 
 ### 1.2 Library calls Clock makes [O]
 
@@ -271,7 +274,11 @@ Results (two runs, F0 = frame in which the button-up was delivered):
    (the trace shows two refresh passes per resize but not which message triggers each) [?]. A trace of the Class
    field of the messages Clock replies (breakpoint on Clock's `ReplyMsg` stub, reading the IntuiMessage) would
    settle it. **Answered 2026-11-11 for NEWSIZE / REFRESHWINDOW (§3.2)**: NEWSIZE first, one refresh pass, reply;
-   then REFRESHWINDOW, one pass, reply. The SIZEVERIFY exchange at the start of the drag was not traced.
+   then REFRESHWINDOW, one pass, reply. **SIZEVERIFY traced 2026-11-12**: press → SIZEVERIFY (Code 0) put to
+   Clock's port at the next frame → Clock's next `GetMsg` poll (up to ~10 frames later) → immediate `ReplyMsg` →
+   drag start (layers locked) about 20 lines later (`intuition-input-menus-v34.md` §2.5). Note for repeating the
+   method: Clock's load addresses change with the boot (another startup-sequence, slow RAM); find its exec stubs
+   by searching its hunks for the `GetMsg`/`ReplyMsg` library calls rather than reusing the offsets of §3.2.
 2. Lines speed was measured with the window inactive and unscrolled; the rate with a larger window (more on-screen
    pixels) was not measured [?].
 

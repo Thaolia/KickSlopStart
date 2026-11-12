@@ -530,8 +530,8 @@ string), **APTR** (byte address), **taskid** = address of a process's MsgPort (p
 | 22 | $058 | sendio(iob, pkt) | links iob↔pkt (ln_Name = pkt, pkt!0 = iob) then SendIO | | O | |
 | 23–27 | $05C–$06C | createco, deleteco, callco, cowait, resumeco | coroutines (not used) | | D | — |
 | 28 | $070 | globin(seg) | §3.2 → −1 / 0 | 111 | O | stub |
-| 29 | $074 | getvec(n) | vector of n+1 longs (indices 0..n), **not cleared**, MEMF_PUBLIC; hidden header at −4 = total size in bytes; returns BPTR, 0 on failure | 103 | O | P R M H stub |
-| 30 | $078 | freevec(v) | v=0: nothing; invalid header (bits $FF000003) → alert $07000005 | | O | P R S M H stub |
+| 29 | $074 | getvec(n) | vector of n+1 longs (indices 0..n), **not cleared**, MEMF_PUBLIC; hidden header at −4 = total size in bytes; returns BPTR, 0 on failure; n ≤ −2 → 0 without AllocMem, n = −1 → 4-byte block (`dos-memory-v34.md` §1.1) | 103 | O | P R M H stub |
+| 30 | $078 | freevec(v) | v=0: nothing; invalid header (bits $FF000003) → "Software error - task held" requester (Retry shows it again; Cancel → address-error Guru `#00000003.<task>`, D7 = $07000005 at the fault), observed 2026-11-12 (`dos-memory-v34.md` §1.1) | | O | P R S M H stub |
 | 31 | $07C | opendevice(iob, name, unit, flags) | reply port = MsgPort of the process; → −1 success / 0 | | O | |
 | 32 | $080 | closedevice(iob) | | | O | |
 | 33 | $084 | createproc(segarray, stack, pri, name, gv) | stack in **longs**; BSTR name; gv BPTR (5th arg); process + stack in one block; inherits ConsoleTask/FileSystemTask/WindowPtr; startup §2.4; → **taskid** (0 on failure) | 103 | O | R (NewCLI) |

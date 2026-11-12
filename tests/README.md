@@ -63,7 +63,8 @@ garbage) plays the signal/trap vectors of `exec-partial-lvos-v34.md` §4.6, then
 sentinel, FindTask of the probe's own name, MakeLibrary with five vectors, the InitStruct vector of §6.1, InitBitMap
 on a `$AA`-filled BitMap, AllocRemember/FreeRemember(FALSE) and graphicsPrivate1; then the Z flag right after a
 successful and a failed OpenLibrary (`EXP OLZ`, issue #35) and a server added to the EXTER chain and called by a
-software INT6 (`EXP INT6`: two servers, ciab.resource's and ours). Every `EXP` line is compared with the spec's
+software INT6 (`EXP INT6`: two servers, ciab.resource's and ours), and the menu working flags of a window cleared
+when it is activated again (`EXP MACT`). Every `EXP` line is compared with the spec's
 values. Success: `EXPLVO OK`.
 
 `tests/dosmisc_probe.sh <out_dir> [rom]` runs `tests/dosmisc_probe.s` from a disk that mounts NEWCON: (C:Run, C:Mount,

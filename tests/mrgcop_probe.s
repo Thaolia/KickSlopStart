@@ -6,7 +6,8 @@
 ; up to the end WAIT $FFFF,$FFFE; then "MC END". tests/mrgcop_check.py compares them with §5.
 ; A case whose View Modes word has bit 15 set is shown (LoadView) before its list is printed, after SetRGB4(vp, 1, 0,
 ; 15, 15) and ScrollVPort with RxOffset 3: both patch the displayed list in place (§7.3); the previous View comes back
-; afterwards.
+; afterwards. Last, "MC KEEP <1|0>": a View whose only ViewPort is VP_HIDE (no CopList to merge) keeps the
+; long-frame list it had, pointer and contents (§5.1).
 ; Run by tests/mrgcop_probe.sh as a CLI command from a startup-sequence.
 
 SERDAT   EQU $DFF030
@@ -160,6 +161,34 @@ start:
         addq.w  #1,d7
         bra     .case
 .end:
+        lea     view(pc),a4          ; no CopList: MrgCop leaves the View's lists alone
+        lea     vp0(pc),a0
+        move.l  a0,v_ViewPort(a4)
+        clr.l   vp_Next(a0)
+        move.w  #$2000,vp_Modes(a0)  ; VP_HIDE
+        clr.w   v_Modes(a4)
+        lea     keepblk(pc),a1
+        move.l  a1,v_LOFCprList(a4)
+        clr.l   v_SHFCprList(a4)
+        move.l  a6,-(sp)
+        move.l  a5,a6
+        move.l  a4,a1
+        jsr     LVO_MrgCop(a6)
+        move.l  (sp)+,a6
+        moveq   #0,d2
+        lea     keepblk(pc),a1
+        cmpa.l  v_LOFCprList(a4),a1
+        bne.s   .kp
+        moveq   #4-1,d0
+.kc:    cmp.l   #$5A5A5A5A,(a1)+
+        dbne    d0,.kc
+        bne.s   .kp
+        moveq   #1,d2
+.kp:    lea     m_keep(pc),a0
+        bsr     puts
+        move.l  d2,d0
+        bsr     phex8
+        bsr     nl
         lea     m_end(pc),a0
         bsr     puts
         move.l  a5,a1
@@ -360,7 +389,10 @@ ctab:   dc.w    $000,$F00,$0F0,$FF0
 gfxname:  dc.b  "graphics.library",0
 m_begin:  dc.b  "MC BEGIN",10,0
 m_mc:     dc.b  "MC",0
+m_keep:   dc.b  "MC KEEP",0
 m_end:    dc.b  "MC END",10,0
+                even
+keepblk:  dc.l  $5A5A5A5A,$5A5A5A5A,$5A5A5A5A,$5A5A5A5A
                 even
 
                 cnop    0,4

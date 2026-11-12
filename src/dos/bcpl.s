@@ -664,9 +664,8 @@ rt_globin:
 rt_getvec_raw:
         movem.l d1/a0-a1,-(sp)
         moveq   #0,d0
-        tst.l   d1
-        bmi     .gv_ret
-        addq.l  #2,d1                ; n+1 longs + header
+        addq.l  #2,d1                ; n+1 longs + header: (n+2)*4 bytes, nothing allocated when that is <= 0
+        ble     .gv_ret              ; (getvec(-1) still allocates its 4-byte header, dos-memory §1.1)
         lsl.l   #2,d1
         move.l  d1,-(sp)
         move.l  d1,d0
@@ -1056,6 +1055,10 @@ g_getvec:
         move.l  ($4).w,a6
         bsr     rt_getvec_raw
         move.l  d0,d1
+        bne.s   .gg_ret
+        moveq   #ERROR_NO_FREE_STORE,d0  ; 1.3: 0 with pr_Result2 103, also for a size <= 0
+        bsr     rt_setr2
+.gg_ret:
         BLEAVE
 
 ; 30 freevec(v): frees a getvec vector (v = 0: nothing).

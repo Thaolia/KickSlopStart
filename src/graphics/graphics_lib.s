@@ -1431,6 +1431,8 @@ gfx_MrgCop:
         move.l  vp_Next(a0),a0
         bra.s   .mc_cnt
 .mc_sized:
+        tst.w   d4                   ; no CopList at all: the existing lists are left alone (graphics-display §5.1)
+        beq     .mc_ret
         move.l  v_LOFCprList(a2),d0
         beq.s   .mc_alloc
         move.l  d0,a3

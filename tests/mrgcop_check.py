@@ -11,10 +11,16 @@ import sys
 END = (0xFFFF, 0xFFFE)
 
 
+KEEP = []
+
+
 def parse(path):
     lists, addrs = {}, {}
     for line in open(path):
         f = line.split()
+        if len(f) == 3 and f[:2] == ["MC", "KEEP"]:
+            KEEP.append(f[2])
+            continue
         if len(f) < 3 or f[0] != "MC" or f[1] in ("BEGIN", "END"):
             continue
         n, kind, words = int(f[1], 16), f[2], [int(w, 16) for w in f[3:]]
@@ -138,7 +144,9 @@ def main():
     for n in range(1, 10):
         print("MC %d: %s" % (n, " | ".join(("%04X" % w if w is not None else "-") + " " +
                                           " ".join("%04X:%04X" % m for m in ms) for w, ms in g[n])))
-    print("\n".join(FAIL) if FAIL else "OK: 9 cases equal to graphics-display §5.2-5.4 and §7.3")
+    if KEEP != ["00000001"]:
+        FAIL.append("MC KEEP %s: a View with no CopList must keep its lists (§5.1)" % KEEP)
+    print("\n".join(FAIL) if FAIL else "OK: 9 cases equal to graphics-display §5.2-5.4 and §7.3, lists kept without CopList")
     return 1 if FAIL else 0
 
 

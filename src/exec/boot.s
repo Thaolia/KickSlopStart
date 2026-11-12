@@ -3466,6 +3466,17 @@ d2_done:
         move.l  #cia_server,IS_CODE(a1)
         moveq   #INTB_EXTER,d0
         jsr     LVO_ADDINTSERVER(a6)
+                ifd     PCPROF
+        move.l  #$10000,d0           ; trace build only: PC sampling at about 1 kHz by CIA-B timer A (int6_dispatch)
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,PROF_BUF
+        clr.w   PROF_IDX
+        move.b  #$C5,$BFD400         ; latch 709 E-clock ticks
+        move.b  #$02,$BFD500
+        move.b  #$11,$BFDE00         ; continuous, load, start
+        move.b  #$81,$BFDD00         ; ICR: timer A enabled
+                endc
                 ifeq    PROD            ; dev ROM: level 6 source of the M7d/M7e proofs (the production ROM
         move.l  a6,-(sp)             ; programs no CIA-B timer, like 1.3: games take them)
         move.l  a2,a6                ; AddICRVector(ciab, bit0 = timer A, &m7_int6_int)

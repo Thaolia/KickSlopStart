@@ -496,6 +496,9 @@ TD_DMABUF    EQU $00000754 ; trackdisk: long — CHIP buffer of the disk DMA (TD
 TD_BASEP     EQU $00000750 ; trackdisk: long — device base (semaphore and units for td_disk_present / slot flushes)
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
+PROF_BUF     EQU $000007E0 ; PCPROF trace build only: long, the PC sample ring (0 = off); word index at $7E4
+PROF_IDX     EQU $000007E4
+PROF_DRAWS   EQU $000007E8 ; PCPROF: long, Draw calls
 CPU_FMT      EQU $000007CC ; byte: $FF on a 68010 or later, whose exception frames carry a format word (boot.s)
 FEED_KTASK   EQU $000007D0 ; long: intuition input task (keyboard feeder), signalled by the keyboard interrupt, 0 = none
 FEED_KMASK   EQU $000007D4 ; long: its keyboard signal mask

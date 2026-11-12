@@ -665,6 +665,18 @@ int6_dispatch:
         INT_ENTRY
         FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 6) — highest level used, never preempted
+                ifd     PCPROF
+        move.l  PROF_BUF,d0          ; trace build only: the interrupted PC into a 16K-entry ring (CIA-B timer A)
+        beq.s   .pf_no
+        move.l  d0,a0
+        moveq   #0,d0
+        move.w  PROF_IDX,d0
+        and.w   #$3FFF,d0
+        lsl.l   #2,d0
+        move.l  62(sp),0(a0,d0.l)
+        addq.w  #1,PROF_IDX
+.pf_no:
+                endc
         move.l  ($4).w,a6
         move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6 BEFORE the chain (same reason as PORTS)
         moveq   #INTB_EXTER,d0

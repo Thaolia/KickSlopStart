@@ -68,8 +68,9 @@ held" qualifier bits of mouse events are not set yet.
   to the last EndRefresh (one refresh pass per message), a per-second tick 1.94-2.10 frames at 300 × 200. Ours,
   same method and production ROM (2026-11-11): NEWSIZE pass 20.0 frames (1.3: 15.1), REFRESHWINDOW pass 12.7
   (10.4), release to last EndRefresh 48.8 (38; the first poll came 16 frames after the release, 1.3: 11.7). The
-  passes are 1.2-1.3 times slower; Clock's face is AreaMove/AreaDraw/AreaEnd plus Draw, so the area fill is the
-  next place to look.
+  passes are 1.2-1.3 times slower. A PC-sampling profile of the two passes (trace build `PCPROF`, 2026-11-12)
+  shows no single hot spot: Clock's own code about 18 % of the busy time, the line path (Draw set-up, ClipRect
+  walk, blitter set-up) about 25 %, waits for the blitter about 7 %, the rest spread over area fill, text and exec.
 
 ### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
@@ -91,7 +92,11 @@ held" qualifier bits of mouse events are not set yet.
 - Lines draws 431 lines per second on 1.3. Each line is one Move + one Draw, solid, JAM2; 81 % lie inside one
   SuperClipRect, 19 % are split into two or three pieces (wb12-demos §3.1, 2026-11-11). Since 2026-11-10 each
   clipped piece goes to the blitter (`ln_cblit`), pixel-identical to the CPU walk. Ours went from 93 to 274 lines per
-  emulated second. Left: the remaining factor of 1.6, per-call cost not located yet.
+  emulated second. A profile (2026-11-12) showed 36 % of the time waiting for the blitter at the end of every
+  blitted line: `lb_core` now hands the blitter back while the last plane is still drawing, as a V34 Draw does, and
+  the next user waits first (`ln_draw` included). Lines: +19 % on the same trace build (229 → 273 Draw calls per
+  emulated second with the sampling interrupt running), pixels unchanged (`tests/lineclip_probe.sh`). Left: the
+  rest of the gap to 431, spread over per-call set-up (semaphore, Permit, TypeOfMem of the planes, ClipRect walk).
 - Lines is GIMMEZEROZERO | SUPER_BITMAP, so it cannot show the frame-copy case: only programs with non-GZZ
   SUPER_BITMAP windows meet our missing frame copy (intuition-gzz §2.5).
 
@@ -183,8 +188,9 @@ trackdisk initialises and kept, for reads and for track writes, so a game that f
 ### C3. Menus — done 2026-11-09
 
 NextSelect chain, MENUTOGGLED, MutualExclude, drag-selection with the left button, HIGHBOX and HIGHIMAGE
-(intuition-input-menus §3.6-§3.9), checked with `tests/menucat.s` against the §5 vectors (steps 3-5). Left: the
-working flags are not reset when a window is activated (only when a menu opens).
+(intuition-input-menus §3.6-§3.9), checked with `tests/menucat.s` against the §5 vectors (steps 3-5). Since
+2026-11-12 the working flags of a window's menu strip are also reset when the window is activated (§1.11 step 3,
+`mn_actclr`; `tests/explvo_probe.sh` "EXP MACT 00000000 00000000", the previous ROM kept $0100 / $7000).
 
 ### C4. Display — done 2026-11-10
 
@@ -194,8 +200,9 @@ working flags are not reset when a window is activated (only when a menu opens).
   rule, the line-255 crossing and repeated WAITs dropped (`tests/mrgcop_probe.sh`, nine cases of §5.2-5.4 and §7.3).
 - The insert-disk picture shows its middle 216 lines on NTSC, logo whole.
 - The pointer counts interlaced lines since the high-resolution pointer units (2026-11-09, v0.2.35).
-- Left, small: MrgCop rebuilds the lists even when no ViewPort has a CopList (1.3 then leaves the old lists alone,
-  §5.1); ClrIns is not merged (we never build one).
+- Since 2026-11-12 MrgCop leaves the View's lists alone when no ViewPort has a CopList (§5.1;
+  `tests/mrgcop_probe.sh` "MC KEEP 00000001", the previous ROM rebuilt the list). ClrIns is not merged (we never
+  build one).
 
 ### C5. exec scheduling — done 2026-11-10
 
@@ -410,7 +417,7 @@ layer locked, EndRefresh's word `complete` and LAYERREFRESH, AllocRemember nodes
 FreeRemember's word `reallyForget`. `tests/explvo_probe.sh`: EXPLVO OK (the previous ROM crashed in Insert).
 Kept: FreeRaster(NULL) is ignored (1.3: dead-end alert); SetFunction keeps its Forbid.
 
-### D8. Probes described but never written — done 2026-11-11 but P2
+### D8. Probes described but never written — done 2026-11-12
 
 Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages updated, each marked [O]):
 - mathffp probe: 264 checks, 0 failures. rawdofmt probe: R3/R4 were artefacts of the probe's own PutChProcs, R5
@@ -427,14 +434,19 @@ Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages up
   UnLoadSeg(0) and LoadSeg of a missing file already matched.
 - dos-lvo-partial §4 items 1, 4, 5, 6 (T22–T26); dos-memory P4 re-measured (no Shell leak, the 56 bytes were an
   IntuiMessage of the disk window), P5, P6. OpenLibrary and AllocMem return their flags for D0 on 1.3 (EXP OLZ).
-- Left: dos-memory P2 (getvec(0), getvec(−1) through a BCPL stub) needs an injected BCPL call.
+- dos-memory P2 (2026-11-12, debugger-injected getvec on the real 1.3): getvec(−1) allocates a 4-byte header,
+  sizes (n+2)×4 ≤ 0 fail with pr_Result2 = 103 without allocating. Ours refused every n < 0 and left Result2;
+  since 2026-11-12 `rt_getvec_raw` / `g_getvec` follow 1.3 (no automatic test: a BCPL call is needed).
 - Done 2026-11-10: the exec-partial-lvos §8 probe, as `tests/explvo_probe.sh` (with the graphics §10 and intuition
   §6c vectors).
 
-### D9. Real-hardware points
+### D9. Real-hardware points — observed in emulation 2026-11-12
 
-- Recoverable Alert without slow RAM.
-- DMRequest and SIZEVERIFY are described from the ROM only.
+- Recoverable Alert without slow RAM: on the real 1.3 (`--slow 0`) it shows, returns D0 = 1 on the left button and
+  the system goes on (alert-v34 §6); ours gives the same screen and the same return (coldhw mode 2 under Amiberry).
+  The FS-UAE freeze seen earlier was an emulator artefact. Left for real hardware only.
+- SIZEVERIFY and DMRequest are now observed black-box on the real 1.3 (intuition-input-menus §2.5, §3.12): the
+  input task waits for the reply with no time-out and the drag/requester only starts after it, as ours does.
 
 ## Test ADFs (`assets/test_adf/`) on our ROM
 
@@ -463,7 +475,8 @@ Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages up
 
 ### Partly documented
 
-- **Scooby-Doo:** reaches its title screen; nothing is documented beyond that.
+- **Scooby-Doo and Scrappy-Doo, disk 1:** since 2026-11-12 checked beyond its title screen: fire starts the game,
+  the first level loads and scrolls, the joystick moves the character (screenshots).
 - **bootdisk-amiga-m68k:** still "Open" in an old PLAN note, but the C:Assign hang was only a speed effect.
 
 ### Swept on 2026-11-09

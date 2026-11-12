@@ -16,6 +16,9 @@
 ;            flags straight after the call (Paccer's CLS: movea.l d0,a6 then beq)
 ;   "EXP INT6 <servers in the EXTER chain after AddIntServer> <calls of ours after one INTREQ EXTER>"   INT6 is a
 ;            server chain holding ciab.resource (custom-chips-v34 §3.3), so a program's server joins it
+;   "EXP MACT <Menu.Flags & MIDRAWN> <MenuItem.Flags & (MENUTOGGLED|HIGHITEM|ISDRAWN)>"   flags set by hand on window
+;            A's menu strip, then window B activated and A again: the activation clears them (intuition-input-menus
+;            §1.11 step 3, §3.8), so 0 and 0
 ;   "EXP fin"
 ; Run as a CLI command; tests/explvo_probe.sh checks every line.
 
@@ -40,6 +43,12 @@ LVO_FreeSignal   EQU -336
 LVO_AllocTrap    EQU -342
 LVO_CloseLibrary EQU -414
 LVO_AddIntServer EQU -168
+LVO_OpenWindow   EQU -204
+LVO_CloseWindow  EQU -72
+LVO_SetMenuStrip EQU -264
+LVO_ClearMenuStrip EQU -54
+LVO_ActivateWindow EQU -450
+LVO_WaitTOF      EQU -270
 LVO_RemIntServer EQU -174
 INTB_EXTER       EQU 13
 EB_IntVects      EQU $54
@@ -323,6 +332,7 @@ start:
         move.l  i6cnt(pc),d0
         bsr     phex8
         bsr     nl
+        bsr     mact
         lea     m_fin(pc),a0
         bsr     puts
         movem.l (sp)+,d2-d7/a2-a6
@@ -462,6 +472,73 @@ vecs:     dc.l  dummy,dummy,dummy,dummy,dummy,-1
 istab:    dc.b  $C0,$00,$00,$04,$12,$34,$56,$78,$A1,$0A,$AB,$CD,$62,$77,$00
           even
 dummy:    rts
+
+; mact (a6 = ExecBase): the EXP MACT line. Preserves a6.
+mact:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a4                ; a4 = ExecBase
+        lea     n_int(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OpenLibrary(a6)
+        move.l  d0,a5                ; a5 = IntuitionBase
+        lea     gfxname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OpenLibrary(a6)
+        move.l  d0,a3                ; a3 = GfxBase
+        move.l  a5,a6
+        lea     nwa(pc),a0
+        jsr     LVO_OpenWindow(a6)
+        move.l  d0,d6                ; d6 = A
+        beq     .mx
+        lea     nwb(pc),a0
+        jsr     LVO_OpenWindow(a6)
+        move.l  d0,d7                ; d7 = B
+        beq     .mxa
+        move.l  d6,a0
+        lea     mmenu(pc),a1
+        jsr     LVO_SetMenuStrip(a6)
+        lea     mmenu(pc),a0
+        or.w    #$0100,12(a0)        ; MIDRAWN
+        lea     mitem(pc),a0
+        or.w    #$7000,12(a0)        ; MENUTOGGLED | HIGHITEM | ISDRAWN
+        move.l  d7,a0
+        jsr     LVO_ActivateWindow(a6)
+        bsr     mwait
+        move.l  d6,a0
+        jsr     LVO_ActivateWindow(a6)
+        bsr     mwait
+        lea     m_mact(pc),a0
+        bsr     puts
+        moveq   #0,d0
+        move.w  mmenu+12(pc),d0
+        and.w   #$0100,d0
+        bsr     phex8
+        moveq   #0,d0
+        move.w  mitem+12(pc),d0
+        and.w   #$7000,d0
+        bsr     phex8
+        bsr     nl
+        move.l  d6,a0
+        jsr     LVO_ClearMenuStrip(a6)
+        move.l  d7,a0
+        jsr     LVO_CloseWindow(a6)
+.mxa:   move.l  d6,a0
+        jsr     LVO_CloseWindow(a6)
+.mx:    move.l  a4,a6
+        move.l  a3,a1
+        jsr     LVO_CloseLibrary(a6)
+        move.l  a5,a1
+        jsr     LVO_CloseLibrary(a6)
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+mwait:                               ; 10 frames: the activations are carried out by the input task
+        movem.l d2/a6,-(sp)
+        move.l  a3,a6
+        moveq   #10-1,d2
+.mw:    jsr     LVO_WaitTOF(a6)
+        dbra    d2,.mw
+        movem.l (sp)+,d2/a6
+        rts
 i6code:   addq.l  #1,(a1)            ; a1 = is_Data = the counter
           moveq   #0,d0              ; continue the chain
           rts
@@ -479,6 +556,33 @@ m_rem:    dc.b  "EXP REM",0
 m_priv:   dc.b  "EXP PRIV",0
 m_olz:    dc.b  "EXP OLZ",0
 m_int6:   dc.b  "EXP INT6",0
+m_mact:   dc.b  "EXP MACT",0
+n_int:    dc.b  "intuition.library",0
+t_a:      dc.b  "A",0
+t_menu:   dc.b  "M",0
+t_item:   dc.b  "I",0
+                even
+nwa:      dc.w  20,40,200,60
+          dc.b  0,1
+          dc.l  0,$1000|$0002,0,0,t_a,0,0     ; ACTIVATE | WINDOWDRAG
+          dc.w  0,0,0,0,1                     ; WBENCHSCREEN
+nwb:      dc.w  240,40,200,60
+          dc.b  0,1
+          dc.l  0,$0002,0,0,t_a,0,0
+          dc.w  0,0,0,0,1
+mmenu:    dc.l  0
+          dc.w  0,0,60,10,1                   ; MENUENABLED
+          dc.l  t_menu,mitem
+          dc.w  0,0,0,0
+mitem:    dc.l  0
+          dc.w  0,0,80,10,$0052               ; ITEMTEXT | ITEMENABLED | HIGHCOMP
+          dc.l  0,mitxt,0
+          dc.b  0,0
+          dc.l  0
+          dc.w  0
+mitxt:    dc.b  0,1,1,0
+          dc.w  0,0
+          dc.l  0,t_item,0
                 even
 i6cnt:    dc.l  0
 i6is:     dc.l  0,0
