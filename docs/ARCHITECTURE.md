@@ -2333,6 +2333,16 @@ differs.
   `WB_MAXDRAWERS` pointers; a closed drawer points at `WBS_DRCLOSED`, one shared all-zero record (DR_WIN 0), so the
   loops over every drawer and `wb_window` keep working unchanged. `wb_opendrawer` allocates a record (MEMF_CLEAR) for
   the slot it takes, `wb_drfree` gives it back when OpenWindow fails and at the end of `wb_closedrawer`.
+  **Data loops (2026-11-12)**: `exec_CopyMem` (`src/exec/io.s`) copies equal-parity ranges in unrolled 32-byte
+  blocks (a 16-bit `dbra` with a carry into the high word), then 16/8/4/2/1 bytes taken from the low bits of the
+  size, so it still uses d0/d1/a0/a1 only and no stack; CopyMemQuick clears the two low bits of the size and joins
+  it. It returns a0/a1 just past the copied bytes, and the file system (`ofs_read_file`, `ofs_stream_read`,
+  `ws_write`, `ws_read`), LoadSeg's reader (`ls_rdbytes`) and trackdisk's cache copy call it directly (`jsr`,
+  never the LVO, so a SetFunction of CopyMem sees what it saw before) instead of their byte loops. `td_decode_track`
+  unrolls the data checksum and the decode by four with the MFM mask in a register; the block checksum of
+  `ofs_stream_read` is unrolled by four; AllocMem's MEMF_CLEAR writes a zero register (`clr.l` reads the long
+  first on a 68000) in 32-byte blocks. Checked by `tests/copymem_test.py`, `tests/allocmem_clear_test.py` and
+  `tests/td_decode_test.py` (unicorn, 68000 model) and timed by `tests/fsperf_probe.sh`.
   **Menu flags at activation, MrgCop without CopList, async line blits, getvec, PCPROF (2026-11-12)**:
   REMAINING-WORK C3, C4, A7, D8.
   - `it_setactive` (`src/intuition/screens.s`) calls `mn_actclr` (`menus.s`) before setting WINDOWACTIVE: the new

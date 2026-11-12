@@ -31,6 +31,7 @@
                 xdef    ls_load_hunks
                 xdef    ls_load_stream
                 xref    ofs_read_file
+                xref    exec_CopyMem         ; exec/io.s: a0/a1 come back past the copied bytes
 
 HUNK_HEADER     EQU $3F3
 HUNK_CODE       EQU $3E9
@@ -503,10 +504,10 @@ ls_rdbytes:
                 add.l   d1,LR_POS(a5)
                 move.l  a2,d0
                 beq.s   .rb_lp               ; skip: nothing to copy
-.rb_cp:
-                move.b  (a0)+,(a2)+
-                subq.l  #1,d1
-                bne.s   .rb_cp
+                move.l  a2,a1
+                move.l  d1,d0
+                jsr     exec_CopyMem         ; a1 = past the copied bytes
+                move.l  a1,a2
                 bra.s   .rb_lp
 
 ; ls_read(a2 = destination, d3 = bytes, a5 = reader) -> d0 = Read(LR_FH, a2, d3) via LR_DOS. Clobbers d0/d1/a0/a1.

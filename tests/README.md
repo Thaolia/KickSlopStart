@@ -83,6 +83,15 @@ KickTagPtr − 16.
   byte offset 4n is n, written on the host; `tests/bigfile_probe.s` prints Examine's size and block count, reads 8
   bytes after Seek at five offsets (four past 65,535 data blocks), then writes 8 bytes in place (MODE_READWRITE). The
   host checks the values, the written bytes and the partition with `ofs_check`. Success: `BIGFILE OK`.
+- `tests/fsperf_probe.sh <out_dir> [rom]`: an OFS floppy holding DF0:big (200,000 bytes, the long at byte offset 4n
+  is n); `tests/fsperf_probe.s` times in DateStamp ticks (1/50 s) and checks a whole read in 4,888-byte Reads, 9,002
+  bytes in 7-byte Reads to an odd address, a 120,000-byte write in 3,001-byte Writes read back, 100 CopyMem of
+  50,000 bytes and 200 AllocMem(20,000, MEMF_CLEAR). The host checks DF0:out in the session's copy of the disk and the
+  disk with `ofs_check`. Success: `FSPERF OK`; compare the times of two ROMs (production ROMs for speed).
+- `python3 tests/copymem_test.py <rom> <map>` and `python3 tests/allocmem_clear_test.py <rom> <map>` (unicorn,
+  68000 model; `<map>` from `vlink -M`): CopyMem/CopyMemQuick on every alignment 0-3 and sizes 0-600 plus large and
+  overlapping ranges, AllocMem MEMF_CLEAR on sizes 1-400 plus large ones, with bytes around the range and preserved
+  registers checked; both print the instructions of a few large calls. Success: `... PASS`.
 - `tests/fhmove_probe.sh <out_dir> [rom]`: three drives; `tests/fhmove_probe.s` reads DF1:longfile by 2 KB blocks,
   then writes DF1:w in two lines 20 s apart, while the harness moves the data disk DF1 -> DF2 -> DF1 through IPC
   during each part (`docs/analysis/disk-change-v34.md` §2.4.1). Screenshots `read_in_df2.png` / `write_in_df2.png`

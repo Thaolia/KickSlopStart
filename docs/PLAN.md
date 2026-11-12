@@ -1658,6 +1658,15 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Data loop speed-ups (2026-11-12)**: user request "améliorer les performances via des optimisations du KSS"
+  without new bugs, more memory or 1.3 incompatibility. CopyMem in unrolled 32-byte blocks (no extra register or
+  stack), used directly by the file system and LoadSeg instead of byte loops and by trackdisk's cache copy; MFM decode,
+  data and block checksums unrolled by four; AllocMem MEMF_CLEAR by register stores. ROM +192 bytes, no RAM. Production
+  ROM, `tests/fsperf_probe.sh`, ticks of 1/50 s (before → after): 200,000-byte read from DF0: 589 → 518-519 (−12 %),
+  7-byte Reads 269 → 269, 120,000-byte write 853 → 824-825 (−3 %), 100 CopyMem of 50,000 bytes 417 → 250 (−40 %),
+  200 AllocMem(20,000, MEMF_CLEAR) 226 → 105 (−54 %); the file written is identical to the pattern and OFS CHECK OK
+  with both ROMs. Unicorn tests on both ROMs: copymem 14,541 cases, allocmem_clear 410, td_decode 0 failures. dev
+  prepush-check FAIL=0 (Lemmings menu shown), Workbench 1.3.3 boots on the production ROM.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

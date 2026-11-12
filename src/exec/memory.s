@@ -84,7 +84,7 @@ exec_AllocMem:
         move.l  d0,d2                ; d2 = requested size
         addq.l  #7,d0
         and.l   #-8,d0
-        beq.s   .am_nomem            ; rounds to 0: no header is tried, nothing to expunge
+        beq.w   .am_nomem            ; rounds to 0: no header is tried, nothing to expunge
 .am_first:
         lea     EB_MEMLIST(a6),a4
         move.l  (a4),a4              ; a4 = first header
@@ -105,16 +105,38 @@ exec_AllocMem:
         bra.s   .am_hdr
 .am_got:
         btst    #16,d4               ; MEMF_CLEAR?
-        beq.s   .am_exit
+        beq.w   .am_exit
         move.l  d0,a2
         move.l  d2,d1
-        addq.l  #7,d1
-        lsr.l   #3,d1                ; rounded size / 8
-.am_clr:
-        clr.l   (a2)+
-        clr.l   (a2)+
+        addq.l  #7,d1                ; bits 3 and up = the rounded size
+        moveq   #0,d5                ; move.l of a register: clr.l also reads the long on a 68000
+        btst    #3,d1
+        beq.s   .am_c16
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+.am_c16:
+        btst    #4,d1
+        beq.s   .am_c32
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+.am_c32:
+        lsr.l   #5,d1                ; 32-byte blocks
         subq.l  #1,d1
-        bne.s   .am_clr
+        bcs.s   .am_exit
+.am_clr:
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        move.l  d5,(a2)+
+        dbra    d1,.am_clr
+        sub.l   #$10000,d1           ; dbra counts 16 bits
+        bcc.s   .am_clr
         bra.s   .am_exit
 .am_fail:                            ; 1.3 (ramlib-v34 §6): modules nobody has open are expunged, then one more try
         tst.w   d3
@@ -126,7 +148,7 @@ exec_AllocMem:
         jsr     td_lowmem            ; the trackdisk multi-track cache goes back first
         jsr     ram_expungeall
         sf      RAM_LOWMEM
-        bra.s   .am_first
+        bra.w   .am_first
 .am_nomem:
         move.l  EB_THISTASK(a6),d0   ; a process gets ERROR_NO_FREE_STORE
         beq.s   .am_none

@@ -34,6 +34,7 @@
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
+                xref    exec_CopyMem         ; exec/io.s: a0/a1 come back past the copied bytes
                 xref    ofs_div488
                 xref    ofs_geo              ; ofs.s: geometry of the handler's partition
                 xref    dv_rebuild           ; diskvalidator.s: bitmap rebuilt from the directory tree
@@ -1782,12 +1783,10 @@ ws_write:
 .ww_n:
         lea     WS_DBUF+OFSB_DATA(a3),a1
         add.l   d5,a1
+        move.l  a2,a0
         move.l  d4,d0
-        bra     .ww_cn
-.ww_cp:
-        move.b  (a2)+,(a1)+
-.ww_cn:
-        dbra    d0,.ww_cp
+        jsr     exec_CopyMem         ; a0 = past the bytes taken
+        move.l  a0,a2
         add.l   d4,d5                ; end of the bytes in this block
         cmp.l   WS_DBUF+OFSB_DSIZE(a3),d5
         bls     .ww_ds
@@ -1859,12 +1858,10 @@ ws_read:
 .wr_n:
         lea     WS_DBUF+OFSB_DATA(a3),a0
         add.l   d5,a0
+        move.l  a2,a1
         move.l  d4,d0
-        bra     .wr_cn
-.wr_cp:
-        move.b  (a0)+,(a2)+
-.wr_cn:
-        dbra    d0,.wr_cp
+        jsr     exec_CopyMem         ; a1 = past the bytes copied
+        move.l  a1,a2
         add.l   d4,WS_POS(a3)
         add.l   d4,d6
         sub.l   d4,d7

@@ -30,6 +30,7 @@
                 xdef    ofs_mul488
                 xdef    ofs_geo              ; geometry of the caller's partition
                 xdef    ofs_blk_valid        ; key inside the partition
+                xref    exec_CopyMem         ; exec/io.s: a0/a1 come back past the copied bytes
 
 ; Device and geometry: in a file-handler process, the device, unit and partition of its context (ofs.i, HC_GEO);
 ; elsewhere (boot probes) trackdisk unit 0 with the DD geometry. Requests go through DoIO, so devices that queue
@@ -99,13 +100,10 @@ ofs_read_file:
                 cmp.l   d7,d0
                 bhi.s   .exit                        ; would overflow the buffer (guard) -> stop
                 lea     OFSB_DATA(a0),a0             ; a0 = data (@+24)
-                move.l  d0,d1
-                beq.s   .dnext                       ; empty block
-                subq.l  #1,d1
-.dcopy:
-                move.b  (a0)+,(a5)+                  ; copy data_size bytes (<=488)
-                dbra    d1,.dcopy
-.dnext:
+                move.l  a5,a1
+                jsr     exec_CopyMem                 ; copy data_size bytes (<=488); a1 = past them
+                move.l  a1,a5
+                move.l  IOREQ_SZ+OFSB_DSIZE(a3),d0   ; d0 = data_size again (CopyMem changes d0)
                 add.l   d0,d6                        ; total += data_size
                 sub.l   d0,d7                        ; max remaining -= data_size
                 ifne    OFS_NO_DATACHAIN
@@ -770,8 +768,11 @@ ofs_stream_read:
                 beq     .sr_done
                 lea     IOREQ_SZ(a3),a0               ; checksum: the 128 longs sum to 0 (rom-filesystem §5.2: 1.3
                 moveq   #0,d0                         ; checks it, and ignores the block type)
-                moveq   #OFS_BSIZE/4-1,d1
+                moveq   #OFS_BSIZE/16-1,d1
 .sr_sum:
+                add.l   (a0)+,d0
+                add.l   (a0)+,d0
+                add.l   (a0)+,d0
                 add.l   (a0)+,d0
                 dbra    d1,.sr_sum
                 tst.l   d0
@@ -808,17 +809,17 @@ ofs_stream_read:
                 lea     IOREQ_SZ(a3),a0
                 lea     OFSB_DATA(a0),a0
                 add.l   d0,a0                         ; src = buffer + data + within
-                move.l  d4,d1
+                tst.l   d4
                 beq     .sr_loop                      ; n == 0 (guard) -> loop again (EOF/advance on the next round)
-.sr_cpy:
-                move.b  (a0)+,(a4)+
-                subq.l  #1,d1
-                bne.s   .sr_cpy
+                move.l  a4,a1
+                move.l  d4,d0
+                jsr     exec_CopyMem                  ; a1 = past the n bytes
+                move.l  a1,a4
                 add.l   d4,SS_POS(a5)                 ; pos += n
                 add.l   d4,d5                         ; total += n
                 sub.l   d4,d6                         ; rest requested -= n
-                move.l  d0,d1                          ; d1 = within (d0) + n (d4)
-                add.l   d4,d1
+                move.l  SS_POS(a5),d1                 ; d1 = within + n
+                sub.l   SS_BLKBASE(a5),d1
                 cmp.l   d3,d1                          ; reached the block edge (within+n == data_size)?
                 blo     .sr_loop                      ; no -> loop again (EOF or rest requested exhausted, no re-read)
                 add.l   d3,SS_BLKBASE(a5)             ; at edge -> advance via the ALREADY loaded buffer (no re-read)

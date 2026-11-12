@@ -192,7 +192,8 @@ exec_AbortIO:
 
 ; CopyMem(source a0, destination a1, size d0): any size and alignment, ascending copy (exec-memory-semaphores-v34
 ; §3: overlap works only with the destination below the source). By longs when source and destination have the
-; same parity, otherwise byte by byte. Only touches d0/d1/a0/a1.
+; same parity, otherwise byte by byte. Only touches d0/d1/a0/a1; a0/a1 come back just past the copied bytes (the
+; file system and LoadSeg call it directly for that).
 exec_CopyMem:
         move.l  a0,d1
         add.l   a1,d1                ; bit 0 of the sum = different parities
@@ -200,21 +201,55 @@ exec_CopyMem:
         bne.s   cm_bytes            ; different parities: bytes
         move.l  a0,d1
         btst    #0,d1
-        beq.s   .cm_even
+        beq.s   cm_even
         tst.l   d0
         beq.s   cm_ret
         move.b  (a0)+,(a1)+          ; align on an even word
         subq.l  #1,d0
-.cm_even:
+; cm_even: a0/a1 even, d0 bytes. 32-byte blocks, then the tail taken from the low five bits of the size, so no
+; register beyond d0/d1 is needed.
+cm_even:
         move.l  d0,d1
-        lsr.l   #2,d1                ; number of longs
-        bra.s   .cm_lnext
-.cm_long:
-        move.l  (a0)+,(a1)+
-.cm_lnext:
+        lsr.l   #5,d1                ; number of 32-byte blocks
         subq.l  #1,d1
-        bcc.s   .cm_long
-        and.l   #3,d0
+        bcs.s   .cm_tail
+.cm_blk:
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        dbra    d1,.cm_blk
+        sub.l   #$10000,d1           ; dbra counts 16 bits: 65536 more blocks while the high word is not spent
+        bcc.s   .cm_blk
+.cm_tail:
+        btst    #4,d0
+        beq.s   .cm_t8
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+.cm_t8:
+        btst    #3,d0
+        beq.s   .cm_t4
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+.cm_t4:
+        btst    #2,d0
+        beq.s   .cm_t2
+        move.l  (a0)+,(a1)+
+.cm_t2:
+        btst    #1,d0
+        beq.s   .cm_t1
+        move.w  (a0)+,(a1)+
+.cm_t1:
+        btst    #0,d0
+        beq.s   cm_ret
+        move.b  (a0)+,(a1)+
+        rts
 cm_bytes:
         bra.s   cm_bnext
 cm_byte:
@@ -227,14 +262,8 @@ cm_ret:
 ; CopyMemQuick(source a0, destination a1, size d0): even pointers; copies size & ~3 bytes (the low two bits of the
 ; size are ignored, as in 1.3).
 exec_CopyMemQuick:
-        lsr.l   #2,d0                ; number of longs
-        bra.s   .cq_lnext
-.cq_long:
-        move.l  (a0)+,(a1)+
-.cq_lnext:
-        subq.l  #1,d0
-        bcc.s   .cq_long
-        rts
+        and.w   #$FFFC,d0
+        bra.s   cm_even
 
 ; AddLibrary(library a1) / AddDevice(device a1): under Forbid, the SumLibrary step when LIBF_SUMUSED is set (sum
 ; recomputed with LIBF_CHANGED, otherwise verified: a wrong sum is the dead-end alert), then Enqueue into LibList /

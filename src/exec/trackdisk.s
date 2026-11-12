@@ -20,6 +20,7 @@
                 xdef    td_decode_track
                 xdef    td_disk_present
                 xdef    td_lowmem
+                xref    exec_CopyMem
 
 ; --- trackdisk constants (devices/trackdisk.i) + exec io errors (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
@@ -298,12 +299,8 @@ trackdisk_beginio:
         add.l   d6,a0
         move.l  a5,a1
         move.l  d5,d0
-        lsr.l   #2,d0                ; n/4 longs (n multiple of 512 -> of 4); n/4 <= 1408 < 65536
-        subq.l  #1,d0
-.td_copy:
-        move.l  (a0)+,(a1)+
-        dbra    d0,.td_copy
-        add.l   d5,a5                ; dst += n
+        jsr     exec_CopyMem
+        move.l  a1,a5                ; dst += n
         add.l   d5,d3                ; offset += n
         add.l   d5,d4                ; actual += n
         sub.l   d5,d2                ; remaining length -= n
@@ -2057,8 +2054,14 @@ td_decode_track:
         ; data checksum: XOR of the 256 longs (data odd+even) & MASK
         moveq   #0,d2
         lea     56(a3),a5
-        move.w  #256-1,d1
+        moveq   #256/4-1,d1
 .sc_dc:
+        move.l  (a5)+,d3
+        eor.l   d3,d2
+        move.l  (a5)+,d3
+        eor.l   d3,d2
+        move.l  (a5)+,d3
+        eor.l   d3,d2
         move.l  (a5)+,d3
         eor.l   d3,d2
         dbra    d1,.sc_dc
@@ -2080,17 +2083,20 @@ td_decode_track:
         add.l   d0,a1               ; a1 = destination
         lea     56(a3),a5          ; a5 = data_odd[0]
         lea     (56+512)(a3),a0    ; a0 = data_even[0]
-        move.w  #128-1,d1
+        move.l  #MFM_MASK,d2        ; d2 = mask (the data checksum is no longer needed)
+        moveq   #128/4-1,d1
 .sc_data:
+        rept    4
         move.l  (a5)+,d0
-        and.l   #MFM_MASK,d0
+        and.l   d2,d0
                 ifeq    MFM_BAD_DECODE
         add.l   d0,d0               ; <<1 (correct combine)
                 endc                ; RED MFM_BAD_DECODE: skips the <<1 -> wrong data -> sector 0 != "DOS\0"
         move.l  (a0)+,d3
-        and.l   #MFM_MASK,d3
+        and.l   d2,d3
         or.l    d3,d0
         move.l  d0,(a1)+
+        endr
         dbra    d1,.sc_data
         move.l  (sp)+,a0            ; restore the scan pointer
         bset    d6,d7              ; valid sector (a sector reread at the end of the buffer only counts once)
