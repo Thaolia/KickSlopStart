@@ -91,6 +91,11 @@ KickTagPtr − 16.
 - `tests/contype_probe.sh <out_dir> [rom]`: C:Type of a 400-line file to the boot console of a Workbench 1.3.3
   copy, between two DateStamp stamps printed on SERDAT by `tests/contype_probe.s`; prints `CONTYPE <s>` and keeps
   `end.png`. Compare two ROMs.
+- `tests/textpix_probe.sh <out_dir> [rom] [reference]`: Text with topaz 8 on a layerless 2-plane BitMap in JAM1,
+  JAM2, COMPLEMENT and both INVERSVID modes, four pen pairs, write masks $FF and $01, at every x offset 0-17;
+  `tests/textpix_probe.s` prints one checksum per plane per case on SERDAT. With the output of the ROM before a
+  change to the text path as reference: `TEXTPIX OK` (a ROM with a broken byte-aligned glyph loop gives `TEXTPIX
+  DIFFERS`).
 - `python3 tests/td_encode_test.py <rom> <map> <reference rom> <reference map>` (unicorn): td_encode_track of both
   ROMs on 45 tracks must be byte-identical and decode back with the first ROM's td_decode_track.
 - `python3 tests/copymem_test.py <rom> <map>` and `python3 tests/allocmem_clear_test.py <rom> <map>` (unicorn,

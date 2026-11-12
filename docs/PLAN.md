@@ -1676,6 +1676,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   earlier measure of the real 1.3 on a similar run: 38 s). Not taken: `gfx_Text`'s unshifted case (3-4 %), movem
   copies (stack). `tests/tdcode_probe.s` and `tests/waittof_probe.s` now print on SERDAT (TDCODE OK, WaitTOF values
   as before on the production ROM).
+  Then `gfx_Text`'s byte-aligned case (user: "fais aussi le cas non décalé de gfx_Text"): unshifted glyph loops in
+  `.tx_str` gave identical pixels (`tests/textpix_probe.sh`, 40 cases, a mutant ROM detected) but no gain on the
+  400-line console run (41.42 -> 41.46 s): the profile's Text time is in the shifted loop (the console window's text
+  is presumably not byte-aligned, not measured). Withdrawn at the user's choice; the probe stays as the text-path
+  non-regression check.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow
