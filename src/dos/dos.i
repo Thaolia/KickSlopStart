@@ -41,6 +41,12 @@ RS_SIZEOF        EQU 16                ; node of the ROM "CLI" (3-letter name)
 DI_DEVINFO       EQU 4                 ; BPTR -> device list (empty: no handler mounted in this milestone)
 DOSINFO_SIZE     EQU 20               ; skeleton: pointer fields only; 3 SignalSemaphore locks deferred
 
+; --- stack of a command: cli_DefaultStack plus this margin, in runcommand (bcpl.s) and in the ROM shell (shell.s) ---
+; our runtime takes its buffers and packets on the command's 68000 stack: 876 bytes at the top for "delete ram:a
+; all", whose BCPL frames reach 4,440 bytes from the bottom at 8 directory levels (2026-11-12);
+; with 4096, at least 5,088 bytes were never touched over 38 commands (startup-sequence, dir all, list, copy, ed...)
+RC_STKEXTRA      EQU 2048
+
 ; --- DateStamp (dos.i) ---
 DS_SIZEOF        EQU 12                ; ds_Days(LONG) + ds_Minute(LONG) + ds_Tick(LONG)
 

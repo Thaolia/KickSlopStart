@@ -1669,6 +1669,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (1.3: 431), Clock unchanged; BlitLock drift fixed. Then A6 (user: "continue ce qu'il reste"): Workbench drawer
   records allocated on open (5,480 bytes), file system stacks 4,096 → 3,072 after measuring 1,687 at most (2,048
   bytes with two drives): Workbench 1.3.3 idle 860,424 → 867,952 free.
+  Then the RAM handler's stack (user: "Pile du handler RAM"): 545 bytes used at most of 2,220 under a deep RAM:
+  workload, kept; that workload exposed a SOFTWARE FAILURE in `delete ram:a all quiet` over eight nested
+  directories: the ROM shell ran commands on `cli_DefaultStack` without the `RC_STKEXTRA` margin of `runcommand`.
+  An analysis probe shows the real 1.3 fails too, from 6 levels (dos-cli §7); ours failed from 5, now passes 8.
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room

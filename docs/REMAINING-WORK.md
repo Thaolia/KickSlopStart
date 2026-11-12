@@ -89,6 +89,18 @@ held" qualifier bits of mouse events are not set yet.
   (Workbench 1.3.3, one drive: 860,424 → 865,904 free; open/close cycles end at the same value). The floppy file
   system stacks went from 4,096 to 3,072 bytes after measuring their deepest use (1,687 bytes, with a "You MUST
   replace volume" requester opened by the handler; 521 otherwise): → 867,952 free, 7,528 bytes in all.
+- **RAM handler stack (measured 2026-11-12, kept):** 2,220 bytes (`DN_STACKSIZE` 300 longs + `CP_STKEXTRA`). After
+  eight nested directories, a copy of `c` into the deepest, `dir all`, `rename`, `protect` and `delete all` on
+  RAM:, its BCPL frames reached 384 bytes from the bottom and our 68000 runtime 161 bytes from the top: 545 bytes,
+  less than 1.3's 1,200-byte stack. Shrinking it would give back about 1,000 bytes, but the 2026-11-09 measurement
+  saw 868 bytes at the top of a BCPL process stack, so the margin stays.
+- **Command stacks of the ROM shell (fixed 2026-11-12):** the shell that runs the startup-sequence gave a command
+  only `cli_DefaultStack` bytes, while `runcommand` adds `RC_STKEXTRA` (2,048) for our runtime's 68000 side.
+  `delete ram:a all quiet` on eight nested directories needs 4,440 bytes of BCPL frames plus 876 at the top: with
+  the default 4,000 it ended in a SOFTWARE FAILURE. The real 1.3 overflows too, one level later: `delete ... all`
+  survives 5 levels at the default stack and crashes or hangs from 6 (dos-cli §7, probed 2026-11-12); ours stopped
+  at 5 (hang) before the fix. The shell now adds the same margin (`RC_STKEXTRA`, `dos.i`): 8 levels pass, a
+  deliberate leniency over 1.3.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
 ### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10
@@ -479,7 +491,8 @@ Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages up
   - SysInfo and OctaMED v4 work.
   - Directory Opus 4.12 runs.
   - Deluxe Paint III v3.00 (since PR #28, 2026-11-08): reaches the paint screen, quits to the CLI and can be run
-    again. Selected requester gadgets are drawn without their text.
+    again. Selected requester gadgets show their text (format chooser checked on a screenshot, 2026-11-12; fixed
+    by the RectFill minterm work of 2026-11-09).
 - **Games:**
   - Holiday Lemmings: menu and a playable level. The Lemmings demo works too.
   - Caesar reaches its game menu.
@@ -488,7 +501,7 @@ Run on the real ROM by the analysis track on 2026-11-10 and 2026-11-11 (pages up
   - SimCity reaches its menu.
   - Zool behaves as on 1.3 (fire on port 2).
   - Tintin and Shanghai run.
-  - Bubble Bobble runs (A9 still open).
+  - Bubble Bobble runs (A9: not a gap).
   - Cluedo reaches player selection (A10).
 - **Demos:**
   - Spaceballs, Desert Dream and Sanity-Arte run.

@@ -559,16 +559,16 @@ sh_exec_cmd:
                 ifeq    PROD                 ; dev ROM: the proof command emits its marker under Forbid (no
                 jsr     ser_lock             ; interleaving with the demo tasks); never in production, where
                 endc                         ; Forbid would freeze multitasking until the command's first Wait
-                ; --- dedicated stack of cli_DefaultStack longs (like runcommand): the BCPL stub puts the base of its
-                ; frames at 8(sp) - 4(sp) = (top - 4) - size -> block ONE long larger than the announced size,
-                ; otherwise the first frame overwrites the last long of the previous memory block ---
+                ; --- dedicated stack of cli_DefaultStack longs plus RC_STKEXTRA (like runcommand): the BCPL stub puts
+                ; the base of its frames at 8(sp) - 4(sp) = (top - 4) - size -> block ONE long larger than the
+                ; announced size, otherwise the first frame overwrites the last long of the previous memory block ---
                 move.l  #SH_DEFSTACK*4,d0
                 bsr     sh_cli_ptr
                 beq.s   .x_stk
                 move.l  CLI_DEFAULTSTACK(a1),d0
                 lsl.l   #2,d0
 .x_stk:
-                addq.l  #4,d0
+                add.l   #RC_STKEXTRA+4,d0
                 move.l  d0,XF_STKSZ(sp)
                 move.l  #MEMF_PUBLIC,d1
                 move.l  ($4).w,a6

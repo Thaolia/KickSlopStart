@@ -53,9 +53,6 @@ CP_STKEXTRA     EQU 1024             ; 68000 stack margin of processes created b
                                      ; CLI and RAM handler under dir/list/copy/execute, 2026-11-09; NEWCON 668 and
                                      ; Background CLI 516 in a longer Shell session with requesters, 2026-11-10), and
                                      ; more than 1,500 bytes of the BCPL part stay untouched below it
-RC_STKEXTRA     EQU 2048             ; same margin for the stack of a command (runcommand): with 4096, at least
-                                     ; 5,088 bytes of it were never touched over 38 commands (startup-sequence, dir
-                                     ; all, list, copy, execute, ed..., 2026-11-09)
 
 ; --- call / return (A5 / A6) - multiply MUST be at bcpl_call+$10, divide at +$12 ("jsr $10(a5)" calls) ---
 ; The ABI fixes this entry at 16 bytes (frame -12/-8/-4, jumps at +$10/+$12): the sequence is therefore identical to

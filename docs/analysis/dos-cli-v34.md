@@ -106,3 +106,20 @@ CLI" (NewCLI) and "AmigaShell" (NewShell) 3200 bytes. Commands run on a separate
 `cli_DefaultStack × 4` bytes (default 1000 longs = 4000 bytes), passed at `4(SP)`. Neither running a
 command nor `Stack N` changes `pr_StackSize`; `Stack N` only sets `cli_DefaultStack := N / 4`
 (truncated), which `Run`/`NewCLI`/`NewShell` copy into the new CLI.
+
+**Observed 2026-11-12 — `Delete ... ALL` depth limit at the default command stack** [O]. Black-box
+runs of the real 1.3 under Amiberry (A500, cycle-exact) on copies of the Workbench 1.3.3 disk whose
+`s:startup-sequence` was replaced (Initial CLI, no `Stack` command, so 4000-byte command stack): the
+script makes N nested directories `ram:a/b/c/...`, copies `C:Echo` into the deepest one, then runs
+`delete ram:a all quiet`, then echoes markers to SER: and runs `dir ram: all`.
+- N = 1 to 5: completes; `dir ram: all` lists nothing (the tree is gone). Depth 5 run twice.
+- N = 6 and 7: a "Software error - task held" requester appears during the Delete; after Cancel the
+  last-alert slot in low RAM holds alert number `00000004` (CPU illegal-instruction trap) with the
+  Initial CLI task as the faulting task. N = 6 seen in two runs, N = 7 in one. No red Guru box was captured on
+  screen and the machine did not visibly reboot.
+- N = 8: hang without requester or alert (two runs, one with the exact script of the question):
+  Initial CLI waits on its DOS packet signal forever, the RAM handler is idle.
+- N = 8 with `stack 20000` before the Delete: completes ("DT END" printed).
+So on real 1.3 the deepest tree `delete ... all` survives at the default 4000-byte stack is 5 levels
+(plus a file); 6 levels or more crash or hang. Programs and scripts relying on deeper recursive
+deletes need a larger `Stack`.

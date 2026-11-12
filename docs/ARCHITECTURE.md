@@ -2049,7 +2049,11 @@ differs.
   **Stack margins (2026-11-09, 2026-11-10)**: processes and handlers created by the BCPL runtime get `CP_STKEXTRA` =
   1024 bytes over their BCPL stack (measured use of our 68000 runtime: 868 at most, 668 in a long Shell session with a
   requester; the BCPL part keeps more than 1,500 bytes untouched); a command's stack gets `RC_STKEXTRA` = 2048
-  (with 4096, at least 5,088 bytes of every command stack stayed untouched over 38 commands).
+  (with 4096, at least 5,088 bytes of every command stack stayed untouched over 38 commands), in `runcommand` and,
+  since 2026-11-12, in the ROM shell (`shell.s`), which ran its commands on `cli_DefaultStack` alone: `delete ... all`
+  over eight nested directories takes 4,440 bytes of BCPL frames plus 876 for our runtime and overflowed 4,000
+  (it hung from 5 levels; the real 1.3 survives 5 and fails from 6, dos-cli §7; now 8 pass). The
+  RAM handler keeps its 2,220 bytes (545 used at most under a deep RAM: workload).
   **FileHandles without a name buffer (2026-11-09)**: `dos_fn_open` builds the BSTR of the name on the caller's stack
   for the open packet only; a FileHandle of this dos is 44 bytes + its private fields (`FH_WBUF`, `FH_WCNT`,
   `FH_OWNER` = `DOS_FH_MAGIC`), 60 bytes with the getvec header instead of 316. `dos_ownfh` recognises them by size and
