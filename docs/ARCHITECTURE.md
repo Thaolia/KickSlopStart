@@ -2382,7 +2382,25 @@ differs.
     right-edge mask stops at the last column the fetched words can fill and the 1-15 columns left (`RB_STRIP`) go
     back to the CPU engines: `br_blit` rewrites the caller's saved sx/dx/width and reports "not handled", after
     `db_leave` waited for the blit. `tests/bltrp_probe.sh`: every pixel of 800 copies (minterm $C0 for all 16 × 16
-    phase pairs, $30/$60/$80/$E0 every third phase).
+    phase pairs, $30/$60/$80/$E0 every third phase). A source plane beyond the source's depth or NULL reads as 0 and
+    -1 as 1, as in the CPU engines: such a plane is blitted with B off, BLTBDAT = $0000 / $FFFF and a B shift of 0
+    (shifted, the constant mixes with the previous B word: wrong bits under emulation). Deluxe Paint's 1-plane
+    toolbox images onto its 5-plane screen went to the CPU row by row.
+  - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
+    region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
+    RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a
+    FreeMem of one stays correct, and exec's AllocMem empties the pool after a failure (beside `td_lowmem`). A menu box
+    or a layer move made dozens of AllocMem/FreeMem walks of a fragmented slow-RAM free list: `tests/layerperf_probe.sh`
+    300 menu-like CreateUpfrontLayer/DeleteLayer 1,817 -> 1,593 ticks (-12 %), 300 MoveLayer 701 -> 600 (-14 %).
+    Workbench idle: 512 bytes held. Region results are unchanged (`tests/gregion_probe.sh` identical but for its
+    allocation log and its injected AllocMem failures, which a pooled block now satisfies).
+  - ScrollRaster (`.sc_blit` in `sr_vert`): the masked B, C, D blit runs only on the partial edge words; the whole
+    words between them are copied A → D ($09F0), half the blitter cycles. One or two words: one masked blit as
+    before. `tests/scrollpix_probe.sh` compares 160 scrolls (edges 0-31, widths 6 to 320, dy ±1 to ±9) with a
+    reference ROM.
+  - Text (`.tx_str`, JAM2): a plane where pens A and B agree (m1 = 0) gets the pen byte whatever the glyph; the
+    glyph walk is skipped, the first byte keeps the zeros the shifted walk brings in from the left (the left-edge
+    restore ORs into them).
   - Trace build `BLTTRACE` (never in dev or prod; `BTRACE` in `exec.i`): calls and pixels of each copy path
     (br_blit entered / phase strip / blitter / br_copy / generic CPU, BltBitMap entered / solid / one-BitMap CPU /
     distinct CPU) in a table whose address is the long at `$7E0`, allocated on first use.

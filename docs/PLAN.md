@@ -1688,6 +1688,15 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   DPaint losing its picture under every menu; an analysis probe confirmed the real 1.3 keeps it, and menu boxes now
   save and restore the screen under them. `tests/bltrp_probe.sh` extended to every phase pair and five minterms (800
   copies, BAD 0 on the old and new ROMs, a ROM with unswapped descending masks fails with 110,140 bad pixels).
+  Then (user: "regarde si tu trouves d'autres optimisations", then "fais celles que tu recommandes"): a new PCPROF
+  profile on v0.2.53 (console, Workbench interaction, boot, Deluxe Paint). Done: br_blit takes constant source planes
+  (NULL, -1, beyond the source's depth: B off, BLTBDAT constant, B shift 0; a shifted constant failed bltrp under
+  emulation, now a rule in amiga-asm.md); Text fills a plane whose pens agree without walking the glyphs; ScrollRaster
+  copies the whole middle words A -> D and only the edge words with the masked B, C, D blit. C:Type of 400 lines
+  41.44 -> 35.14 s (same screen). At the user's request ("si on gagne + de 10% de performance pour environ 2Ko"): a
+  pool of up to 128 freed 16-byte region blocks, `tests/layerperf_probe.sh` menu-like layers 1,817 -> 1,600 ticks,
+  MoveLayer 701 -> 600, 512 bytes held at Workbench idle. New probes `scrollpix`, `layerperf`; `bltrp` covers
+  constant planes (992 copies). A ROM with three planted faults fails textpix, scrollpix and bltrp.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

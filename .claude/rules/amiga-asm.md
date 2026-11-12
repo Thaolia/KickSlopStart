@@ -56,6 +56,8 @@ globs: ["src/**/*.s", "src/**/*.i", "tests/**/*.s"]
 - Any copper list shown at boot goes through COP1LC; keep a copinit that jumps to COP2LC for programs that only
   write COP2LC.
 - Write POTGO through potgo.resource, or the right/middle button reads as held.
+- A blitter channel used as a constant (DMA off, BLTxDAT set) gets a shift of 0: shifted, it mixes with the
+  channel's previous word, which is not the constant (seen under emulation).
 - Restore every register a boot self-test touched (CIA latches, DMACON) to its power-up value.
 - Clear the low-RAM variables at coldstart: only FS-UAE starts with zeroed RAM.
 - Drawing calls preserve RastPort state (pens, draw mode) and the registers the 1.3 call leaves intact.

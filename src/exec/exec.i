@@ -559,6 +559,8 @@ TD_CTRK      EQU $00000720 ; trackdisk: TD_NCACHE words — track of each slot (
 TD_CAGE      EQU $00000730 ; trackdisk: TD_NCACHE words — last access (TD_CTICK) of each slot
 TD_NCACHE    EQU 4         ; tracks kept in cache (4 x 5632 = 22 KB; WB boot 54 s -> 63 s against 8, 2026-11-06)
 DOS_DOSBASE  EQU $000006F0 ; long: DosBase (set by dos initFunc) — the BCPL runtime does not have a6 = DosBase
+GFX_RPOOL    EQU $000006F4 ; graphics: long — pooled 16-byte region blocks (chained through their first long) | 0
+GFX_RPOOLN   EQU $000006F8 ; graphics: word — how many (at most RP_MAX, regions.s)
 ; GP_NO_WRAP=1 (RED): gp_delta8 subtracts the 0..255 counters as WORDS (without byte sign-extend) -> when crossing
 ; $FF/$00 the delta is wrong ($FE->$01 gives -253 instead of +3) -> "GAMEPORT OK" absent (the wrap vector of the
 ; gp_poll test fails). Isolates the 8-bit wraparound model of the quadrature counters (load-bearing). Default 0.

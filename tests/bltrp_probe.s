@@ -2,7 +2,8 @@
 ; Copies rectangles between two 2-plane 320 x 64 CHIP BitMaps (source and destination filled with different
 ; pseudo-random patterns before each case): minterm $C0 for every source phase 0-15 in its word against every
 ; destination phase 0-15, then minterms $30, $60, $80 and $E0 for source and destination phases 0, 3, ..., 15; widths
-; 37 and 150, height 30: large enough for the blitter path. Each case checks every pixel of the destination rows
+; 37 and 150, height 30: large enough for the blitter path. Then constant source planes, minterms $C0 and $60 every
+; fifth phase: a 1-plane source (its second plane reads as 0), a second plane of -1 (reads as 1), a NULL first plane. Each case checks every pixel of the destination rows
 ; dy-1..dy+h and columns dx-16..dx+w+15 of both planes: inside the rectangle the minterm of the source pixel and the
 ; destination as filled (bit 4 + 2 * source + destination of the minterm), outside the destination as filled (a
 ; pristine copy). Prints "BR CASES <n> BAD <pixels>" and, on a mismatch, "BR FIRST <sx> <dx> <w> <minterm>" for the
@@ -33,12 +34,12 @@ start:
         moveq   #0,d0
         jsr     LVO_OpenLibrary(a6)
         move.l  d0,gfx
-        beq     .out
+        beq     st_out
         move.l  #6*PLANE,d0
         moveq   #MEMF_CHIP,d1
         jsr     LVO_AllocMem(a6)
         move.l  d0,mem
-        beq     .close
+        beq     st_close
         lea     srcbm(pc),a0
         move.l  d0,8(a0)
         add.l   #PLANE,d0
@@ -60,6 +61,29 @@ start:
         lea     dstbm(pc),a0
         move.l  a0,4(a1)             ; rp_BitMap
         lea     mterms(pc),a3
+        bsr     mloop
+        lea     srcbm(pc),a0         ; 1-plane source
+        move.b  #1,5(a0)
+        lea     cterms(pc),a3
+        bsr     mloop
+        lea     srcbm(pc),a0
+        move.b  #2,5(a0)
+        move.l  12(a0),-(sp)         ; second plane -1
+        move.l  #-1,12(a0)
+        lea     cterms(pc),a3
+        bsr     mloop
+        lea     srcbm(pc),a0
+        move.l  (sp)+,12(a0)
+        move.l  8(a0),-(sp)          ; NULL first plane
+        clr.l   8(a0)
+        lea     cterms(pc),a3
+        bsr     mloop
+        lea     srcbm(pc),a0
+        move.l  (sp)+,8(a0)
+        bra     st_report
+
+; mloop(a3 = minterm table: minterm, phase step, ..., 0): every case of the table.
+mloop:
 .mt:
         move.b  (a3)+,d0
         beq     .mtend
@@ -90,6 +114,8 @@ start:
         moveq   #15,d7
         bra.s   .sph
 .mtend:
+        rts
+st_report:
         lea     m_cases(pc),a0
         bsr     puts
         move.l  ncases(pc),d0
@@ -100,7 +126,7 @@ start:
         bsr     phex8
         bsr     nl
         tst.l   nbad
-        beq.s   .ok
+        beq.s   st_ok
         lea     m_first(pc),a0
         bsr     puts
         move.w  fsx(pc),d0
@@ -112,16 +138,16 @@ start:
         move.w  fmt(pc),d0
         bsr     phex4
         bsr     nl
-.ok:
+st_ok:
         move.l  4.w,a6
         move.l  mem(pc),a1
         move.l  #6*PLANE,d0
         jsr     LVO_FreeMem(a6)
-.close:
+st_close:
         move.l  4.w,a6
         move.l  gfx(pc),a1
         jsr     LVO_CloseLibrary(a6)
-.out:
+st_out:
         lea     m_end(pc),a0
         bsr     puts
         moveq   #0,d0
@@ -206,11 +232,7 @@ onecase:
         move.w  d0,d2
         move.w  d1,d3
         add.w   #SY,d3
-        move.w  d4,d0
-        lsl.w   #2,d0
-        lea     srcbm(pc),a0
-        move.l  8(a0,d0.w),a0
-        bsr     getbit
+        bsr     srcbit
         add.b   d0,d0                ; minterm bit 4 + 2 * source + destination
         add.b   d6,d0
         addq.b  #4,d0
@@ -251,6 +273,25 @@ onecase:
 .ret:
         movem.l (sp)+,d5-d7
         rts
+
+; srcbit(d4 = plane, d2 = x, d3 = y) -> d0.b = source pixel: 0 beyond the source's depth or for a NULL plane, 1 for
+; a plane of -1. Clobbers d0/d1/a0.
+srcbit:
+        lea     srcbm(pc),a0
+        moveq   #0,d0
+        cmp.b   5(a0),d4
+        bhs.s   .sb_r
+        move.w  d4,d0
+        lsl.w   #2,d0
+        move.l  8(a0,d0.w),d0
+        beq.s   .sb_r
+        cmp.l   #-1,d0
+        bne.s   .sb_get
+        moveq   #1,d0
+.sb_r:
+        rts
+.sb_get:
+        move.l  d0,a0
 
 ; getbit(a0 = plane, d2 = x, d3 = y) -> d0.b = 0/1. Clobbers d0/d1/a0.
 getbit:
@@ -335,6 +376,7 @@ dstbm:    dc.w  BPR,ROWS
 origbm:   dc.l  0,0              ; planes of a pristine copy of the destination fill
 rport:    dcb.b 100,0
 mterms:   dc.b  $C0,1,$30,3,$60,3,$80,3,$E0,3,0   ; minterm, phase step
+cterms:   dc.b  $C0,5,$60,5,0
 gfxname:  dc.b  "graphics.library",0
 m_cases:  dc.b  "BR CASES",0
 m_bad:    dc.b  " BAD",0

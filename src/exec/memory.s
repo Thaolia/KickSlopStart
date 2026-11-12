@@ -13,6 +13,7 @@
                 xdef    exec_AllocMem
                 xref    ram_expungeall   ; ramlib.s
                 xref    td_lowmem        ; trackdisk.s
+                xref    gfx_rpflush      ; graphics regions.s: pooled region blocks
                 xdef    exec_FreeMem
                 xdef    exec_AvailMem
                 xdef    exec_TypeOfMem
@@ -146,6 +147,7 @@ exec_AllocMem:
         moveq   #1,d3
         st      RAM_LOWMEM
         jsr     td_lowmem            ; the trackdisk multi-track cache goes back first
+        jsr     gfx_rpflush          ; then the pooled region blocks
         jsr     ram_expungeall
         sf      RAM_LOWMEM
         bra.w   .am_first

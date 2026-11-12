@@ -32,6 +32,10 @@ of the MemHeaders with gdb, disk window open before and after): 33,896 bytes aga
 At idle the RAM handler's stack gives 1,024 more. High-water marks with a pattern-filled stack: NEWCON 668 and
 Background CLI 516 bytes on the 68000 side after a long Shell session with a requester. docs/PLAN.md "Shell stack
 margin 1024 (2026-11-10)".
+**Update (2026-11-12): RegionRectangle pool.** Graphics keeps up to 128 freed 16-byte region blocks (2 KB at most) to
+hand them out again. A/2, production ROM, sum of the MemHeaders (IPC reads) with and without the pool, same moments:
+Workbench idle 867,880 -> 867,368 (512 bytes held), after a disk window and a menu 855,680 -> 855,184 (496). The pool
+goes back to exec when an AllocMem fails.
 
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of

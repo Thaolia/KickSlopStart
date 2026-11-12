@@ -13,6 +13,7 @@
                 include "graphics.i"
 
                 xdef    gfx_NewRegion
+                xdef    gfx_rpflush          ; exec AllocMem, after a failure
                 xdef    gfx_DisposeRegion
                 xdef    gfx_ClearRegion
                 xdef    gfx_OrRectRegion
@@ -42,6 +43,63 @@ RG_MAXY         EQU 6
 RG_RECTS        EQU 8                ; head cell of the list
 RG_SIZE         EQU 12
 
+; Pool of 16-byte blocks (RegionRectangles; Region headers, 12 bytes, take 16 from exec too): a menu box or a layer
+; move allocates and frees dozens of them, and each AllocMem / FreeMem walks the free list of a fragmented slow-RAM
+; header. Freed blocks are kept (up to RP_MAX, 2 KB) and given back first; each is a genuine AllocMem(16) block, so
+; code that hands one straight to FreeMem stays correct. Under Forbid; emptied by gfx_rpflush when AllocMem fails.
+RP_MAX          EQU 128
+
+; rp_alloc(d1 = requirements, a6 = SysBase) -> d0 = 16-byte block | 0, as AllocMem(16, d1) (MEMF_CLEAR honoured).
+; Changes d0/a0/a1.
+rp_alloc:
+        jsr     LVO_FORBID(a6)
+        move.l  GFX_RPOOL,d0
+        beq.s   .pa_exec
+        move.l  d0,a0
+        move.l  (a0),GFX_RPOOL
+        subq.w  #1,GFX_RPOOLN
+        jsr     LVO_PERMIT(a6)
+        btst    #16,d1               ; MEMF_CLEAR
+        beq.s   .pa_ret
+        clr.l   (a0)+
+        clr.l   (a0)+
+        clr.l   (a0)+
+        clr.l   (a0)
+.pa_ret:
+        rts
+.pa_exec:
+        jsr     LVO_PERMIT(a6)
+        moveq   #RR_SIZE,d0
+        jmp     LVO_ALLOCMEM(a6)
+
+; rp_free(a1 = 16-byte block, a6 = SysBase), as FreeMem(a1, 16). Changes d0/d1/a0; a1 preserved.
+rp_free:
+        jsr     LVO_FORBID(a6)
+        cmp.w   #RP_MAX,GFX_RPOOLN
+        bhs.s   .pf_exec
+        move.l  GFX_RPOOL,(a1)
+        move.l  a1,GFX_RPOOL
+        addq.w  #1,GFX_RPOOLN
+        jmp     LVO_PERMIT(a6)
+.pf_exec:
+        jsr     LVO_PERMIT(a6)
+        moveq   #RR_SIZE,d0
+        jmp     LVO_FREEMEM(a6)
+
+; gfx_rpflush(a6 = SysBase, under Forbid): the pooled blocks go back to exec. Preserves d2-d7/a2-a6.
+gfx_rpflush:
+.pl_lp:
+        move.l  GFX_RPOOL,d0
+        beq.s   .pl_ret
+        move.l  d0,a1
+        move.l  (a1),GFX_RPOOL
+        subq.w  #1,GFX_RPOOLN
+        moveq   #RR_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .pl_lp
+.pl_ret:
+        rts
+
 ; ============================ rl_* engine (absolute coordinates) ============================
 ; List designated by a2 = address of the cell pointing to the first node (RG_RECTS(region), or any
 ; long). Rectangle designated by a1 (MinX, MinY, MaxX, MaxY: 4 words). The rl_* preserve d2-d7/a2-a6.
@@ -51,9 +109,8 @@ RG_SIZE         EQU 12
 rl_add:
         movem.l a1/a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RR_SIZE,d0
         move.l  #MEMF_PUBLIC,d1
-        jsr     LVO_ALLOCMEM(a6)
+        bsr     rp_alloc
         movem.l (sp)+,a1/a6
         tst.l   d0
         beq.s   .ad_nomem
@@ -77,8 +134,7 @@ rl_free:
         beq.s   .fr_out
         move.l  d0,a1
         move.l  RR_NEXT(a1),(a2)
-        moveq   #RR_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         bra.s   .fr_lp
 .fr_out:
         movem.l (sp)+,a3/a6
@@ -122,8 +178,7 @@ rl_and:
 .an_drop:
         move.l  RR_NEXT(a3),(a4)
         move.l  a3,a1
-        moveq   #RR_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         bra.s   .an_lp
 .an_out:
         movem.l (sp)+,d2-d5/a3-a4/a6
@@ -208,8 +263,7 @@ rl_sub:
         bne.s   .sb_pieces
         move.l  RR_NEXT(a3),(a4)     ; fully overlapped: node removed
         move.l  a3,a1
-        moveq   #RR_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         bra     .sb_lp
 .sb_pieces:
         move.l  (a5),RR_MINX(a3)     ; 1st piece in the node
@@ -219,9 +273,8 @@ rl_sub:
         bmi.s   .sb_adv
 .sb_ins:
         movem.l d0-d1/a0,-(sp)
-        moveq   #RR_SIZE,d0
         move.l  #MEMF_PUBLIC,d1
-        jsr     LVO_ALLOCMEM(a6)
+        bsr     rp_alloc
         move.l  d0,a1
         movem.l (sp)+,d0-d1/a0
         move.l  a1,d1
@@ -380,9 +433,8 @@ rg_inside:
 rg_alloc:
         movem.l a0-a1/a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RR_SIZE,d0
         move.l  #MEMF_CLEAR,d1
-        jsr     LVO_ALLOCMEM(a6)
+        bsr     rp_alloc
         movem.l (sp)+,a0-a1/a6
         tst.l   d0
         beq.s   .al_r
@@ -410,8 +462,7 @@ rg_new:
 rg_free:
         movem.l a0-a1/a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RR_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         movem.l (sp)+,a0-a1/a6
         rts
 
@@ -579,9 +630,8 @@ rg_union:
 gfx_NewRegion:
         move.l  a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RG_SIZE,d0
         move.l  #MEMF_CLEAR,d1
-        jsr     LVO_ALLOCMEM(a6)
+        bsr     rp_alloc
         move.l  (sp)+,a6
         rts
 
@@ -606,8 +656,7 @@ gfx_DisposeRegion:
         move.l  (sp)+,a1
         move.l  a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RG_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         move.l  (sp)+,a6
 .dr_r:
         rts
@@ -943,8 +992,7 @@ gfx_AndRegionRegion:
         move.l  a5,a1                ; the result's header only
         move.l  a6,-(sp)
         move.l  ($4).w,a6
-        moveq   #RG_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     rp_free
         move.l  (sp)+,a6
         moveq   #1,d0
 .ag_ret:

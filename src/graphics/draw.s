@@ -3973,6 +3973,8 @@ TS_SIZE         EQU 20
         move.w  TS_N(a3),d2
         subq.w  #1,d2
         moveq   #0,d3                ; d3 = previous byte (high 8 bits) and current one
+        tst.b   d6
+        beq.s   .ts_fill             ; m1 = 0: this plane gets d7 whatever the glyph
 .ts_ch:
         move.l  (a2)+,a1
         move.b  0(a1,d5.l),d0
@@ -3984,6 +3986,7 @@ TS_SIZE         EQU 20
         lsr.w   d4,d0
         move.b  d0,(a0)+
         dbra    d2,.ts_ch
+.ts_edge:
         tst.w   d4
         beq.s   .ts_nx
         lsl.w   #8,d3                ; right byte: end of the last glyph
@@ -4005,6 +4008,17 @@ TS_SIZE         EQU 20
         move.w  TX_MOD(a5),d0
         add.l   d0,d5
         bra.s   .ts_row
+.ts_fill:                            ; as the loop above with every glyph byte = d7 (0 / $FF): the first byte has
+        move.b  d7,d0                ; the zeros shifted in from the left, which the left-edge restore relies on
+        lsr.b   d4,d0
+        move.b  d0,(a0)+
+        bra.s   .ts_fnx
+.ts_flp:
+        move.b  d7,(a0)+
+.ts_fnx:
+        dbra    d2,.ts_flp
+        move.b  d7,d3                ; the last glyph byte, for the right edge
+        bra.s   .ts_edge
 .to_plane:                           ; d6 = pen A bit ($FF / 0)
         moveq   #0,d7                ; d7 = glyph inversion (INVERSVID)
         btst    #2,TS_MODE(a3)
@@ -5029,7 +5043,13 @@ SC_DBX          EQU 18
 SC_DBY          EQU 20
 SC_YMIN         EQU 22
 SC_YMAX         EQU 24
-SC_SIZE         EQU 26
+SC_BROWS        EQU 26               ; .sc_blit: rows (1024 = 0), first word, words, edge masks, BytesPerRow
+SC_BW0          EQU 28
+SC_BN           EQU 30
+SC_BLM          EQU 32
+SC_BRM          EQU 34
+SC_BPR          EQU 36
+SC_SIZE         EQU 38
 sr_vert:
         movem.l d0-d7/a0-a4,-(sp)
         lea     -SC_SIZE(sp),sp
@@ -5156,24 +5176,23 @@ sr_vert:
         addq.w  #1,d5                ; d5 = words per row
         cmp.w   #64,d5
         bhi     .bl_no
-        lsl.w   #6,d4
-        or.w    d5,d4                ; d4 = BLTSIZE (height << 6 | words; 1024 rows = 0)
+        move.w  d4,SC_BROWS(a4)
+        move.w  d6,SC_BW0(a4)
+        move.w  d5,SC_BN(a4)
         and.w   #15,d2
         moveq   #-1,d0
         lsr.w   d2,d0
-        move.w  d0,d2                ; d2 = left word mask
+        move.w  d0,SC_BLM(a4)        ; left word mask
         and.w   #15,d3
         moveq   #15,d1
         sub.w   d3,d1
         moveq   #-1,d3
-        lsl.w   d1,d3                ; d3 = right word mask
-        move.w  SC_YMIN(a4),d0       ; upwards: destination ymin, source ymin + dy, first word
+        lsl.w   d1,d3
+        move.w  d3,SC_BRM(a4)        ; right word mask
+        move.w  SC_YMIN(a4),d0       ; upwards: destination ymin, source ymin + dy
         tst.w   SC_DY(a4)
         bpl.s   .bl_rows
-        move.w  SC_YMAX(a4),d0       ; downwards: last row and last word, descending
-        add.w   d5,d6
-        subq.w  #1,d6
-        exg     d2,d3                ; when descending, the first word processed is the rightmost one
+        move.w  SC_YMAX(a4),d0       ; downwards: from the last row, descending
 .bl_rows:
         move.w  d0,d1
         add.w   SC_DY(a4),d1
@@ -5181,19 +5200,9 @@ sr_vert:
         sub.w   SC_DBY(a4),d1
         moveq   #0,d7
         move.w  bm_BytesPerRow(a2),d7
-        mulu    d7,d0                ; d0 = destination offset
-        mulu    d7,d1                ; d1 = source offset
-        add.w   d6,d6
-        and.l   #$FFFF,d6
-        add.l   d6,d0
-        add.l   d6,d1
-        add.w   d5,d5
-        sub.w   d5,d7                ; d7 = modulo (bytes skipped per row)
-        moveq   #0,d6                ; d6 = BLTCON1
-        tst.w   SC_DY(a4)
-        bpl.s   .bl_own
-        moveq   #2,d6                ; DESC
-.bl_own:
+        move.w  d7,SC_BPR(a4)
+        mulu    d7,d0                ; d0 = destination row offset
+        mulu    d7,d1                ; d1 = source row offset
         movem.l d0-d1,-(sp)          ; the layer is locked: a program that holds the blitter (OwnBlitter) must not
         lea     gb_BlitSem(a3),a0    ; stall us here while the input task waits on this layer -> CPU copy instead
         jsr     LVO_ATTEMPTSEMAPHORE(a6)
@@ -5207,31 +5216,105 @@ sr_vert:
         moveq   #0,d5                ; d5 = plane
 .bl_plane:
         cmp.b   bm_Depth(a2),d5
-        bge.s   .bl_done
+        bge     .bl_done
         move.w  d5,a1
         add.w   a1,a1
         add.w   a1,a1
         move.l  bm_Planes(a2,a1.w),a1
+        move.w  SC_BN(a4),d3
+        cmp.w   #3,d3
+        bhs.s   .bl_split
+        move.w  SC_BW0(a4),d2        ; one or two words: one masked blit
+        move.w  SC_BLM(a4),d4
+        move.w  SC_BRM(a4),d6
+        move.w  #$07CA,d7
+        bsr     .bl_sub
+        bra.s   .bl_pnext
+.bl_split:                           ; masked edge words (B, C, D) and the whole words between them with A -> D only,
+        move.w  SC_BW0(a4),d2        ; which takes half the blitter cycles
+        cmp.w   #$FFFF,SC_BLM(a4)
+        beq.s   .bl_lfull
+        moveq   #1,d3
+        move.w  SC_BLM(a4),d4
+        move.w  d4,d6
+        move.w  #$07CA,d7
+        bsr.s   .bl_sub
+        addq.w  #1,d2
+.bl_lfull:
+        move.w  SC_BW0(a4),d3
+        add.w   SC_BN(a4),d3
+        sub.w   d2,d3                ; words from d2 to the last one
+        cmp.w   #$FFFF,SC_BRM(a4)
+        beq.s   .bl_rfull
+        subq.w  #1,d3
+.bl_rfull:
+        moveq   #-1,d4
+        moveq   #-1,d6
+        move.w  #$09F0,d7            ; A, D; D = A
+        bsr.s   .bl_sub
+        cmp.w   #$FFFF,SC_BRM(a4)
+        beq.s   .bl_pnext
+        add.w   d3,d2                ; the right edge word
+        moveq   #1,d3
+        move.w  SC_BRM(a4),d4
+        move.w  d4,d6
+        move.w  #$07CA,d7
+        bsr.s   .bl_sub
+.bl_pnext:
+        addq.w  #1,d5
+        bra     .bl_plane
+; .bl_sub(a0 = custom, a1 = plane, d0/d1 = destination/source row offsets of the first row processed, d2 = first
+; word, d3 = words, d4/d6 = left/right edge masks, d7 = BLTCON0 ($07CA: A constant masked, B source, C/D
+; destination; $09F0: A source, D destination), a4 = SC frame): waits for the previous blit, then starts this one;
+; downwards (SC_DY < 0) descending from the last word. Clobbers nothing.
+.bl_sub:
+        movem.l d0-d4/d6/a1,-(sp)
         btst    #6,BLT_DMACONR(a0)   ; dummy read (A1000 quirk), then wait for the previous blit
 .bl_wait:
         btst    #6,BLT_DMACONR(a0)
         bne.s   .bl_wait
-        move.w  #$07CA,BLT_CON0(a0)  ; B, C, D enabled; minterm AB + ~AC
-        move.w  d6,BLT_CON1(a0)
-        move.w  d2,BLT_AFWM(a0)
-        move.w  d3,BLT_ALWM(a0)
+        moveq   #0,d0
+        move.w  SC_BPR(a4),d0
+        sub.w   d3,d0
+        sub.w   d3,d0                ; modulo
+        move.w  d0,BLT_AMOD(a0)
+        move.w  d0,BLT_BMOD(a0)
+        move.w  d0,BLT_CMOD(a0)
+        move.w  d0,BLT_DMOD(a0)
+        move.w  d7,BLT_CON0(a0)
+        clr.w   BLT_CON1(a0)
+        tst.w   SC_DY(a4)
+        bpl.s   .bs_asc
+        move.w  #2,BLT_CON1(a0)      ; DESC: the first word processed is the rightmost one
+        exg     d4,d6
+        add.w   d3,d2
+        subq.w  #1,d2
+.bs_asc:
+        move.w  d4,BLT_AFWM(a0)
+        move.w  d6,BLT_ALWM(a0)
         move.w  #$FFFF,BLT_ADAT(a0)
-        move.w  d7,BLT_BMOD(a0)
-        move.w  d7,BLT_CMOD(a0)
-        move.w  d7,BLT_DMOD(a0)
-        pea     0(a1,d1.l)
+        add.w   d2,d2
+        and.l   #$FFFF,d2
+        movem.l (sp),d0-d1           ; row offsets
+        add.l   d2,d0
+        add.l   d2,d1
+        pea     0(a1,d1.l)           ; source
+        cmp.w   #$09F0,d7
+        bne.s   .bs_b
+        move.l  (sp)+,BLT_APT(a0)
+        bra.s   .bs_d
+.bs_b:
         move.l  (sp)+,BLT_BPT(a0)
+.bs_d:
         pea     0(a1,d0.l)
         move.l  (sp),BLT_CPT(a0)
         move.l  (sp)+,BLT_DPT(a0)
-        move.w  d4,BLT_SIZE(a0)
-        addq.w  #1,d5
-        bra.s   .bl_plane
+        move.w  SC_BROWS(a4),d0
+        lsl.w   #6,d0
+        or.w    d3,d0
+        move.w  d0,BLT_SIZE(a0)
+        movem.l (sp)+,d0-d4/d6/a1
+        rts
 .bl_done:
         btst    #6,BLT_DMACONR(a0)
 .bl_wend:
@@ -5923,8 +6006,10 @@ gfx_BltBitMapRastPort:
 ; word further than the destination's, the blit stops its right-edge mask at the last column it can fill from the
 ; fetched words, and the 1-15 columns left at the right (RB_STRIP) go back to the CPU engines: br_blit then rewrites
 ; the caller's saved sx/dx/width for that strip and reports the copy as not handled.
+; A source plane that is NULL, or beyond the source's depth, reads as 0, and -1 as 1 (as in the CPU engines): that
+; plane is blitted with B off and BLTBDAT holding the constant.
 ; Validate all selected planes, including the final masked B fetch and cross-plane aliasing, before any DMA.
-; Unsupported alignment, constants, non-CHIP memory and aliasing retain the CPU engines below.
+; Unsupported alignment, non-CHIP memory and aliasing retain the CPU engines below.
 RB_SOFF         EQU 0
 RB_DOFF         EQU 4
 RB_SRANGE       EQU 8
@@ -5990,8 +6075,6 @@ br_blit:
         move.b  bm_Depth(a3),d6
         beq     .rb_no
         cmp.w   #8,d6
-        bhi     .rb_no
-        cmp.b   bm_Depth(a2),d6
         bhi     .rb_no
         moveq   #0,d6
         move.w  d0,d6
@@ -6106,12 +6189,8 @@ br_blit:
         bhs     .rb_valid
         btst    d7,RB_MASK(a4)
         beq     .rb_vnext
-        move.w  d7,d0
-        lsl.w   #2,d0
-        move.l  bm_Planes(a2,d0.w),d3
-        beq     .rb_no
-        cmp.l   #-1,d3
-        beq     .rb_no
+        bsr     .rb_splane
+        beq     .rb_vdst             ; constant source plane: only the destination is checked
         add.l   RB_SOFF(a4),d3
         bcs     .rb_no
         btst    #0,d3
@@ -6128,6 +6207,11 @@ br_blit:
         jsr     LVO_TYPEOFMEM(a6)
         btst    #1,d0
         beq     .rb_no
+        st      d2                   ; the source span is checked against the destination planes below
+        bra.s   .rb_vd
+.rb_vdst:
+        sf      d2
+.rb_vd:
         move.w  d7,d0
         lsl.w   #2,d0
         move.l  bm_Planes(a3,d0.w),d5
@@ -6144,6 +6228,8 @@ br_blit:
         jsr     LVO_TYPEOFMEM(a6)
         btst    #1,d0
         beq     .rb_no
+        tst.b   d2
+        beq.s   .rb_vnext
         moveq   #0,d2              ; every enabled destination plane must be disjoint from this source span
 .rb_alias:
         cmp.b   bm_Depth(a3),d2
@@ -6181,18 +6267,30 @@ br_blit:
         cmp.b   bm_Depth(a3),d7
         bhs.w   .rb_done
         btst    d7,RB_MASK(a4)
-        beq.s   .rb_next
+        beq.w   .rb_next
         bsr     db_wait
+        bsr     .rb_splane
+        beq.s   .rb_const
         move.w  RB_CON0(a4),BLT_CON0(a0)
         move.w  RB_SHIFT(a4),BLT_CON1(a0)
         clr.w   BLT_BDAT(a0)
+        bra.s   .rb_con
+.rb_const:                         ; B off, BLTBDAT = the plane's constant (0 / $FFFF), not shifted: the shifter would
+        move.w  RB_CON0(a4),d6     ; mix in the previous B word, which is not the constant (seen under emulation)
+        and.w   #$fbff,d6
+        move.w  d6,BLT_CON0(a0)
+        move.w  RB_SHIFT(a4),d6
+        and.w   #$0fff,d6          ; B shift 0, DESC kept
+        move.w  d6,BLT_CON1(a0)
+        move.w  d3,BLT_BDAT(a0)
+.rb_con:
         move.w  #$ffff,BLT_ADAT(a0)
         move.w  RB_SMOD(a4),BLT_BMOD(a0)
         move.w  RB_DMOD(a4),BLT_CMOD(a0)
         move.w  RB_DMOD(a4),BLT_DMOD(a0)
+        move.l  d3,a1
+        adda.l  RB_SOFF(a4),a1       ; (not used by a constant plane)
         lsl.w   #2,d7
-        move.l  bm_Planes(a2,d7.w),a1
-        adda.l  RB_SOFF(a4),a1
         move.l  bm_Planes(a3,d7.w),d6
         add.l   RB_DOFF(a4),d6
         tst.b   RB_DESC(a4)
@@ -6240,6 +6338,22 @@ br_blit:
 .rb_return:
         lea     RB_SIZE(sp),sp
         movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+; .rb_splane(d7.w = plane, a2 = source BitMap) -> d3 = source plane, or 0 / -1 for a constant one (beyond the depth:
+; 0), Z set for a constant. Clobbers d3 only.
+.rb_splane:
+        moveq   #0,d3
+        cmp.b   bm_Depth(a2),d7
+        bhs.s   .rs_c
+        move.w  d7,d3
+        lsl.w   #2,d3
+        move.l  bm_Planes(a2,d3.w),d3
+        beq.s   .rs_r
+        cmp.l   #-1,d3
+.rs_r:
+        rts
+.rs_c:
+        moveq   #0,d3                ; Z set
         rts
 
 ; Copy a disjoint rectangle with byte-aligned origins without rebuilding row alignment or multiplying row indices.
