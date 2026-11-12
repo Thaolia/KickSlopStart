@@ -2343,6 +2343,12 @@ differs.
   `ofs_stream_read` is unrolled by four; AllocMem's MEMF_CLEAR writes a zero register (`clr.l` reads the long
   first on a 68000) in 32-byte blocks. Checked by `tests/copymem_test.py`, `tests/allocmem_clear_test.py` and
   `tests/td_decode_test.py` (unicorn, 68000 model) and timed by `tests/fsperf_probe.sh`.
+  `td_encode_track`'s clock pass takes the last bit of the previous long through X (`lsr` then `roxr`) and the clock
+  bits as `~(neighbours | MFM_MASK)`, without immediates (byte-identical tracks: `tests/td_encode_test.py`).
+  The production ROM no longer copies console output to the serial port: `con_dowrite`'s mirror, the echo of typed
+  keys in `con_echo` and `con_putc` are under `ifeq PROD` (the development ROM is byte-identical). The polled UART at
+  9,600 baud was about half of the CPU time of console output (PC profile), and 1.3 has no such copy. Serial input
+  to the console handler is unchanged. Probes run on the production ROM print on SERDAT themselves.
   **Menu flags at activation, MrgCop without CopList, async line blits, getvec, PCPROF (2026-11-12)**:
   REMAINING-WORK C3, C4, A7, D8.
   - `it_setactive` (`src/intuition/screens.s`) calls `mn_actclr` (`menus.s`) before setting WINDOWACTIVE: the new

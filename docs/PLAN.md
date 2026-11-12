@@ -1667,6 +1667,15 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   200 AllocMem(20,000, MEMF_CLEAR) 226 → 105 (−54 %); the file written is identical to the pattern and OFS CHECK OK
   with both ROMs. Unicorn tests on both ROMs: copymem 14,541 cases, allocmem_clear 410, td_decode 0 failures. dev
   prepush-check FAIL=0 (Lemmings menu shown), Workbench 1.3.3 boots on the production ROM.
+  Then lot B (user: "continue avec le lot B"): a PCPROF profile of the Workbench boot, a 400-line C:Type and the
+  fsperf disk put a third of the boot's busy time in trackdisk's step/settle waits (left alone: drive timing),
+  `td_decode_track` 15 %, `td_encode_track` 32 % of the busy time of writes, and the console's serial mirror 47 % of
+  console output. The MFM clock pass was rewritten (write 826 -> 810-812 ticks, tracks byte-identical over 45 cases),
+  and at the user's request ("désactive le miroir série de la console pour la rom de prod") the production ROM no
+  longer mirrors the console on serial: `tests/contype_probe.sh` 68.6 -> 41.4 s for the 400 lines (same screen;
+  earlier measure of the real 1.3 on a similar run: 38 s). Not taken: `gfx_Text`'s unshifted case (3-4 %), movem
+  copies (stack). `tests/tdcode_probe.s` and `tests/waittof_probe.s` now print on SERDAT (TDCODE OK, WaitTOF values
+  as before on the production ROM).
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

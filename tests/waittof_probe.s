@@ -145,20 +145,22 @@ hex8:
         rts
 digits: dc.b    "0123456789ABCDEF"
 
-; say(a0 = text ended by 0): Write(Output(), text).
+; say(a0 = text ended by 0): on the serial line, polled (the production ROM does not mirror the console there).
 say:
-        movem.l d2-d3/a6,-(sp)
-        move.l  a0,d2
-        moveq   #-1,d3
-.sy_len:
-        addq.l  #1,d3
-        tst.b   (a0)+
-        bne.s   .sy_len
-        move.l  a4,a6
-        jsr     -60(a6)              ; Output
-        move.l  d0,d1
-        jsr     -48(a6)              ; Write
-        movem.l (sp)+,d2-d3/a6
+        movem.l d0-d1,-(sp)
+.sy_ch:
+        move.b  (a0)+,d0
+        beq.s   .sy_ret
+.sy_w:
+        move.w  $DFF018,d1           ; SERDATR: wait for TBE
+        btst    #13,d1
+        beq.s   .sy_w
+        and.w   #$FF,d0
+        or.w    #$100,d0             ; stop bit
+        move.w  d0,$DFF030           ; SERDAT
+        bra.s   .sy_ch
+.sy_ret:
+        movem.l (sp)+,d0-d1
         rts
 
 srv_first:

@@ -138,7 +138,7 @@ Installation instructions are in [`docs/HARDWARE.md`](docs/HARDWARE.md).
 
 ```sh
 make             # build/kick13.rom       development ROM (includes the self-test harness)
-make kick-prod   # build/kick13-prod.rom  production ROM (-DPROD=1, no test harness)
+make kick-prod   # build/kick13-prod.rom  production ROM (-DPROD=1, no test harness, no console copy on serial)
 make verify      # checks the size (256 KiB) and that romtool reports is_kick = ok
 make adf         # build/KickSlopStart.adf soft-kick disk (image linked at $C00000, -DRAMKICK=1)
 make kick-a1200  # build/kick13-a1200.rom 512 KiB image for an A1200/A4000 ROM socket (the production ROM twice)

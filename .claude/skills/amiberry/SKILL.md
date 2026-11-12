@@ -69,6 +69,9 @@ Brief template for an analysis agent (adapt the goal; always say "English"):
   the logger, nothing is lost from the first byte), `amiberry.log`, `gdb.log` (every gdb run and its output),
   `xvfb.log`, `session.env`, the floppy copies, screenshots with relative names. Logs stay after `stop`; delete the
   directory yourself when done.
+- The production ROM (`make kick-prod`) does not copy console output to the serial port (since 2026-11-12): a
+  probe run on it prints its lines straight to SERDAT (polled TBE, like `tests/fsperf_probe.s`), never through
+  `Output()`/`echo`; markers written to the console reach `serial.log` with the development ROM only.
 - `list`, `status <name>` (processes, ports, IPC PING and GET_STATUS), `serial <name> [--follow]`,
   `wait-serial <name> [--new] <text> [seconds]` (exit 1 on timeout; `--new` ignores what is already logged),
   `stop <name>... | --all`. Always stop your sessions; `stop` sends QUIT, then kills only the recorded PIDs.

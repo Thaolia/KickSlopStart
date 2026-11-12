@@ -88,6 +88,11 @@ KickTagPtr − 16.
   bytes in 7-byte Reads to an odd address, a 120,000-byte write in 3,001-byte Writes read back, 100 CopyMem of
   50,000 bytes and 200 AllocMem(20,000, MEMF_CLEAR). The host checks DF0:out in the session's copy of the disk and the
   disk with `ofs_check`. Success: `FSPERF OK`; compare the times of two ROMs (production ROMs for speed).
+- `tests/contype_probe.sh <out_dir> [rom]`: C:Type of a 400-line file to the boot console of a Workbench 1.3.3
+  copy, between two DateStamp stamps printed on SERDAT by `tests/contype_probe.s`; prints `CONTYPE <s>` and keeps
+  `end.png`. Compare two ROMs.
+- `python3 tests/td_encode_test.py <rom> <map> <reference rom> <reference map>` (unicorn): td_encode_track of both
+  ROMs on 45 tracks must be byte-identical and decode back with the first ROM's td_decode_track.
 - `python3 tests/copymem_test.py <rom> <map>` and `python3 tests/allocmem_clear_test.py <rom> <map>` (unicorn,
   68000 model; `<map>` from `vlink -M`): CopyMem/CopyMemQuick on every alignment 0-3 and sizes 0-600 plus large and
   overlapping ranges, AllocMem MEMF_CLEAR on sizes 1-400 plus large ones, with bytes around the range and preserved

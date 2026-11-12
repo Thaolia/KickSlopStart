@@ -1857,13 +1857,11 @@ td_encode_track:
         move.l  d2,d3
         add.l   d3,d3                ; next neighbour (bit k-1 into k)
         move.l  d2,d4
-        lsr.l   #1,d4                ; previous neighbour (bit k+1 into k)
+        lsr.l   #1,d1                ; X = last bit of the previous long
+        roxr.l  #1,d4                ; previous neighbour (bit k+1 into k), that bit into bit 31
         or.l    d4,d3
-        and.l   #1,d1                ; bit 31: last bit of the previous long
-        ror.l   #1,d1
-        or.l    d1,d3
+        or.l    d6,d3                ; clock bits only: ~(neighbours | data mask) = no neighbour set
         not.l   d3
-        and.l   #$AAAAAAAA,d3
         or.l    d3,d2
         move.l  d2,(a0)+
         move.l  d2,d1

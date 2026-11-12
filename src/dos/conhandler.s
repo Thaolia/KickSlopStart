@@ -316,7 +316,8 @@ con_handler:
                 jsr     LVO_PUTMSG(a6)
                 bra     .hl
 
-; con_dowrite(a4 = WRITE packet, a6 = SysBase): window, screen and serial output of the buffer, RES1 = length.
+; con_dowrite(a4 = WRITE packet, a6 = SysBase): window, screen and (development ROM) serial output of the buffer,
+; RES1 = length.
 ; Also called while a READ waits (con_side). Clobbers d0/d1/a0/a1.
 con_dowrite:
                 movem.l d2-d4/a5,-(sp)
@@ -345,7 +346,8 @@ con_dowrite:
                 move.l  ($4).w,a6            ; restore a6 = SysBase
 .dw_mirror:
                 endc
-                move.l  DP_ARG2(a4),a5       ; src (a5 survives con_putc)
+                ifeq    PROD                 ; serial mirror for the harness markers: the polled UART at 9600 baud
+                move.l  DP_ARG2(a4),a5       ; took about half of the time of console output; 1.3 has none
                 move.l  DP_ARG3(a4),d3       ; len (d3 survives con_putc)
                 tst.l   d3
                 beq     .dw_ret
@@ -356,6 +358,7 @@ con_dowrite:
                 subq.l  #1,d3
                 bne.s   .dw_lp
                 jsr     ser_unlock
+                endc
 .dw_ret:
                 movem.l (sp)+,d2-d4/a5
                 rts
@@ -418,12 +421,14 @@ con_sideback:
                 movem.l (sp)+,d0-d2/a0-a1
                 rts
 
-; con_echo(d0.b): echo of a typed byte on serial (mirror), the console window and, with SHELL_ON_SCREEN, the
-; screen. a6 = SysBase. Preserves d2-d7/a2-a6.
+; con_echo(d0.b): echo of a typed byte on serial (mirror, development ROM only), the console window and, with
+; SHELL_ON_SCREEN, the screen. a6 = SysBase. Preserves d2-d7/a2-a6.
 con_echo:
                 movem.l d2-d3,-(sp)
                 move.b  d0,d3
+                ifeq    PROD
                 bsr     con_putc
+                endc
                 move.b  d3,d0
                 bsr     con_win_emit
                 ifne    SHELL_ON_SCREEN
@@ -442,6 +447,7 @@ con_rubout:
                 moveq   #8,d0
                 bra.s   con_echo
 
+                ifeq    PROD
 ; con_putc: emits d0.b on serial (bounded TBE poll). Clobbers d0/d1/d2; preserves the rest.
 con_putc:
                 and.w   #$00FF,d0
@@ -456,6 +462,7 @@ con_putc:
 .cp_tx:
                 move.w  d0,SERDAT
                 rts
+                endc
 
 ; con_poll_wait: one wait of ~CON_POLL_US via timer.device MICROHZ. Preserves the whole loop context.
 con_poll_wait:
