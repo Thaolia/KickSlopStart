@@ -3521,22 +3521,31 @@ boot_strap_done:
         move.l  d0,a1
         bra     dispatch_in          ; -> task_H in USER mode (SR=$0000; VBlank + INT6 + yield active)
 
-; cpu_detect -> d0 = AttnFlags CPU bits (AFF_68010 1, AFF_68020 2) and CPU_FMT set on a 68010 or later. MOVEC VBR
-; and MOVEC CACR are tried with the illegal-instruction vector pointing here: a CPU without them takes the vector.
+; cpu_detect -> d0 = AttnFlags CPU bits (AFF_68010 1, AFF_68020 2, AFF_68881 $10) and CPU_FMT set on a 68010 or
+; later; a 68030 or 68040 reads as a 68020, any FPU as a 68881 (cpu-fpu-v34 §1). MOVEC VBR, MOVEC CACR and FNOP are
+; tried with the illegal-instruction and line-F vectors pointing here: a CPU or FPU missing takes the vector. On a
+; 68020 or later the instruction cache is switched on (CACR 1 read back, cpu-fpu-v34 §5; a 68040 ignores that bit).
 ; Supervisor, before init_traps. Clobbers d1/a0-a2.
 cpu_detect:
         moveq   #0,d0
+        move.l  ($2C).w,-(sp)
         move.l  ($10).w,a1
         lea     .cd_ill(pc),a0
         move.l  a0,($10).w
+        move.l  a0,($2C).w
         move.l  sp,a2
         dc.w    $4E7A,$1801          ; movec vbr,d1 (68010+)
         moveq   #1,d0
         st      CPU_FMT
         dc.w    $4E7A,$1002          ; movec cacr,d1 (68020+)
         moveq   #3,d0
+        moveq   #9,d1                ; enable + clear: no stale line from before the reset
+        dc.w    $4E7B,$1002          ; movec d1,cacr
+        dc.w    $F280,$0000          ; fnop: line F without a coprocessor
+        moveq   #3|(1<<AFB_68881),d0
 .cd_done:
         move.l  a1,($10).w
+        move.l  (sp)+,($2C).w
         rts
 .cd_ill:
         move.l  a2,sp

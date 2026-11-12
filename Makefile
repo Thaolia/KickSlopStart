@@ -54,7 +54,7 @@ KICK_ROM  := $(BUILD)/kick13.rom
 HELLO_SRC := src/rom/start.s
 HELLO_ROM := $(BUILD)/kick13-hello.rom
 
-.PHONY: all kick kick-prod kick-ram adf hello verify clean FORCE
+.PHONY: all kick kick-prod kick-a1200 kick-ram adf hello verify clean FORCE
 
 all: kick
 kick: $(KICK_ROM)
@@ -64,6 +64,11 @@ hello: $(HELLO_ROM)
 # Objects kept in build/prod/ (the dev ROM build/*.o stays intact); final image build/kick13-prod.rom.
 kick-prod:
 	$(MAKE) BUILD=build/prod VASMDEF=-DPROD=1 KICK_ROM=build/kick13-prod.rom kick
+
+# kick-a1200: the production ROM twice, build/kick13-a1200.rom (512 KB): an A1200/A4000 ROM socket decodes 512 KB
+# from $F80000, where a 256 KB Kickstart is mirrored, as with a 1.3 image burned for those machines.
+kick-a1200: kick-prod
+	cat build/kick13-prod.rom build/kick13-prod.rom > build/kick13-a1200.rom
 
 # kick-ram: production image linked at $C00000 (-DRAMKICK=1, see src/exec/exec.i), loaded into slow RAM by the
 # soft-kick disk. adf: that disk, build/KickSlopStart.adf (bootblock src/softkick/bootblock.s + the image).

@@ -150,6 +150,7 @@ make             # build/kick13.rom       ROM de développement (avec le harnais
 make kick-prod   # build/kick13-prod.rom  ROM de production (-DPROD=1, sans harnais de test)
 make verify      # vérifie la taille (256 Kio) et que romtool donne is_kick = ok
 make adf         # build/KickSlopStart.adf disquette de soft-kick (image liée en $C00000, -DRAMKICK=1)
+make kick-a1200  # build/kick13-a1200.rom image de 512 Kio pour le support ROM d'un A1200/A4000 (la ROM de production deux fois)
 ```
 
 Pour un usage courant en émulateur, prendre `build/kick13-prod.rom`. La ROM de développement lance aussi des tâches

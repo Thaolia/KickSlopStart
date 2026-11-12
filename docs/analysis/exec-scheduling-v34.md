@@ -227,7 +227,8 @@ The task's own registers are not in the CPU registers during the hooks; they are
 | `+$42` | — | the task's stack pointer value at the moment of the switch (USP restored = `tc_SPReg + $42`) |
 
 The system stack holds nothing for a switched-out task. On a 68881 system an extra long (FPU state marker)
-sits below the PC and everything above shifts by 4 [S]; not on an A500.
+sits below the PC and everything above shifts by 4 [S]; not on an A500. That long is a null FSAVE frame;
+a task that has used the FPU has a larger context (`cpu-fpu-v34.md` §3).
 
 Measured on the real ROM [M] (trackdisk.device task, waiting at the insert-disk screen): `tc_State` 4,
 `tc_IDNestCnt` 0, `tc_TDNestCnt` −1; at `tc_SPReg`: PC = a return stub inside exec's `Supervisor` path (ROM),

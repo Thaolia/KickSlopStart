@@ -53,8 +53,9 @@ init_task:
 ; TaskReady. M7c: USER-MODE tasks (initial SR $0000, S bit = 0) on their user stack. Fields as in
 ; exec-scheduling-v34 §4.2: tc_Flags 0, nest counts -1/-1 (permitted & enabled), SigWait/SigRecvd/SigExcept 0,
 ; tc_TrapCode / tc_ExceptCode defaulted from ExecBase when 0, finalPC 0 -> ExecBase TaskExitCode. Context in the
-; §4.1 layout, all registers 0: [PC=initialPC][SR=$0000][d0-d7/a0-a6 = 0][finalPC]; TC_SPREG -> the PC; USP at 1st entry = TC_SPREG+FRAME_SIZE
-; -> points to finalPC (return if the task does RTS). Built below the caller's TC_SPREG, preserving arguments
+; §4.1 layout, all registers 0: [PC=initialPC][SR=$0000][d0-d7/a0-a6 = 0][finalPC]; TC_SPREG -> the PC (with an
+; FPU, -> a null FSAVE frame right below it); USP at 1st entry = end of the context -> points to finalPC (return if
+; the task does RTS). Built below the caller's TC_SPREG, preserving arguments
 ; above it. A zero TC_SPREG retains the SPUPPER fallback for internal callers that only supply stack bounds.
 ; A task that becomes the head of TaskReady gets a Reschedule: from a task outside Forbid it runs at once.
 exec_AddTask:
@@ -96,6 +97,10 @@ exec_AddTask:
         dbf     d0,.at_zero
         move.w  #$0000,-(a0)         ; initial SR = USER mode, IPL0 (S bit = 0)
         move.l  a2,-(a0)             ; initial PC
+        btst    #AFB_68881,EB_ATTNFLAGS+1(a6)
+        beq.s   .at_ctx
+        clr.l   -(a0)                ; FPU: a null FSAVE frame below the PC (cpu-fpu-v34 §3.1)
+.at_ctx:
         move.l  a0,TC_SPREG(a1)
         addq.b  #1,EB_IDNEST(a6)     ; BARE Disable: Enqueue atomic vs an interrupt's Signal
         move.w  #INTF_INTEN,INTENA

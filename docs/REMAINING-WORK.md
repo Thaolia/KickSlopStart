@@ -387,10 +387,18 @@ sectors across retries where 1.3 fails the whole read.
   when the handler ends (1.3's endtask frees a pr_GlobVec other than dl_GV); a shared or inherited GV is never
   freed. Eight `echo >newcon:…` opening and closing NEWCON windows: no loss (the previous ROM lost 186 bytes each).
 
-### C15. CPU — M–L, optional
+### C15. CPU — done 2026-11-12
 
-- No 68030/68040 support.
-- AFF_68881 is never set.
+`docs/analysis/cpu-fpu-v34.md`, probed on the real 1.3 (68000 to 68040, with and without 68881/68882): AttnFlags
+$13 with an FPU (a 68030/68040 reads as a 68020, any FPU as a 68881), CACR 1 on a 68020/68030, the FPU state of each
+task saved below its integer context. Ours now does the same: `tests/fpuctx_probe.sh` passes on 68000, 68020,
+68020 + 68881, 68030 + 68882 and 68040 (two tasks of the same priority keep their FP0-FP7 and FPCR across about 60
+switches; a ROM without the save shows 15 bad rounds per task). Both ROMs already reached the Workbench 1.3.3 desktop
+on a 68030 and a 68040 under Amiberry. `make kick-a1200` builds the 512 KB image (the ROM twice); it boots the
+Workbench 1.3.3 disk on a 68020 + 68882 with AGA and 2 MB of chip RAM. The exception table now covers vectors 2-23
+and 32-47 as on 1.3 (12-23 used to be left alone) and clears 48-63, which 1.3 leaves zero for SetPatch to fill (§4.3).
+Not covered: Amiberry emulates neither the 68040's data cache nor its missing FPU instructions, so a real 68040
+board stays untested.
 - No 512 KB ROM image for an A1200.
 - Source: issue #20.
 

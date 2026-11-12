@@ -668,6 +668,7 @@ SFB_TQE       EQU 6
 EB_IDNEST     EQU $126
 EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
+AFB_68881     EQU 4            ; AttnFlags: a floating-point coprocessor (68881/68882, or a 68040's own)
 EB_RESMODULES EQU $12C          ; APTR: NUL-terminated array of struct Resident* (pri-sorted)
 EB_TASKTRAPCODE EQU $130        ; APTR: default trap handler of the tasks
 EB_TASKEXCEPTCODE EQU $134      ; APTR: default exception handler of the tasks

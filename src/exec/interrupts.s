@@ -290,6 +290,18 @@ dispatch:
 .d_save:
         move.l  (a2)+,(a3)+         ; D0-D7/A0-A6 (word-aligned longs: legal on 68000)
         dbf     d0,.d_save
+        btst    #AFB_68881,EB_ATTNFLAGS+1(a6)
+        beq.s   .d_nofpu
+        move.l  TC_SPREG(a1),a0     ; FPU state below the integer context (cpu-fpu-v34 §3.1)
+        dc.w    $F320               ; fsave -(a0)
+        tst.b   (a0)                ; version 0: null frame, the task never used the FPU
+        beq.s   .d_fnull
+        dc.w    $F220,$E0FF         ; fmovem.x fp0-fp7,-(a0)
+        dc.w    $F220,$BC00         ; fmovem.l fpcr/fpsr/fpiar,-(a0)
+        move.w  #-1,-(a0)           ; flag: the registers follow
+.d_fnull:
+        move.l  a0,TC_SPREG(a1)
+.d_nofpu:
         move.w  #-1,EB_IDNEST(a6)   ; both counts -1 between tasks, INTEN on
         move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
         btst    #TB_SWITCH,TC_FLAGS(a1)
@@ -347,9 +359,21 @@ dispatch_in:
         move.b  TC_FLAGS(a1),d0
         and.b   #(1<<TB_LAUNCH)|(1<<TB_EXCEPT),d0
         bne.s   di_hooks
-; di_restore: context at tc_SPReg (a1) -> SSP slot (movem layout) then rte. USP = tc_SPReg + 66.
+; di_restore: context at tc_SPReg (a1) -> SSP slot (movem layout) then rte. USP = end of the context (tc_SPReg + 66
+; without an FPU). With an FPU the context starts with its FPU state: [$FFFF, FPCR/FPSR/FPIAR, FP0-FP7] when the
+; task used it, then the FSAVE frame (a null frame resets the FPU). a6 = ExecBase.
 di_restore:
         move.l  TC_SPREG(a1),a2
+        btst    #AFB_68881,EB_ATTNFLAGS+1(a6)
+        beq.s   .dr_int
+        cmp.w   #-1,(a2)
+        bne.s   .dr_frame
+        addq.l  #2,a2
+        dc.w    $F21A,$9C00         ; fmovem.l (a2)+,fpcr/fpsr/fpiar
+        dc.w    $F21A,$D0FF         ; fmovem.x (a2)+,fp0-fp7
+.dr_frame:
+        dc.w    $F35A               ; frestore (a2)+
+.dr_int:
         move.l  (a2)+,d1            ; PC
         move.w  (a2)+,d2            ; SR
         move.l  sp,a3
@@ -393,7 +417,7 @@ di_hooks:
         move.l  ($4).w,a6
 .dh_exc:
         bclr    #TB_EXCEPT,TC_FLAGS(a1)
-        beq.s   di_restore
+        beq     di_restore
         move.w  #$2700,sr           ; Signal from an interrupt also updates these masks
         move.l  TC_SIGRECVD(a1),d0
         and.l   TC_SIGEXCEPT(a1),d0
@@ -825,7 +849,7 @@ exec_AddIntServer:
 ; intact, to ThisTask's tc_TrapCode (0 -> ExecBase.TaskTrapCode). Without a handler, an exception made
 ; the CPU jump to an arbitrary address and froze the whole machine.
 TRAPVEC_FIRST   EQU 2                ; bus error
-TRAPVEC_CPULAST EQU 11               ; line-F
+TRAPVEC_CPULAST EQU 23               ; up to the vector below the spurious interrupt (1.3: vectors 2-47, cpu-fpu §4.3)
 TRAPVEC_T0      EQU 32               ; TRAP #0
 TRAPVEC_T15     EQU 47               ; TRAP #15
 init_traps:
@@ -843,6 +867,11 @@ init_traps:
         cmp.w   #TRAPVEC_T15,d0
         bls.s   .it_trap
         move.l  #priv_handler,PRIV_VEC   ; after the loop (which sets vector 8): EXEC_SVC entries
+        lea     ($C0).w,a0           ; FPU and MMU vectors 48-63 stay zero, as on 1.3: SetPatch fills them
+        moveq   #63-48,d0
+.it_zero:
+        clr.l   (a0)+
+        dbf     d0,.it_zero
         rts
 .it_set:                             ; vector d0 -> exc_table + 2*(d0-2); advance d0
         moveq   #0,d1

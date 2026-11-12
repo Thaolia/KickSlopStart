@@ -2552,7 +2552,19 @@ differs.
     frames (interrupt exit, Schedule, dispatcher restore, task exceptions, Debug, svc_rte); Supervisor() hands its
     routine the CPU's own form. priv_handler carries out "move.w sr,-(sp)" and "move.w sr,Dn" for user-mode code
     (privileged on a 68010+, used by EXEC_SVC sites and GetCC). exc_default reads SR/PC at the head of any frame and,
-    to hold a task, replaces the whole frame (size by format) with a format-0 one. Caches stay off, as at reset.
+    to hold a task, replaces the whole frame (size by format) with a format-0 one.
+  - 68030 / 68040 / FPU (C15, 2026-11-12, `docs/analysis/cpu-fpu-v34.md`): cpu_detect also tries FNOP with the
+    line-F vector pointing at the catch and sets AFF_68881 ($10) when an FPU answers; a 68030 or 68040 reads as a
+    68020 and any FPU as a 68881, as on 1.3 (AttnFlags $13 with an FPU). On a 68020 or later it writes CACR = enable
+    + clear (instruction cache on, CACR 1 read back as on 1.3; a 68040 ignores that bit and keeps 0). With AFF_68881
+    the dispatcher saves the FPU state of the outgoing task below its integer context: FSAVE, and when the frame is
+    not null FMOVEM FP0-FP7, then FPCR/FPSR/FPIAR and a $FFFF flag word; di_restore reads them back in the reverse
+    order and ends with FRESTORE (a null frame resets the FPU, so values never leak into tasks that did not use it).
+    AddTask puts a null frame (one zero long) below the initial PC. The FPU instructions are `dc.w` encodings: the
+    ROM stays assembled for the 68000. `make kick-a1200` writes the production ROM twice (512 KB) for an A1200/A4000
+    ROM socket. `tests/fpuctx_probe.sh <dir> <cpu> [fpu]`: AttnFlags, CACR and two FPU tasks under the quantum.
+    init_traps points vectors 2-23 and 32-47 at exc_table (1.3: 2-47 into the ROM) and clears 48-63, which 1.3
+    leaves zero and SetPatch fills with its FPU stubs (cpu-fpu §4.3).
   - IDCMP (intuition-input-menus §1.11, §2.4, §2.6): it_setactive sends INACTIVEWINDOW to the old active window and
     ACTIVEWINDOW to the new one (MouseX/Y of the window). it_rbutton: a window active with RMBTRAP when the right
     button goes down gets MOUSEBUTTONS MENUDOWN ($69), and MENUUP ($E9) when it goes up (IB_RMBWIN), instead of
