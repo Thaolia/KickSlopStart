@@ -1683,6 +1683,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   by measurement: clip walks, line set-up before the wait in `gfx_solidline_dma`, `dl_fast` under LAYERUPDATING.
   `tests/fhmove_probe.sh` now polls the data ADF (up to 40 s) for the closed file instead of a fixed 8 s: on a loaded
   host the write-back came after the session stop once (file `w` left empty; six reruns of both ROMs passed).
+  Tagged v0.2.50. Then issue #39 (dirkwhoffmann, "Wrong window and icon location on Workbench screen"; user: fix,
+  commit, push, tag): workbench-task §8.6 from black-box probes of the real 1.3 (default disk window 50, 50,
+  400 × 100, remembered; placement of icons without position); `WB_DEF*`, `VE_GEO`, `wb_keepgeo`,
+  `wb_placeicons`, no-position icons drawn after placement.
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room

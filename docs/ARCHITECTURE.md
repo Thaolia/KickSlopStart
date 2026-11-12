@@ -2318,6 +2318,17 @@ differs.
   **File system stacks (2026-11-12)**: `FS_STK` (`src/exec/boot.s`, the DF0:-DF3: handlers) and `SH_FSSTACK`
   (`src/dos/bcpl.s`, partitions) are 3,072 bytes instead of 4,096; measured deepest use 1,687 bytes (the handler's
   own "You MUST replace volume" requester).
+  **Default disk window and icons without position (issue #39, 2026-11-12)**: workbench-task §8.6. A window
+  opened for an object without DrawerData is 50, 50, 400 × 100 (`WB_DEFLEFT`..`WB_DEFH`; it was an invented
+  10, 20, 400 × 120). Each volume record keeps `VE_GEO`, the last geometry of the window of a disk without
+  Disk.info: `wb_keepgeo` stores the window's LeftEdge/TopEdge/Width/Height there, or in the DrawerData of a disk
+  with one, when a disk window closes, and the next open comes back to it while the volume's icon lives.
+  `wb_placeicons` gives every icon read without position (NO_ICON_POSITION) a place after `wb_loadicons` (also
+  in `wb_reload`): 96-pixel columns from the left with no right-hand limit, in each the icons whose span
+  [X, X + w] meets the column taken by increasing Y from y = 0, a gap of h + 11 needed, the slot taken at y = 0 or
+  when it fits in the visible height, X = x0 + (96 − w) / 2; positioned icons are never moved. The position goes
+  into the object only (not written to the `.info`), and such icons are drawn once placed (`wb_loadicons` draws
+  only those with a position). It replaces a grid of 80 × the reading index that ignored the other icons.
   **Workbench drawer records on demand (2026-11-12)**: `WBS_DRAWERS` (`src/dos/workbench.s`) is a table of
   `WB_MAXDRAWERS` pointers; a closed drawer points at `WBS_DRCLOSED`, one shared all-zero record (DR_WIN 0), so the
   loops over every drawer and `wb_window` keep working unchanged. `wb_opendrawer` allocates a record (MEMF_CLEAR) for

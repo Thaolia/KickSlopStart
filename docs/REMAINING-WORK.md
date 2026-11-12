@@ -161,6 +161,14 @@ them through relays in the vector table, Exit, Execute and DateStamp excepted); 
 (35 outward pulses on DF0), 1.3's trackdisk seeks from the cylinder it remembers, reads the wrong track four times,
 then recalibrates and succeeds, silently. Ours recalibrates after the first wrong track (TDU_CYLOK), same outcome.
 
+### A11. Workbench window and icon placement (issue #39) — done 2026-11-12
+
+"China Challenge III" has no Disk.info and one icon without position: its window opened at 10, 20, 400 × 120 with
+the icon on top of the other one. workbench-task §8.6 (probed on the real 1.3): default window 50, 50, 400 × 100,
+remembered while the volume's icon lives; icons without position placed in 96-pixel columns from the left. Ours
+now does the same: CC3 at 117, 0 (read with the debugger, as on 1.3), the window back where it was dragged after a
+close; the Workbench 1.3.3 window is pixel-identical to v0.2.50.
+
 ## B. Deliberate deviations
 
 These are not work unless a doc says they should change.

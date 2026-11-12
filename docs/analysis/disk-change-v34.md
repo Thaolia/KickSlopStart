@@ -504,6 +504,9 @@ no device icon (and deletion of the one that existed); otherwise "device" icon (
   GadgetType 1 (BOOLGADGET), ROM image **32×16, 2 planes, PlanePick 3** (white floppy with an orange
   shutter, copied into CHIP), **CurrentX = CurrentY = NO_ICON_POSITION**, **default tool
   `"SYS:System/DiskCopy"`**.
+  Its DrawerData opens the disk window at **50, 50, 400×100** (Flags $0240027F, min 90×40), whatever
+  the disk and the screen; icons without position inside it are placed by the drawer rule of
+  `workbench-task-v34.md` §8.6 (measured 2026-11-12).
 - **Label**: volume name (`RAM DISK`, `Workbench1.3`, `OctaMEDv4`, `TestVol`), centred under
   the image.
 - **Position**: rule of §4.3, applied before the addition to the backdrop.

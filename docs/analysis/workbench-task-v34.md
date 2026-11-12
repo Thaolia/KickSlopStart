@@ -1170,7 +1170,7 @@ order, at:
 7. **Insertion into the drawer** (without re-reading the whole drawer):
    - `+$38` := parent drawer;
    - if the position is **NO_ICON_POSITION ($80000000)**, a free slot is searched for
-     (scan in steps of 96 px);
+     (columns of 96 px: the routine of §8.6.2, measured 2026-11-12);
    - added to the drawer's icon list (DrawerData +$1AC), **attached to its window**
      (`+$50` := DrawerData +$1A4);
    - computation of the gadget position from X/Y, the drawer's scrolling (DrawerData
@@ -1440,6 +1440,137 @@ x = BL + 9**. The contents start at BL + 14.
   first image line appears on line 83, columns 84–163, confirming the formula at the bottom edge.
   The vertical bar's knob is smaller than the full track at the initial size: the extent includes the
   hidden icon (§8.2) [shot].
+
+### 8.6 Default disk window and placement of icons without position (GitHub issue #39, measured)
+
+> Black-box runs of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, A500
+> cycle-exact, 512 KB chip + 512 KB slow, PAL unless stated), 2026-11-12. DF0 = session copy of the
+> Workbench 1.3.3 boot disk; DF1 = a copy of "China Challenge III" (local alias `cc3.adf`) or a blank
+> OFS test disk built with `xdftool`, holding `.info` files copied from that disk's two icons with
+> only CurrentX/CurrentY (and, where stated, the gadget Width/Height) edited, each with a 1-byte
+> object file next to it. The DF1 disk's window was opened by a scripted double-click on its backdrop
+> icon. Tags: **[mem]** = read after the open from public `struct Window` fields and from the
+> WBObjects/DrawerData of the window (offsets of §7.3, §7.8 and §8.2: in-memory CurrentX/Y at
+> +$54/+$58, the embedded Gadget at +$60, the drawer's icon list at DrawerData +$1AC); **[disk]** = the
+> ADF copy read back with `xdftool` after the run; **[shot]** = IPC screenshot; **[D]** = deduced.
+> Coordinates are content coordinates (the CurrentX/CurrentY space); on screen, for a disk window
+> at scroll 0, gadget LeftEdge = 18 + X and TopEdge = 11 + Y (§8.5), checked on every icon below
+> [mem].
+
+#### 8.6.1 Window of a disk without `Disk.info`
+
+- **Geometry** [mem]: LeftEdge **50**, TopEdge **50**, Width **400**, Height **100**; Flags
+  **$0240027F** (§8.1); MinWidth/MinHeight **90×40**, MaxWidth/MaxHeight **−1/−1**; borders
+  L4 T11 R18 B10. Content area: visible width 400 − 18 − 18 = **364**, visible height
+  100 − 11 − 10 = **79**. Initial scroll 0,0.
+- These values are the NewWindow of the **DrawerData that the Workbench builds for the default disk
+  object** (`disk-change-v34.md` §4.2): its first 48 bytes read 50, 50, 400, 100, Flags $0240027F,
+  MinWidth/Height 90/40, MaxWidth/Height −1/−1 [mem]. The default object has **no back link** at
+  DrawerData +$1A8 (0, where icon.library sets it for a DrawerData read from a file) [mem].
+- **Same for every such disk** [mem]: identical on all 19 test disks with no `Disk.info` and on the
+  China Challenge III copy. It does **not depend on the screen**: an NTSC run (`-s ntsc=true`,
+  backdrop 640×189) gave the same 50, 50, 400, 100 and the same icon positions [mem].
+- **Close and reopen** [mem + shot]: the window was dragged by (+100, +30) to 150, 80, closed with
+  its close gadget, and reopened by double-click: it reopened at **150, 80, 400×100**. The DrawerData
+  stays attached to the disk object and keeps the window's last geometry while the object lives.
+  Nothing was written to the disk for it: **no `Disk.info` was created** [disk]. Whether the geometry
+  survives an eject/reinsert (the object is freed then, `disk-change-v34.md` §4.1) was **not tested**.
+- A disk with a `Disk.info` uses that file's NewWindow (test disk with a `Disk.info` whose window
+  was set to 50, 30, 400×150: window opened at 50, 30, 400×150, visible height 129) [mem]; the file
+  was not rewritten by the open [disk].
+
+#### 8.6.2 Placement of icons with NO_ICON_POSITION
+
+Notation: `w`, `h` = the icon's **Gadget** Width/Height (not the image size); `VH` = visible content
+height of the window (H − BT − BB: 79 for the default disk window); `m` = **11** (measured with the
+topaz 8 Workbench font; it is the same margin as on the backdrop, `disk-change-v34.md` §4.3, which
+gives it as tf_YSize + 3 [D for the font dependence]).
+
+1. **When**: once the drawer's icons have been read, at the open. Icons whose `.info` carries a
+   position are added first, at that position, **unchecked** (no overlap test, never moved: see also
+   §8.5, "Empty"/"Diverse"). Then the icons without position are placed **one by one, in the order in
+   which the directory scan (Examine/ExNext, i.e. hash-table order) met their `.info` files**; each
+   placed icon counts as an obstacle for the next ones [mem: disks "Order", "Fix150", "Six",
+   "Twelve"]. The drawer's icon list ends up with the last added icon at its head (fixed ones at the
+   tail) [mem].
+2. **Columns**: 96 pixels wide, scanned **left to right** from x0 = 0, then 96, 192, 288, …, **with no
+   right-hand limit**: columns beyond the visible width are used (disk "Six": the 4th to 6th icons at
+   X = 309, 405, 501 in a 364-wide content area) [mem].
+3. **Obstacles of a column**: every icon already in the drawer whose horizontal span `[X, X + w]`
+   meets `[x0, x0 + 96)`, i.e. **X < x0 + 96 and X + w ≥ x0** (an icon whose right edge X + w equals
+   x0 counts; one whose X equals x0 + 96 does not) [mem: disks "Edge59", "Edge192"]. Labels are not
+   part of the horizontal span.
+4. **Scan of a column**: candidate y = **0**; the obstacles are taken in increasing Y; for each: if
+   **y + h + m ≤ Y_obstacle**, the gap above it is taken; otherwise y := max(y, Y_obstacle +
+   h_obstacle + m) and the next obstacle is examined [mem: "Gap43" accepted y = 0 under an obstacle at
+   Y 43 for h 32; "Gap42" refused it for an obstacle at Y 42].
+5. **Fit**: the slot is accepted if **y + h + m ≤ VH** (equality accepted: "Lim79", y 38 + h 30 + 11
+   = 79 accepted; "Ht29", 40 + 29 + 11 = 80 refused). A candidate still at **y = 0** (no obstacle in
+   the way) is accepted **without** the height test: a 53×90 icon went to y = 0 of an empty column
+   although 0 + 90 + 11 > 79 ("Huge") [mem]. Otherwise the next column is tried. Since there is no
+   right-hand limit, a slot is always found (the first empty column at the latest).
+6. **Result**: **X = x0 + (96 − w) / 2** (integer division, truncating toward zero: w 53 → +21,
+   w 37 → +29, w 74 → +11, w 120 → −12), **Y = y**. Written into the in-memory CurrentX/CurrentY of
+   the object; the gadget is then positioned from them like any other icon [mem].
+7. **Window too small**: icons go to further columns, outside the visible area; nothing is clipped
+   or refused, and the window size is not changed. The scroll **extent** is recomputed after the
+   placement (§8.2) and covers them: max X = right edge of the rightmost icon (554 for "Six", 546
+   for "Twelve"), max Y = bottom of the lowest icon including its label (98 for a 90-high icon at
+   y 0, i.e. h + 8, one text line [D for "label"]); otherwise the visible size (364, 79) [mem].
+8. **Not written back** [disk]: after the open, every `.info` of every test disk still had CurrentX =
+   CurrentY = $80000000 and an unchanged date; no `Disk.info` was created. The only write is the
+   per-directory `.info` cache file of §10.10, created in the root at the first open (its name list
+   follows the fixed icons first, then the placed ones in placement order: "CC3.doc", "CC3";
+   "Fix", "Q") and not rewritten at the reopen.
+
+#### 8.6.3 Test vectors (default disk window 400×100, VH 79, topaz 8) [mem]
+
+Hash order of the test names' `.info` files (OFS, 72 slots): F 2, Q 9, J 14, C 19, H 28, G 31, L 40, K 43,
+E 45, D 48, I 57, P2 59, Fix 61, B 62, P1 62, A 65. "T" = tool icon 53×32, "P" = project icon
+37×27 (the China Challenge III icons), sizes in parentheses = edited gadget size.
+
+| Disk | Icons (`.info` position) | Resulting X, Y |
+|---|---|---|
+| China Challenge III | CC3.doc P (47,5); CC3 T (none) | CC3.doc 47,5; **CC3 117,0** |
+| One | A T | A 21,0 |
+| Three | A, B, C T | C 21,0; B 117,0; A 213,0 |
+| Six | A–F T | F 21,0; C 117,0; E 213,0; D 309,0; B 405,0; A 501,0 (extent max 554,79) |
+| SixP | A–F P | F 29,0; C 29,38; E 125,0; D 125,38; B 221,0; A 221,38 |
+| Twelve | A–L P | F 29,0; J 29,38; C 125,0; H 125,38; G 221,0; L 221,38; K 317,0; E 317,38; D 413,0; I 413,38; B 509,0; A 509,38 (extent max 546,79) |
+| FixZero | Fix P (0,0); A, B T | B 117,0; A 213,0 |
+| Fix47 | Fix P (47,5); A, B T | B 117,0; A 213,0 |
+| Fix150 | Fix P (150,40); A, B, C T | C 21,0; B 213,0; A 309,0 |
+| Order | Q T (none, scanned first); Fix T (21,0) | Fix 21,0; **Q 117,0** |
+| Wide | A T (120×32); B T | B 21,0; A **84**,0 |
+| Gap43 | Fix P (30,43); A T | A 21,0 |
+| Gap42 | Fix P (30,42); A T | A 117,0 |
+| Edge59 | P1 (0,0), P2 (59,0); A T | A 213,0 |
+| Edge192 | P1 (0,0), P2 (192,0); A T | A 117,0 |
+| Huge | A T (53×90); B P | B 29,0; A 117,0 (extent max 364,98) |
+| Ht28 | A, B P (37×28) | B 29,0; A 29,39 |
+| Ht29 | A, B P (37×29) | B 29,0; A 125,0 |
+| Ht30 | A, B P (37×30) | B 29,0; A 125,0 |
+| Lim79 | Fix P (30,0); A P (37×30) | A 29,38 |
+| Tall (`Disk.info`, window 400×150, VH 129) | A–F P | F 29,0; C 29,38; E 29,76; D 125,0; B 125,38; A 125,76 |
+
+The China Challenge III window of the issue therefore opens at 50, 50, 400×100 with CC3.doc at 47,5
+and CC3 at 117,0 (gadget 135,11 window-relative: to the right of CC3.doc, no overlap) [mem + shot].
+
+#### 8.6.4 Relation with the other placements [D unless stated]
+
+- **Same routine as §10.5 and §7.9.2 point 7.** The three §10.5 vectors follow from §8.6.2 exactly:
+  `Shell` (w 53) → x0 0 + 21 = 21; `Diverse` (w 74) in column 1 → 96 + 11 = **107**; Y 29 = 0 + 18 +
+  11 under an 18-high icon at Y 0. The "21 + 86·i" grid of §10.5 was a coincidence of these two
+  widths; the "steps of 96 px" of §7.9.2 are the columns.
+- **Backdrop** (`disk-change-v34.md` §4.3): same column width, same centring and same m, but scanned
+  right to left from the right edge, starting at y = 5, with a bottom limit of the window height − 5
+  and a fallback position, and a fixed position is re-checked for overlap. In a drawer window the
+  scan goes left to right from 0, starts at y = 0, has no right-hand limit and keeps fixed positions
+  as they are [O for the drawer side, from the vectors above].
+- **Uncertain**: the order between icons placed in the same pass when a drawer is re-read later
+  (rescan after a disk change), the behaviour at a non-zero scroll position when an icon is added
+  to an open window (Duplicate, drop), and the dependence of m on the Workbench font (only topaz 8
+  was used) were not measured here.
 
 ---
 
@@ -1726,7 +1857,7 @@ must come first for a drawer icon inside a window to win over that window's back
   display. The disk window's gauge (§8.4) is updated when the icon appears. [shot]
 - The original stays selected; the copy is drawn unselected at the end (window drop) [shot].
 
-### 10.5 Free-slot placement (drop on a disk icon) [O for the values, S for the rule]
+### 10.5 Free-slot placement (drop on a disk icon) [O for the values; rule O, §8.6.2]
 
 Observed slots (all three with the destination disk window open):
 
@@ -1736,11 +1867,10 @@ Observed slots (all three with the destination disk window open):
 | Boot disk root: Utilities (11,0), System (107,0), Empty (299,0), Trashcan (220,36), MountMF (66,74) | `Shell` | **21, 29** |
 | same, plus that Shell | `Diverse` (74×18) | **107, 29** |
 
-All three fit a **column-major scan of a grid with X = 21 + 86·i and Y = 29·j**, taking the first cell
-whose rectangle does not overlap an existing icon and that fits in the window height [S]. This does
-not match the "steps of 96 px" of §7.9.2 point 7; which of the two is right (or whether they are
-different routines) is **unresolved**: an implementation should treat these three vectors as the
-reference and re-probe before relying on the grid.
+**Resolved (2026-11-12)**: these are the free-slot placement of §8.6.2 (columns of 96 px scanned
+left to right, X = x0 + (96 − w) / 2, y below the column's obstacles with a margin of 11), the same
+routine as the "steps of 96 px" of §7.9.2 point 7. The earlier "X = 21 + 86·i, Y = 29·j" grid only
+fitted the two widths involved (53 → 21, 74 → 96 + 11 = 107) and must not be used; see §8.6.4.
 
 ### 10.6 Disk onto disk: DiskCopy [O]
 
@@ -1968,6 +2098,10 @@ included). It is not an icon. Layout seen in every instance [disk]:
   No instruction sequence copied. Complement to §7.9.3 [O]: bit 4 of `+$3C` is set
   when an icon is dropped on the root window (backdrop), with a DupLock of the original
   directory in `+$A4`; it is cleared when it is put back into a drawer.
+- [x] §8.6 (2026-11-12): black-box only: public `struct Window` fields, the WBObject/DrawerData
+  offsets already documented in §7.3/§7.8/§8.2 read from RAM after the open, screenshots, and test
+  disks read back with `xdftool`. Test icons were copied from a third-party disk's `.info` files with
+  edited positions and sizes. No ROM address, ROM data or instruction is given.
 - [x] §10 (2026-11-09): black-box only: screenshots of the emulated screen, disk contents read
   with `xdftool` after the runs, and public structures (exec task list, WBStartup/WBArg, FileLock)
   read through the gdb monitor. No ROM address, ROM data or instruction is given; disks are named by

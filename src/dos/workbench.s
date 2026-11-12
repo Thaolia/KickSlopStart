@@ -315,7 +315,8 @@ VE_NAME         EQU 28               ; name of the volume (C string)
 VE_PATH         EQU VE_NAME+WBS_NAMEMAX ; "<name>:"
 VE_DEFO         EQU VE_PATH+36       ; default DiskObject (78 bytes)
 VE_DEFI         EQU VE_DEFO+78       ; its Image (IG_SIZE)
-VE_SIZE         EQU VE_DEFI+IG_SIZE
+VE_GEO          EQU VE_DEFI+IG_SIZE  ; WORD x 4: window of a disk without Disk.info (last geometry, workbench-task §8.6.1)
+VE_SIZE         EQU VE_GEO+8
 WB_COLW         EQU 96               ; automatic placement: 96-pixel columns (spec disk-change-v34 §4.3)
 WB_LABELH       EQU 11               ; room for the name under an icon (tf_YSize of topaz 8 + 3)
 WB_SLOTX0       EQU 21               ; free-slot grid of a drop on a disk or drawer icon (spec §10.5)
@@ -351,6 +352,12 @@ DD_CURRENTX     EQU 48               ; DrawerData: remembered scroll position
 DD_CURRENTY     EQU 52
 WB_DISKGAUGE    EQU 14               ; width reserved for the gauge of a disk window
 WB_MAXICONS     EQU 16
+WB_DEFLEFT      EQU 50               ; window of an object without DrawerData (workbench-task §8.6.1)
+WB_DEFTOP       EQU 50
+WB_DEFW         EQU 400
+WB_DEFH         EQU 100
+WB_SLOTW        EQU 96               ; column of the placement of icons without position (§8.6.2)
+WB_SLOTM        EQU 11               ; room for the name below an icon (topaz 8 + 3)
 WB_PATHMAX      EQU 96
 WB_CPBUF        EQU 4096             ; copy buffer of Duplicate
 WB_GRIDX        EQU 80
@@ -859,6 +866,8 @@ wb_vadd:
 .va_clr:
         clr.w   (a0)+
         dbra    d0,.va_clr
+        move.l  #(WB_DEFLEFT<<16)|WB_DEFTOP,VE_GEO(a2)
+        move.l  #(WB_DEFW<<16)|WB_DEFH,VE_GEO+4(a2)
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
         bsr     wb_devinfo
@@ -3672,10 +3681,22 @@ wb_opendrawer:
         move.l  a0,-(sp)             ; first scroll gadget
         lea     -NW_SIZEOF(sp),sp
         bsr     wb_nwclear
-        move.l  #$000A0014,NW_LEFTEDGE(a0)   ; default: 10,20 400x120
-        move.l  #$01900078,NW_WIDTH(a0)
+        move.l  #(WB_DEFLEFT<<16)|WB_DEFTOP,NW_LEFTEDGE(a0)
+        move.l  #(WB_DEFW<<16)|WB_DEFH,NW_WIDTH(a0)
         move.l  DO_DRAWERDATA(a2),d0
+        bne.s   .od_dd
+        tst.b   DR_DISK(a4)          ; a disk without Disk.info: the last geometry of its window
         beq.s   .od_geo
+        move.l  a0,-(sp)
+        lea     DR_PATH(a4),a0
+        bsr     wb_vbypath
+        move.l  a0,a1
+        move.l  (sp)+,a0
+        beq.s   .od_geo
+        move.l  VE_GEO(a1),NW_LEFTEDGE(a0)
+        move.l  VE_GEO+4(a1),NW_WIDTH(a0)
+        bra.s   .od_geo
+.od_dd:
         move.l  d0,a1
         move.l  (a1),NW_LEFTEDGE(a0)         ; dd_NewWindow : LeftEdge, TopEdge, Width, Height
         move.l  4(a1),NW_WIDTH(a0)
@@ -3712,6 +3733,7 @@ wb_opendrawer:
         move.l  DR_WIN(a4),a3
         bsr     wb_gauge
         bsr     wb_loadicons
+        bsr     wb_placeicons
         bsr     wb_bars
 .od_ret:
         movem.l (sp)+,d2-d7/a2-a4
@@ -3764,6 +3786,7 @@ wb_closedrawer:
         bsr     wb_window
         beq.s   .cd_ret
         bsr     wb_selclr            ; (the record may be reused by another drawer)
+        bsr     wb_keepgeo
         clr.l   DR_WIN(a4)
         bsr     wb_detach
         move.l  WBS_IBASE(a5),a6
@@ -3784,6 +3807,192 @@ wb_closedrawer:
         bsr     wb_drfree
 .cd_ret:
         movem.l (sp)+,d2/a2-a4/a6
+        rts
+
+; wb_keepgeo(a3 = window, a4 = record of a disk window, a5): the window's LeftEdge, TopEdge, Width and Height go to
+; the DrawerData of the volume's object, or to VE_GEO for a disk without Disk.info: a reopen comes back there while
+; the volume's icon lives (workbench-task §8.6.1). Preserves all registers.
+wb_keepgeo:
+        movem.l d0-d1/a0-a1,-(sp)
+        tst.b   DR_DISK(a4)
+        beq.s   .kg_ret
+        lea     DR_PATH(a4),a0
+        bsr     wb_vbypath
+        beq.s   .kg_ret
+        lea     VE_GEO(a0),a1
+        move.l  VE_DOBJ(a0),a0
+        move.l  DO_DRAWERDATA(a0),d0
+        beq.s   .kg_set
+        move.l  d0,a1
+.kg_set:
+        move.l  WD_LEFTEDGE(a3),(a1)+
+        move.l  WD_WIDTH(a3),(a1)
+.kg_ret:
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+
+; wb_vbypath(a0 = "<volume>:", a5) -> a0 = its volume record, Z clear; Z set if none. Clobbers d0-d1/a1.
+wb_vbypath:
+        movem.l d2/a2,-(sp)
+        move.l  a0,a2
+        moveq   #0,d2
+.vp_lp:
+        cmp.w   WBS_NVOL(a5),d2
+        bhs.s   .vp_none
+        move.w  d2,d1
+        bsr     wb_volent
+        move.l  a0,-(sp)
+        lea     VE_PATH(a0),a0
+        move.l  a2,a1
+        bsr     wb_streq
+        movem.l (sp)+,a0             ; (movem keeps the flags)
+        beq.s   .vp_hit
+        addq.w  #1,d2
+        bra.s   .vp_lp
+.vp_hit:
+        tst.b   VE_DEV(a0)
+        bne.s   .vp_none
+        move.l  a0,d0                ; Z clear
+        bra.s   .vp_ret
+.vp_none:
+        moveq   #0,d0                ; Z set
+.vp_ret:
+        movem.l (sp)+,d2/a2
+        rts
+
+; wb_placeicons(a4 = record, a5): the icons read without position (NO_ICON_POSITION) get one, in reading order, the
+; positioned ones and those already placed being in the way (workbench-task §8.6.2): 96-pixel columns from the left,
+; with no right-hand limit; in a column, the icons whose span [X, X + w] meets [x0, x0 + 96) taken by increasing Y
+; from y = 0: a gap above one of them if y + h + 11 <= its Y, otherwise y below it (Y + h + 11); the slot is taken
+; at y = 0, or when y + h + 11 fits in the visible height. X = x0 + (96 - w) / 2, Y = y, in the object only; the
+; icon is then drawn (wb_loadicons drew only those with a position). Preserves all registers.
+wb_placeicons:
+        movem.l d0-d7/a0-a3,-(sp)
+        move.l  DR_WIN(a4),a0
+        moveq   #0,d7
+        move.w  WD_HEIGHT(a0),d7
+        moveq   #0,d0
+        move.b  WD_BORDERTOP(a0),d0
+        sub.w   d0,d7
+        move.b  WD_BORDERBOTTOM(a0),d0
+        sub.w   d0,d7
+        move.w  d7,-(sp)             ; 2(sp) after the index push: visible height
+        moveq   #0,d0
+.pl_icon:
+        cmp.w   DR_NICON+2(a4),d0
+        bhs     .pl_done
+        move.w  d0,-(sp)             ; (sp) = icon index
+        lsl.w   #2,d0
+        move.l  DR_ICONS(a4,d0.w),a2
+        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a2)
+        bne     .pl_next
+        move.w  DO_GADGET+GG_WIDTH(a2),d5    ; d5 = w
+        move.w  DO_GADGET+GG_HEIGHT(a2),d6   ; d6 = h
+        moveq   #0,d1                ; d1 = x0
+.pl_col:
+        moveq   #0,d2                ; d2 = y
+        move.w  #-32768,d3           ; d3 = Y of the obstacles already taken
+.pl_sweep:
+        move.w  #32767,d4            ; d4 = next obstacle Y (smallest above d3)
+        bsr     .pl_scan
+        cmp.w   #32767,d4
+        beq.s   .pl_fit              ; no obstacle left
+        move.w  d2,d0
+        add.w   d6,d0
+        add.w   #WB_SLOTM,d0
+        cmp.w   d4,d0
+        ble.s   .pl_fit              ; gap above it
+        move.w  d4,d3
+        bsr     .pl_below            ; y below every obstacle at that Y
+        bra.s   .pl_sweep
+.pl_fit:
+        tst.w   d2
+        beq.s   .pl_take
+        move.w  d2,d0
+        add.w   d6,d0
+        add.w   #WB_SLOTM,d0
+        cmp.w   2(sp),d0
+        ble.s   .pl_take
+        add.w   #WB_SLOTW,d1
+        bra.s   .pl_col
+.pl_take:
+        moveq   #WB_SLOTW,d0
+        sub.w   d5,d0
+        ext.l   d0
+        divs    #2,d0                ; truncated toward zero, may be negative
+        add.w   d1,d0
+        ext.l   d0
+        move.l  d0,DO_CURRENTX(a2)
+        ext.l   d2
+        move.l  d2,DO_CURRENTY(a2)
+        move.w  DR_ID(a4),d7
+        move.w  (sp),d6
+        bsr     wb_drawone
+.pl_next:
+        move.w  (sp)+,d0
+        addq.w  #1,d0
+        bra     .pl_icon
+.pl_done:
+        addq.l  #2,sp
+        movem.l (sp)+,d0-d7/a0-a3
+        rts
+; .pl_scan: d4 := smallest Y > d3 among the positioned icons in column d1 (d4 unchanged if none). Clobbers d0/d7/a0.
+.pl_scan:
+        moveq   #0,d7
+.ps_lp:
+        cmp.w   DR_NICON+2(a4),d7
+        bhs.s   .ps_ret
+        bsr.s   .pl_incol
+        bne.s   .ps_nx
+        move.w  DO_CURRENTY+2(a0),d0
+        cmp.w   d3,d0
+        ble.s   .ps_nx
+        cmp.w   d4,d0
+        bge.s   .ps_nx
+        move.w  d0,d4
+.ps_nx:
+        addq.w  #1,d7
+        bra.s   .ps_lp
+.ps_ret:
+        rts
+; .pl_below: d2 := max(d2, Y + h + 11) over the positioned icons of column d1 whose Y is d3. Clobbers d0/d7/a0.
+.pl_below:
+        moveq   #0,d7
+.pb_lp:
+        cmp.w   DR_NICON+2(a4),d7
+        bhs.s   .ps_ret
+        bsr.s   .pl_incol
+        bne.s   .pb_nx
+        cmp.w   DO_CURRENTY+2(a0),d3
+        bne.s   .pb_nx
+        move.w  d3,d0
+        add.w   DO_GADGET+GG_HEIGHT(a0),d0
+        add.w   #WB_SLOTM,d0
+        cmp.w   d2,d0
+        ble.s   .pb_nx
+        move.w  d0,d2
+.pb_nx:
+        addq.w  #1,d7
+        bra.s   .pb_lp
+; .pl_incol: a0 = icon d7; Z set if it has a position and its span [X, X + w] meets [d1, d1 + 96). Clobbers d0.
+.pl_incol:
+        move.w  d7,d0
+        lsl.w   #2,d0
+        move.l  DR_ICONS(a4,d0.w),a0
+        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a0)
+        beq.s   .pi_no
+        move.w  d1,d0
+        add.w   #WB_SLOTW,d0
+        cmp.w   DO_CURRENTX+2(a0),d0
+        ble.s   .pi_no               ; X >= x0 + 96
+        move.w  DO_CURRENTX+2(a0),d0
+        add.w   DO_GADGET+GG_WIDTH(a0),d0
+        cmp.w   d1,d0
+        blt.s   .pi_no               ; X + w < x0
+        cmp.w   d0,d0                ; Z set
+        rts
+.pi_no:
+        moveq   #1,d0                ; Z clear
         rts
 
 ; wb_drfree(d7.w = drawer, a5): its record freed, the drawer points at WBS_DRCLOSED again (nothing if it already
@@ -3932,6 +4141,9 @@ wb_loadicons:
         lsl.l   #2,d1
         move.l  d0,DR_ICONS(a4,d1.l)
         addq.l  #1,DR_NICON(a4)
+        move.l  d0,a0                ; an icon without position is drawn once wb_placeicons has given it one
+        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a0)
+        beq     .li_next
         movem.l d6-d7,-(sp)          ; drawn right away (reading the floppy is slow)
         move.w  DR_ID(a4),d7
         move.w  d4,d6
@@ -5894,6 +6106,7 @@ wb_reload:
         bsr     wb_gaugeinfo
         bsr     wb_redraw1
         bsr     wb_loadicons
+        bsr     wb_placeicons
         bsr     wb_bars
 .rl_ret:
         movem.l (sp)+,d2/a2-a4/a6
