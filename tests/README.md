@@ -90,7 +90,8 @@ KickTagPtr − 16.
   disk with `ofs_check`. Success: `FSPERF OK`; compare the times of two ROMs (production ROMs for speed).
 - `tests/contype_probe.sh <out_dir> [rom]`: C:Type of a 400-line file to the boot console of a Workbench 1.3.3
   copy, between two DateStamp stamps printed on SERDAT by `tests/contype_probe.s`; prints `CONTYPE <s>` and keeps
-  `end.png`. Compare two ROMs.
+  `end.png`, then the same Type redirected to RAM:o, copied to DF0:o and compared with the file (`REDIRECT OK`).
+  Compare two ROMs.
 - `tests/bltrp_probe.sh <out_dir> [rom]`: BltBitMapRastPort between two 2-plane CHIP BitMaps, minterm $C0 for every
   source phase 0-15 against every destination phase, $30/$60/$80/$E0 every third phase, widths 37 and 150, then
   constant source planes ($C0 and $60 every fifth phase: a 1-plane source, a plane of -1, a NULL plane); every pixel
@@ -98,7 +99,9 @@ KickTagPtr − 16.
   Success: `BLTRP OK` (about 20 minutes of host time).
 - `tests/layerperf_probe.sh <out_dir> [rom]`: on its own screen with three overlapping windows, 300 menu-like
   CreateUpfrontLayer/DeleteLayer and 300 MoveLayer timed in DateStamp ticks, with the exec AllocMem calls counted
-  (all, 16 bytes or less, 17-64 bytes) through SetFunction (`tests/layerperf_probe.s`, SERDAT). Compare two ROMs.
+  (all, 16 bytes or less, 17-64 bytes) through SetFunction (`tests/layerperf_probe.s`, SERDAT); after each loop an
+  "LP SCR" line with the screen planes' checksums and the SIMPLE window's layer Flags and damage bounds, which two
+  ROMs must share. Compare two ROMs.
 - `tests/scrollpix_probe.sh <out_dir> [rom] [reference]`: vertical ScrollRaster on a layerless 2-plane BitMap, left
   edges 0-31, right edges 6 to 151 pixels further or the last column, dy 1, 3, 9, -1, -5; one checksum per plane and
   case (`tests/scrollpix_probe.s`, SERDAT). With the output of the ROM before a change: `SCROLLPIX OK`.

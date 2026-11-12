@@ -1916,10 +1916,15 @@ g_testflags:
         moveq   #12,d0
         lsl.l   d0,d1                ; SIGBREAKB_CTRL_C = 12
         move.l  d1,d2
-        moveq   #0,d0
         move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a0   ; none of these signals received: SetSignal would clear nothing (1.3 Type calls
+        move.l  TC_SIGRECVD(a0),d0   ; this for every character)
+        and.l   d2,d0
+        beq.s   .tf_none
+        moveq   #0,d0
         jsr     LVO_SETSIGNAL(a6)    ; d0 = new (0), d1 = mask -> clears and returns the old state
         and.l   d2,d0
+.tf_none:
         sne     d1
         ext.w   d1
         ext.l   d1

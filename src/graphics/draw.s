@@ -6196,17 +6196,15 @@ br_blit:
         btst    #0,d3
         bne     .rb_no
         move.l  d3,a1
-        jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0
-        beq     .rb_no
+        cmpa.l  EB_MAXLOCMEM(a6),a1  ; chip RAM is 0..MaxLocMem (as db_enter): no TypeOfMem walk
+        bhs     .rb_no
         move.l  d3,d4
         add.l   RB_SRANGE(a4),d4
         bcs     .rb_no
         move.l  d4,a1
         subq.l  #1,a1
-        jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0
-        beq     .rb_no
+        cmpa.l  EB_MAXLOCMEM(a6),a1  ; chip RAM is 0..MaxLocMem (as db_enter): no TypeOfMem walk
+        bhs     .rb_no
         st      d2                   ; the source span is checked against the destination planes below
         bra.s   .rb_vd
 .rb_vdst:
@@ -6218,16 +6216,14 @@ br_blit:
         add.l   RB_DOFF(a4),d5
         bcs     .rb_no
         move.l  d5,a1
-        jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0
-        beq     .rb_no
+        cmpa.l  EB_MAXLOCMEM(a6),a1  ; chip RAM is 0..MaxLocMem (as db_enter): no TypeOfMem walk
+        bhs     .rb_no
         add.l   RB_DRANGE(a4),d5
         bcs     .rb_no
         move.l  d5,a1
         subq.l  #1,a1
-        jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0
-        beq     .rb_no
+        cmpa.l  EB_MAXLOCMEM(a6),a1  ; chip RAM is 0..MaxLocMem (as db_enter): no TypeOfMem walk
+        bhs     .rb_no
         tst.b   d2
         beq.s   .rb_vnext
         moveq   #0,d2              ; every enabled destination plane must be disjoint from this source span

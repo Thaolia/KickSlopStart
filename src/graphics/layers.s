@@ -1620,7 +1620,7 @@ lr_phasea:
         tst.l   CR_LOBS(a3)
         bne.s   .pa_save             ; hidden: permanent backup
         tst.b   LY_NEW(a4)
-        bne.s   .pa_temp
+        bne.s   .pa_next             ; new and visible: nothing to save, phase B clears it
         bsr     lr_moved
         bne.s   .pa_temp
         bsr     lr_oldviscovers      ; already visible here and not moved: the screen is correct
@@ -1858,6 +1858,8 @@ lr_phaseb:
         move.w  LY_FLAGS(a4),d0
         and.w   #LAYERSMART|LAYERSUPER,d0
         beq.s   .pb_simple
+        tst.b   LY_NEW(a4)           ; new: its visible parts start at pen 0 (a SuperBitMap is copied in later)
+        bne     .pb_new
         btst    #0,CR_FLAGS+3(a3)    ; CRF_TEMP: temporary backup -> screen, then freed
         bne.s   .pb_temp
         btst    #2,CR_FLAGS+3(a3)    ; CRF_EXPOSE
@@ -1895,7 +1897,7 @@ lr_phaseb:
         tst.b   LY_NEW(a4)
         bne.s   .pb_clr              ; new layer: background only
         bsr     lr_moved
-        bne.s   .pb_dmg              ; moved: everything must be redrawn
+        bne.s   .pb_next             ; moved (MoveLayer): lr_dmgall damaged it whole, lr_clrall clears it after
         clr.l   -(sp)                ; not moved: only the previously hidden part
         move.l  sp,a2
         lea     CR_MINX(a3),a1
@@ -1929,8 +1931,8 @@ lr_phaseb:
         bsr     rl_free
         addq.l  #4,sp
         bra.s   .pb_next
-.pb_dmg:
-        bsr     lr_damage
+.pb_new:
+        movem.w CR_MINX(a3),d0-d3
 .pb_clr:
         bsr     lr_screenbm
         bsr     lr_clear

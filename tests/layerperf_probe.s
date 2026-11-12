@@ -3,7 +3,8 @@
 ; ticks (1/50 s) and counts the exec AllocMem calls (SetFunction for the duration of each loop) of:
 ;   "LP MENU <ticks> <allocs> <of 16 bytes or less> <of 17-64 bytes>"   300 x CreateUpfrontLayer(SMART) over the three windows + DeleteLayer, as a menu box;
 ;   "LP MOVE <ticks> <allocs>"   300 x MoveLayer of the middle window by +6/+4 then back, as a window drag;
-; then "LP END". Run by tests/layerperf_probe.sh; compare two ROMs.
+; each followed by "LP SCR <plane 0 sum> <plane 1 sum> <layer flags> <damage bounds>" (screen pixels; Flags and
+; DamageList bounds of the middle, SIMPLE_REFRESH window's layer: two ROMs must agree), then "LP END". Run by tests/layerperf_probe.sh; compare two ROMs.
 ; LVOs: AutoDocs offsets (exec SetFunction -420, AllocMem -198; layers CreateUpfrontLayer -36, MoveLayer -60,
 ; DeleteLayer -90; intuition OpenScreen -198, OpenWindow -204, CloseWindow -72, CloseScreen -66; dos DateStamp -192).
 
@@ -66,6 +67,7 @@ start:
         sub.l   d6,d0
         lea     m_menu(pc),a0
         bsr     report
+        bsr     scrsum
 
         bsr     hook
         bsr     stamp
@@ -89,6 +91,7 @@ start:
         sub.l   d6,d0
         lea     m_move(pc),a0
         bsr     report
+        bsr     scrsum
 
         move.l  intb(pc),a6
         lea     wins(pc),a3
@@ -105,6 +108,37 @@ start:
 .ret:
         moveq   #0,d0
         rts
+
+; scrsum: "LP SCR" line (see the header).
+scrsum:
+        lea     m_scr(pc),a0
+        bsr     puts
+        move.l  scr(pc),a1
+        lea     184(a1),a1           ; sc_BitMap
+        moveq   #2-1,d3
+        moveq   #0,d4
+.ss_pl:
+        move.l  8(a1,d4.w),a0        ; bm_Planes
+        moveq   #0,d0
+        move.w  #80*200/4-1,d1
+.ss_l:
+        rol.l   #3,d0
+        add.l   (a0)+,d0
+        dbra    d1,.ss_l
+        bsr     phex8
+        addq.w  #4,d4
+        dbra    d3,.ss_pl
+        move.l  wins+4(pc),a1
+        move.l  124(a1),a1           ; wd_WLayer
+        moveq   #0,d0
+        move.w  30(a1),d0            ; lr_Flags
+        bsr     phex8
+        move.l  156(a1),a0           ; lr_DamageList
+        move.l  (a0),d0              ; bounds MinX/MinY
+        bsr     phex8
+        move.l  4(a0),d0             ; MaxX/MaxY
+        bsr     phex8
+        bra     nl
 
 ; hook: AllocMem counted through SetFunction (counter cleared; the first call installs the patch).
 hook:
@@ -240,3 +274,4 @@ dosname:  dc.b  "dos.library",0
 m_menu:   dc.b  "LP MENU",0
 m_move:   dc.b  "LP MOVE",0
 m_end:    dc.b  "LP END",10,0
+m_scr:    dc.b  "LP SCR",0

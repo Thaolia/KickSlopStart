@@ -1697,6 +1697,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   pool of up to 128 freed 16-byte region blocks, `tests/layerperf_probe.sh` menu-like layers 1,817 -> 1,600 ticks,
   MoveLayer 701 -> 600, 512 bytes held at Workbench idle. New probes `scrollpix`, `layerperf`; `bltrp` covers
   constant planes (992 copies). A ROM with three planted faults fails textpix, scrollpix and bltrp.
+  Then the next wave (profile of layerperf and contype on v0.2.54): no temporary backup for a new layer's visible
+  ClipRects, no second damage/clear of a SIMPLE layer in MoveLayer, MaxLocMem chip test in br_blit, one-byte write
+  fast path, testflags without SetSignal when nothing is pending. layerperf menu 1,601 -> 1,403, MoveLayer 599 -> 493
+  ticks (screen and damage identical), C:Type 35.16 -> 32.9 s, redirected Type identical; a ROM with two planted faults
+  fails layerperf and the redirect check. Found on the way: `tests/graster_probe.sh` reports 3 FAIL (horizontal
+  ScrollRaster in a layer, "L d") on v0.2.53 and v0.2.54 as well, after 0 FAIL earlier: an older regression, open.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

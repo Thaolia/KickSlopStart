@@ -2394,6 +2394,15 @@ differs.
     300 menu-like CreateUpfrontLayer/DeleteLayer 1,817 -> 1,593 ticks (-12 %), 300 MoveLayer 701 -> 600 (-14 %).
     Workbench idle: 512 bytes held. Region results are unchanged (`tests/gregion_probe.sh` identical but for its
     allocation log and its injected AllocMem failures, which a pooled block now satisfies).
+  - Layer rebuild (`src/graphics/layers.s`): a new SMART layer's visible ClipRects get no temporary backup (it had
+    nothing to receive: phase B clears them, `.pb_new`); a moved SIMPLE layer is no longer damaged and cleared in
+    phase B, which `lr_dmgall` and `lr_clrall` of MoveLayer already do. `br_blit` takes planes below ExecBase
+    MaxLocMem as chip RAM like `db_enter` (no TypeOfMem walk per plane). `tests/layerperf_probe.sh` (screen and damage
+    identical): menu-like 1,601 -> 1,403 ticks, MoveLayer 599 -> 493.
+  - One-byte writes (`dos_bufwrite`, `src/dos/dos_lib.s`): a byte for one of our FileHandles whose buffer has room
+    and that needs no console flush is appended with four registers saved instead of the whole path; BCPL
+    `testflags` skips SetSignal when none of its signals is pending (clearing nothing changes nothing). C:Type of 400
+    lines 35.16 -> 32.9 s; `tests/contype_probe.sh` also checks the same Type redirected to a file (REDIRECT OK).
   - ScrollRaster (`.sc_blit` in `sr_vert`): the masked B, C, D blit runs only on the partial edge words; the whole
     words between them are copied A → D ($09F0), half the blitter cycles. One or two words: one masked blit as
     before. `tests/scrollpix_probe.sh` compares 160 scrolls (edges 0-31, widths 6 to 320, dy ±1 to ±9) with a

@@ -357,6 +357,10 @@ bit per pixel downwards as `ln_plot` does (`tests/lineclip_probe.sh`: same plane
 `tests/gline_probe.sh`: same output as the previous ROM). ONE_DOT and the COMPLEMENT first dot keep the CPU walk.
 Kept: the rest of the VERTB cost is gameport's input injection and unit emulation, which 1.3 does not run there
 (section B).
+Open (found 2026-11-12): `tests/graster_probe.sh` gives 3 FAIL on v0.2.53 and v0.2.54, all horizontal ScrollRaster in
+a layer ("L d -3,-2,2,1,40,20", "L d 2,0,0,0,45,24", "L d 2,1,0,0,45,24": pixels near the right or left edge of the
+scrolled area), after 0 FAIL in an earlier run (PLAN line "rawdofmt (205) and graster (156) probes 0 FAIL"). Bisect
+from that commit before changing `sr_horiz`.
 
 ### C11. Coldstart — done 2026-11-11
 

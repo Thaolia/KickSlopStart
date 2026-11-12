@@ -761,7 +761,46 @@ dos_fullreq:
 ; DOS_FH_ALLOC bytes) have these private fields.
 DOS_WBUF        EQU 512
 ; dos_bufwrite(d1 = fh BPTR, d2 = buffer, d3 = length) -> d0 = length | -1. Preserves d1-d7/a0-a6.
+; One byte (wrch) into the existing buffer of one of our FileHandles, with room left and no console flush due, is
+; appended directly; anything else takes the full path.
 dos_bufwrite:
+        cmp.l   #1,d3
+        bne.s   .bw_full
+        movem.l d4/a0-a2,-(sp)
+        move.l  d1,d4
+        lsl.l   #2,d4
+        beq.s   .bw_slow
+        move.l  d4,a2
+        tst.l   FH_TYPE(a2)
+        beq.s   .bw_slow
+        bsr     dos_ownfh
+        bne.s   .bw_slow
+        move.l  FH_WBUF(a2),d4
+        beq.s   .bw_slow
+        cmp.l   #DOS_WBUF,FH_WCNT(a2)
+        bhs.s   .bw_slow                ; full: the full path flushes first
+        move.l  d2,a0
+        tst.l   FH_INTERACTIVE(a2)
+        beq.s   .bw_put
+        move.b  (a0),d0                 ; console: LF, CR, FF and NUL flush, the full path does it
+        beq.s   .bw_slow
+        cmp.b   #10,d0
+        beq.s   .bw_slow
+        cmp.b   #12,d0
+        beq.s   .bw_slow
+        cmp.b   #13,d0
+        beq.s   .bw_slow
+.bw_put:
+        move.l  d4,a1
+        add.l   FH_WCNT(a2),a1
+        move.b  (a0),(a1)
+        addq.l  #1,FH_WCNT(a2)
+        moveq   #1,d0
+        movem.l (sp)+,d4/a0-a2
+        rts
+.bw_slow:
+        movem.l (sp)+,d4/a0-a2
+.bw_full:
         movem.l d1-d7/a0-a6,-(sp)
         move.l  d2,d5
         move.l  d3,d6

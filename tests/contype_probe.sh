@@ -2,7 +2,9 @@
 # tests/contype_probe.sh - console output speed: a copy of the Workbench 1.3.3 disk (assets/wb133.adf) whose
 # startup-sequence is replaced by tests/contype_probe (time stamp on serial), C:Type of a 400-line file (26,000
 # bytes) to the boot console, tests/contype_probe again. Prints the two stamps and the time between them in seconds
-# (1/50 s ticks). Compare two ROMs by running it once for each; the screenshot end.png shows the last lines.
+# (1/50 s ticks). Compare two ROMs by running it once for each; the screenshot end.png shows the last lines. Then
+# the same Type redirected to RAM:o (one-byte writes to a file), copied to DF0:o and compared on the host with the
+# original: REDIRECT OK.
 #
 # Usage: tests/contype_probe.sh <out_dir> [rom=build/kick13-prod.rom]
 set -u
@@ -15,7 +17,7 @@ python3 -I -c "
 import sys
 open(sys.argv[1],'w').write(''.join('Line %03d: the quick brown fox jumps over the lazy dog 0123456789\n' % i for i in range(1, 401)))" \
   "$OUT/t.txt"
-printf 'df0:contype_probe\ntype df0:t.txt\ndf0:contype_probe\n' > "$OUT/startup"
+printf 'df0:contype_probe\ntype df0:t.txt\ndf0:contype_probe\ntype >ram:o df0:t.txt\ncopy ram:o df0:o\ndf0:contype_probe\n' > "$OUT/startup"
 ADF="$OUT/contype_$$.adf"
 cp "$ROOT/assets/wb133.adf" "$ADF" && chmod u+w "$ADF"
 xdftool "$ADF" delete s/startup-sequence + write "$OUT/startup" s/startup-sequence \
@@ -25,6 +27,12 @@ LOG="$ROOT/build/amiberry/sessions/$NAME/serial.log"
 "$A" start --name "$NAME" --rom "$ROM" --adf "$ADF" --slow 512 >/dev/null || exit 2
 for _ in $(seq 1 300); do [ "$(tr -d '\r' < "$LOG" 2>/dev/null | grep -c '^CT ')" -ge 2 ] && break; sleep 1; done
 "$A" shot "$NAME" "$OUT/end.png" --via ipc >/dev/null
+for _ in $(seq 1 300); do [ "$(tr -d '\r' < "$LOG" 2>/dev/null | grep -c '^CT ')" -ge 3 ] && break; sleep 1; done
+SADF="$ROOT/build/amiberry/sessions/$NAME/df0-$(basename "$ADF")"   # --adf runs on a copy in the session directory
+for _ in $(seq 1 40); do                       # the handler writes DF0:o back a few seconds later
+  rm -f "$OUT/o.txt"; xdftool "$SADF" read o "$OUT/o.txt" >/dev/null 2>&1
+  [ "$(stat -c %s "$OUT/o.txt" 2>/dev/null || echo 0)" -ge 26000 ] && break; sleep 1
+done
 tr -d '\r' < "$LOG" | grep '^CT ' > "$OUT/contype.txt"
 "$A" stop "$NAME" >/dev/null
 cat "$OUT/contype.txt"
@@ -34,3 +42,4 @@ v=[int(l.split()[1],16) for l in open(sys.argv[1])]
 if len(v)<2: print('CONTYPE: second stamp missing'); sys.exit(1)
 print('CONTYPE %.2f s' % ((v[1]-v[0])/50))
 PY
+if cmp -s "$OUT/o.txt" "$OUT/t.txt"; then echo "REDIRECT OK"; else echo "REDIRECT DIFFERS"; exit 1; fi
