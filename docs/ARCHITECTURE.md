@@ -2318,7 +2318,9 @@ differs.
     MENUTOGGLED/HIGHITEM, as when a menu opens.
   - `gfx_MrgCop` returns before touching the View's lists when it collected no stream.
   - `lb_core` (`src/graphics/draw.s`) ends with DisownBlitter without waiting for the last plane; `ln_draw`
-    waits for the blitter before its CPU walk, the other CPU engines already did (`db_wait`).
+    waits for the blitter before its CPU walk, the other CPU engines already did (`db_wait`). `db_enter` accepts a
+    plane below ExecBase MaxLocMem as chip RAM (no TypeOfMem per blit); `gfx_Draw` sends a SuperBitMap layer
+    straight to the generic path (`dr_directdraw` used to lock the layer, then give up).
   - BCPL getvec (`rt_getvec_raw`, `g_getvec`, `src/dos/bcpl.s`): (n+2)×4 bytes for any n ≥ −1, 0 with pr_Result2
     103 otherwise and on failure (dos-memory §1.1).
   - Trace build `PCPROF` (never in dev or prod): CIA-B timer A at about 1 kHz, `int6_dispatch` stores the

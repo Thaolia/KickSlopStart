@@ -71,6 +71,10 @@ held" qualifier bits of mouse events are not set yet.
   passes are 1.2-1.3 times slower. A PC-sampling profile of the two passes (trace build `PCPROF`, 2026-11-12)
   shows no single hot spot: Clock's own code about 18 % of the busy time, the line path (Draw set-up, ClipRect
   walk, blitter set-up) about 25 %, waits for the blitter about 7 %, the rest spread over area fill, text and exec.
+  Re-measured after the line changes of 2026-11-12: unchanged (20.0 / 12.4 frames; Clock's SIMPLE window uses the
+  direct Draw path, which those changes do not touch). SizeLayer starts 2.5 frames after the release (1.3: 1);
+  the wait for Clock's first poll depends on its 10-frame Delay phase on both ROMs. Left: the passes themselves,
+  1.2-1.3 times slower with a flat profile.
 
 ### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
@@ -95,8 +99,13 @@ held" qualifier bits of mouse events are not set yet.
   emulated second. A profile (2026-11-12) showed 36 % of the time waiting for the blitter at the end of every
   blitted line: `lb_core` now hands the blitter back while the last plane is still drawing, as a V34 Draw does, and
   the next user waits first (`ln_draw` included). Lines: +19 % on the same trace build (229 → 273 Draw calls per
-  emulated second with the sampling interrupt running), pixels unchanged (`tests/lineclip_probe.sh`). Left: the
-  rest of the gap to 431, spread over per-call set-up (semaphore, Permit, TypeOfMem of the planes, ClipRect walk).
+  emulated second with the sampling interrupt running), pixels unchanged (`tests/lineclip_probe.sh`). Then
+  (2026-11-12, second pass): `db_enter` checks the planes against ExecBase MaxLocMem instead of a TypeOfMem walk at
+  every blit, and Draw skips the direct path of a SuperBitMap layer before taking its lock (it used to lock, give
+  up and lock again in the generic path): 273 → 314 on the trace build, `lineclip` 229 → 215 ticks, same pixels.
+  Left: the profile is now flat (entry register saves of the nested line routines, blitter register writes
+  waiting for the bus, 21 % waiting for the blitter itself); the rest of the gap to 431 needs a leaner line path for
+  layered RastPorts, not a local fix.
 - Lines is GIMMEZEROZERO | SUPER_BITMAP, so it cannot show the frame-copy case: only programs with non-GZZ
   SUPER_BITMAP windows meet our missing frame copy (intuition-gzz §2.5).
 

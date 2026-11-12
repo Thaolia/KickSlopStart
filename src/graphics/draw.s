@@ -890,10 +890,8 @@ db_enter:
         move.l  bm_Planes(a2,d0.w),d0
         btst    #0,d0
         bne.s   .db_no
-        move.l  d0,a1
-        jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0
-        beq.s   .db_no
+        cmp.l   EB_MAXLOCMEM(a6),d0  ; chip RAM is 0..MaxLocMem: no TypeOfMem walk at every blit
+        bhs.s   .db_no
 .db_next:
         addq.w  #1,d3
         bra.s   .db_plane
@@ -2556,6 +2554,12 @@ gfx_Draw:
                 endc
         cmp.w   rp_cp_y(a1),d1     ; solid horizontal spans use the cheaper row-fill engine
         beq.s   .dw_generic
+        move.l  rp_Layer(a1),a0      ; SuperBitMap layers never take the direct path: skip its set-up
+        cmpa.w  #0,a0
+        beq.s   .dw_direct
+        tst.l   LY_SUPERBM(a0)
+        bne.s   .dw_generic
+.dw_direct:
         bsr     dr_directdraw
         beq.s   .dw_generic
         rts
@@ -2663,6 +2667,8 @@ dr_directdraw:
         move.l  d0,DD_LAYER(a4)
         beq.s   .dd_coords
         move.l  d0,a3
+        tst.l   LY_SUPERBM(a3)       ; fixed when the layer is made: tested before taking its lock
+        bne     .dd_exit
         move.l  LY_LOCK+GB_SS_OWNER(a3),d1
         beq.s   .dd_lock
         move.l  4.w,a0
@@ -2676,8 +2682,6 @@ dr_directdraw:
         move.l  (sp)+,a6
         st      DD_LOCKED(a4)
 .dd_layer:
-        tst.l   LY_SUPERBM(a3)
-        bne     .dd_exit
         move.l  LY_CLIPRECT(a3),a0
         move.l  a0,d0
         beq     .dd_exit

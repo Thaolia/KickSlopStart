@@ -1662,7 +1662,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow
   RAM, SIZEVERIFY, DMRequest observed on 1.3 and matching). PC-sampling trace build `PCPROF` for the Clock and Lines
-  profiles.
+  profiles. Then A7/A5 (user: "fait A7 et A5"): planes checked against MaxLocMem, SuperBitMap Draw without the
+  direct path; Lines 273 → 314 Draw/s on the trace build; Clock re-measured (passes 20.0 / 12.4 frames, flat
+  profile, left open).
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room
