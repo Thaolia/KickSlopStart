@@ -103,9 +103,17 @@ held" qualifier bits of mouse events are not set yet.
   (2026-11-12, second pass): `db_enter` checks the planes against ExecBase MaxLocMem instead of a TypeOfMem walk at
   every blit, and Draw skips the direct path of a SuperBitMap layer before taking its lock (it used to lock, give
   up and lock again in the generic path): 273 → 314 on the trace build, `lineclip` 229 → 215 ticks, same pixels.
-  Left: the profile is now flat (entry register saves of the nested line routines, blitter register writes
-  waiting for the bus, 21 % waiting for the blitter itself); the rest of the gap to 431 needs a leaner line path for
-  layered RastPorts, not a local fix.
+  Then the lean layered line path (2026-11-12, measured on the production ROM over the same 5,000 Draw calls of
+  Lines, frames counted with the debugger): `dl_fast` draws a line whose two ends lie in one usable ClipRect with a
+  single context set-up and one `lb_core` blit (371.8 → 386.8 lines per second); the layer lock and the blitter
+  semaphore take an inline path when nobody else holds them (→ 393.3, → 404.6); a line `dl_fast` cannot take after
+  setting up its context goes to the generic engine with that context (→ 408-410). 1.3: 431. Clock is unchanged
+  (passes 19.9 / 12.4 frames, as before: lines drawn between BeginRefresh and EndRefresh skip `dl_fast`). Left:
+  about 5 %, mostly the two plane blits the CPU waits for (1.3 waits for them too) and plane validation before
+  each blit.
+- Found on the way: an internal blitter user (`gfx_tryblitter`, ScrollRaster's blit) did not count itself in GfxBase
+  BlitLock while DisownBlitter took one off, so BlitLock drifted (−15,588 after a minute of Lines; 1.3 shows −1 at
+  rest, graphics-blitter §3). Fixed: `tests/gline_probe.sh` L7 now reads blitlock FFFF (the previous ROM FFD0).
 - Lines is GIMMEZEROZERO | SUPER_BITMAP, so it cannot show the frame-copy case: only programs with non-GZZ
   SUPER_BITMAP windows meet our missing frame copy (intuition-gzz §2.5).
 

@@ -1963,7 +1963,19 @@ gfx_DisownBlitter:
         bne.s   .db_ret
         move.l  (sp),a1
         subq.w  #1,gb_BlitLock(a1)
+        addq.b  #1,EB_TDNEST(a6)     ; ReleaseSemaphore inline when held once and nobody waits
+        cmp.w   #1,GB_SS_NESTCOUNT(a0)
+        bne.s   .db_slow
+        tst.w   GB_SS_QUEUECOUNT(a0)
+        bne.s   .db_slow
+        clr.w   GB_SS_NESTCOUNT(a0)
+        move.w  #-1,GB_SS_QUEUECOUNT(a0)
+        clr.l   GB_SS_OWNER(a0)
+        bra.s   .db_rel
+.db_slow:
         jsr     LVO_RELEASESEMAPHORE(a6)
+.db_rel:
+        jsr     LVO_PERMIT(a6)
 .db_ret:
         move.l  (sp)+,a6
         rts

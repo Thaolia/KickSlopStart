@@ -110,7 +110,17 @@ dr_ctx:
         move.l  d0,a0
         lea     LY_LOCK(a0),a0
         move.l  ($4).w,a6
-        jsr     LVO_OBTAINSEMAPHORE(a6)
+        addq.b  #1,EB_TDNEST(a6)     ; ObtainSemaphore's uncontended case inline, under Forbid: free -> ours
+        cmp.w   #-1,GB_SS_QUEUECOUNT(a0)
+        bne.s   .cx_busy
+        clr.w   GB_SS_QUEUECOUNT(a0)
+        move.l  EB_THISTASK(a6),GB_SS_OWNER(a0)
+        move.w  #1,GB_SS_NESTCOUNT(a0)
+        bra.s   .cx_got
+.cx_busy:
+        jsr     LVO_OBTAINSEMAPHORE(a6)   ; held by another task: exec queues and waits (Forbid kept across)
+.cx_got:
+        jsr     LVO_PERMIT(a6)
         movem.l (sp)+,a1/a6
         st      DC_LOCKED(a5)
 .cx_nolock:
@@ -137,7 +147,19 @@ dr_end:
         move.l  DC_LAYER(a5),a0
         lea     LY_LOCK(a0),a0
         move.l  ($4).w,a6
+        addq.b  #1,EB_TDNEST(a6)     ; ReleaseSemaphore inline when we hold it once and nobody waits
+        cmp.w   #1,GB_SS_NESTCOUNT(a0)
+        bne.s   .de_slow
+        tst.w   GB_SS_QUEUECOUNT(a0)
+        bne.s   .de_slow
+        clr.w   GB_SS_NESTCOUNT(a0)
+        move.w  #-1,GB_SS_QUEUECOUNT(a0)
+        clr.l   GB_SS_OWNER(a0)
+        bra.s   .de_rel
+.de_slow:
         jsr     LVO_RELEASESEMAPHORE(a6)
+.de_rel:
+        jsr     LVO_PERMIT(a6)
         movem.l (sp)+,d0-d1/a0-a1/a6
 .de_r:
         rts
@@ -909,9 +931,22 @@ gfx_tryblitter:
         movem.l d0-d1/a0-a1/a6,-(sp)
         lea     gb_BlitSem(a6),a0
         move.l  4.w,a6
-        jsr     LVO_ATTEMPTSEMAPHORE(a6)
-        tst.l   d0
-        beq.s   .gt_ret
+        addq.b  #1,EB_TDNEST(a6)     ; AttemptSemaphore inline, under Forbid: free or already ours -> taken
+        move.l  EB_THISTASK(a6),a1
+        cmp.w   #-1,GB_SS_QUEUECOUNT(a0)
+        beq.s   .gt_take
+        cmp.l   GB_SS_OWNER(a0),a1
+        beq.s   .gt_take
+        jsr     LVO_PERMIT(a6)
+        moveq   #0,d0
+        bra.s   .gt_ret
+.gt_take:
+        addq.w  #1,GB_SS_QUEUECOUNT(a0)
+        addq.w  #1,GB_SS_NESTCOUNT(a0)
+        move.l  a1,GB_SS_OWNER(a0)
+        jsr     LVO_PERMIT(a6)
+        move.l  16(sp),a0            ; GfxBase: BlitLock counts this holder, DisownBlitter takes it off again
+        addq.w  #1,gb_BlitLock(a0)
         move.w  #$8240,DMACON
         bsr.s   db_wait
         moveq   #1,d0
@@ -1442,6 +1477,7 @@ ln_penmatch:
         rts
 ; ln_rect(a4, a5): a pen-compatible solid axis line, over every ClipRect. Preserves all.
 ln_rect:
+        bsr     db_wait              ; its CPU fills may touch words the previous line's blit still writes
         movem.l d0-d7/a0-a3,-(sp)
         movem.w LN_X0(a4),d0-d3
         cmp.w   d2,d0
@@ -2558,14 +2594,22 @@ gfx_Draw:
         cmpa.w  #0,a0
         beq.s   .dw_direct
         tst.l   LY_SUPERBM(a0)
-        bne.s   .dw_generic
+        bne.s   .dw_layer
 .dw_direct:
         bsr     dr_directdraw
+        bne.s   .dw_done
+        move.l  rp_Layer(a1),a0
+        cmpa.w  #0,a0
         beq.s   .dw_generic
+        btst    #4,LY_FLAGS+1(a0)    ; LAYERUPDATING: between BeginRefresh and EndRefresh the ClipRects are the
+        bne.s   .dw_generic          ; damage pieces, which lines mostly cross
+.dw_layer:
+        bsr     dl_fast
+        beq.s   .dw_generic
+.dw_done:
         rts
-.dw_generic:
-        bsr     db_wait
-        movem.l d2-d7/a5,-(sp)
+.dw_generic:                          ; no blitter wait here: the set-up below overlaps the previous line's blit;
+        movem.l d2-d7/a5,-(sp)       ; the engines wait before touching the blitter or the planes (V34 behaviour)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
         move.w  rp_cp_x(a1),d4       ; d4,d5 = current point; d6,d7 = end
@@ -2608,6 +2652,194 @@ gfx_Draw:
 .dw_ret:
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+
+; dl_fast(a1 = RastPort with a layer, d0/d1 = end, a6 = GfxBase): the case the generic path draws with the
+; unclipped engine as one blit (dr_line finds a ClipRect holding both ends, ln_blit accepts it), without its
+; general set-up: not COMPLEMENT, no ONE_DOT, 4..1023 major steps, both ends inside one usable ClipRect (its bounds,
+; and for a visible one also inside the layer and the BitMap). Same context (dr_ctx: layer lock, offsets), same
+; blit (lb_core: phase LinePtrn bit RP_PATCNT, error 2m - M, M + 1 pixels), same RastPort update as gfx_Draw after
+; the engine drew in a layer (cp, FRST_DOT cleared, pattern counter - 2M). -> Z clear when drawn; Z set: nothing was
+; changed, the generic path takes the line. Once the context is set up, a line the single blit cannot take goes to
+; the generic engine from here (dr_line with this context) instead of being handed back. Preserves all registers.
+DF_SIZE         EQU DC_SIZE+LN_SIZE
+dl_fast:
+        movem.l d0-d7/a0-a6,-(sp)
+        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT (its first dot) and ONE_DOT stay generic
+        bne     .df_no
+        btst    #1,rp_Flags+1(a1)
+        bne     .df_no
+        move.w  d0,d6                ; layer coordinates: d4/d5 start, d6/d7 end
+        move.w  d1,d7
+        move.w  rp_cp_x(a1),d4
+        move.w  rp_cp_y(a1),d5
+        move.w  d6,d2
+        sub.w   d4,d2
+        bvs     .df_no
+        bpl.s   .df_ax
+        neg.w   d2
+.df_ax:
+        move.w  d7,d3
+        sub.w   d5,d3
+        bvs     .df_no
+        bpl.s   .df_ay
+        neg.w   d3
+.df_ay:
+        cmp.w   d3,d2
+        bhs.s   .df_am
+        move.w  d3,d2
+.df_am:
+        cmp.w   #4,d2                ; ln_blit's range
+        blo     .df_no
+        cmp.w   #1023,d2
+        bhi     .df_no
+        lea     -DF_SIZE(sp),sp
+        move.l  sp,a5                ; a5 = context, a4 = line variables
+        lea     DC_SIZE(sp),a4
+        bsr     dr_ctx               ; layer lock, offsets, clipping area
+        move.w  DC_OX(a5),d0
+        add.w   d0,d4
+        add.w   d0,d6
+        move.w  DC_OY(a5),d0
+        add.w   d0,d5
+        add.w   d0,d7
+        move.l  DC_FIRST(a5),a3
+.df_find:                            ; the ClipRect holding both ends, as dr_line looks for it
+        cmpa.w  #0,a3
+        beq     .df_out
+        cmp.w   CR_MINX(a3),d4
+        blt.s   .df_nx
+        cmp.w   CR_MAXX(a3),d4
+        bgt.s   .df_nx
+        cmp.w   CR_MINX(a3),d6
+        blt.s   .df_nx
+        cmp.w   CR_MAXX(a3),d6
+        bgt.s   .df_nx
+        cmp.w   CR_MINY(a3),d5
+        blt.s   .df_nx
+        cmp.w   CR_MAXY(a3),d5
+        bgt.s   .df_nx
+        cmp.w   CR_MINY(a3),d7
+        blt.s   .df_nx
+        cmp.w   CR_MAXY(a3),d7
+        ble.s   .df_found
+.df_nx:
+        move.l  a3,a0
+        bsr     dr_next
+        move.l  a0,a3
+        bra.s   .df_find
+.df_found:
+        move.l  a3,a0
+        bsr     dr_crset             ; hidden without backup: generic (it draws nothing there)
+        beq     .df_out
+        cmp.w   DC_CMINX(a5),d4      ; inside the usable part too, or ln_blit would refuse the single blit
+        blt     .df_out
+        cmp.w   DC_CMAXX(a5),d4
+        bgt     .df_out
+        cmp.w   DC_CMINX(a5),d6
+        blt     .df_out
+        cmp.w   DC_CMAXX(a5),d6
+        bgt     .df_out
+        cmp.w   DC_CMINY(a5),d5
+        blt     .df_out
+        cmp.w   DC_CMAXY(a5),d5
+        bgt     .df_out
+        cmp.w   DC_CMINY(a5),d7
+        blt     .df_out
+        cmp.w   DC_CMAXY(a5),d7
+        bgt     .df_out
+        movem.w d4-d7,LN_X0(a4)      ; the line variables lb_core reads, as dr_line sets them
+        move.w  d6,d0
+        sub.w   d4,d0
+        moveq   #1,d1
+        tst.w   d0
+        bpl.s   .df_1
+        neg.w   d0
+        moveq   #-1,d1
+.df_1:
+        move.w  d1,LN_SX(a4)
+        move.w  d7,d2
+        sub.w   d5,d2
+        moveq   #1,d1
+        tst.w   d2
+        bpl.s   .df_2
+        neg.w   d2
+        moveq   #-1,d1
+.df_2:
+        move.w  d1,LN_SY(a4)
+        cmp.w   d2,d0
+        shi     LN_XMAJ(a4)
+        bhi.s   .df_3
+        exg     d0,d2                ; d0 = M, d2 = m
+.df_3:
+        move.w  d0,LN_M(a4)
+        add.w   d2,d2
+        move.w  d2,LN_M2(a4)
+        move.w  d2,d3
+        sub.w   d0,d3
+        move.w  d3,d2                ; d2 = error at the first pixel: 2m - M
+        sub.w   d0,d3
+        move.w  d3,LN_MM2(a4)
+        move.w  rp_LinePtrn(a1),LN_PAT(a4)
+        moveq   #0,d0
+        move.b  RP_PATCNT(a1),d0
+        move.w  d0,LN_PH(a4)
+        clr.l   LN_CLIP(a4)          ; LN_CLIP, LN_PRE, and the word after: unclipped engine
+        clr.b   LN_ONE(a4)
+        move.w  LN_M(a4),d3
+        addq.w  #1,d3
+        move.w  d3,LN_NPIX(a4)
+        move.w  d4,d0
+        move.w  d5,d1
+        move.l  a1,-(sp)
+        bsr     lb_core              ; Z set: blitter or planes refused, nothing drawn
+        movem.l (sp)+,a1             ; (movem keeps the flags)
+        bne.s   .df_drawn
+        movem.w LN_X0(a4),d4-d7      ; lb_core used d4-d7
+        bra.s   .df_out
+.df_drawn:
+        bsr     dr_end
+        move.w  LN_M(a4),d7          ; lb_core keeps a4/a5 only
+        move.l  DF_SIZE+4(sp),d0     ; the caller's d1 (end y); d0 (end x) is at DF_SIZE
+        move.w  DF_SIZE+2(sp),rp_cp_x(a1)
+        move.w  d0,rp_cp_y(a1)
+        bclr    #0,rp_Flags+1(a1)    ; the engine drew: FRST_DOT cleared, counter - M, once more for the layer
+        sub.b   d7,RP_PATCNT(a1)
+        sub.b   d7,RP_PATCNT(a1)
+        lea     DF_SIZE(sp),sp
+        moveq   #1,d0
+        bra.s   .df_ret
+.df_out:                             ; the context is ready: the generic engine takes the line from here,
+        bsr     dr_line              ; then gfx_Draw's own update (d4-d7 = absolute ends, a1 = RastPort)
+        bsr     dr_end
+        move.l  DF_SIZE+4(sp),d1     ; the caller's end, layer coordinates
+        move.w  DF_SIZE+2(sp),rp_cp_x(a1)
+        move.w  d1,rp_cp_y(a1)
+        sub.w   d4,d6                ; M = max(|dx|, |dy|)
+        bpl.s   .df_mx
+        neg.w   d6
+.df_mx:
+        sub.w   d5,d7
+        bpl.s   .df_my
+        neg.w   d7
+.df_my:
+        cmp.w   d7,d6
+        bhs.s   .df_mm
+        move.w  d7,d6
+.df_mm:
+        tst.b   d0
+        beq.s   .df_lay
+        bclr    #0,rp_Flags+1(a1)    ; the engine drew: FRST_DOT cleared, counter - M
+        sub.b   d6,RP_PATCNT(a1)
+.df_lay:
+        sub.b   d6,RP_PATCNT(a1)     ; once more with a layer
+        lea     DF_SIZE(sp),sp
+        moveq   #1,d0
+        bra.s   .df_ret
+.df_no:
+        moveq   #0,d0
+.df_ret:
+        movem.l (sp)+,d0-d7/a0-a6    ; (movem keeps the flags)
         rts
 
 ; Common solid window lines need neither a generic ClipRect context nor a pattern/CPU line frame.
@@ -4968,6 +5200,7 @@ sr_vert:
         tst.l   d0
         movem.l (sp)+,d0-d1          ; (movem does not touch the CCR)
         beq     .bl_no
+        addq.w  #1,gb_BlitLock(a6)   ; counted like OwnBlitter: DisownBlitter decrements it
         move.w  #$8240,DMACON        ; master DMA + blitter
         lea     CUSTOM,a0
         moveq   #0,d5                ; d5 = plane

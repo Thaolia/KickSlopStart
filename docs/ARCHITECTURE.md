@@ -2317,6 +2317,17 @@ differs.
     active window's menus lose MIDRAWN, their items MENUTOGGLED/HIGHITEM/ISDRAWN, their sub-items
     MENUTOGGLED/HIGHITEM, as when a menu opens.
   - `gfx_MrgCop` returns before touching the View's lists when it collected no stream.
+  - `dl_fast` (`src/graphics/draw.s`): for a layered RastPort (after the direct path, which SuperBitMap layers skip),
+    a non-COMPLEMENT line without ONE_DOT of 4..1023 major steps whose ends lie in one usable ClipRect (raw bounds,
+    and the clipped bounds of a visible one) is drawn with `dr_ctx`, `dr_crset` and one `lb_core` blit, then the
+    RastPort is updated as after the unclipped engine in a layer (cp, FRST_DOT, pattern counter − 2M). A line
+    refused before the context is set up returns to the generic path untouched; one refused after it goes to
+    `dr_line` with that context, followed by gfx_Draw's own update. A layer between BeginRefresh and EndRefresh
+    (LAYERUPDATING) skips `dl_fast`: its damage ClipRects rarely hold a whole line. The generic Draw no longer waits
+    for the blitter on entry: `ln_draw` and `ln_rect` wait before their CPU work.
+  - Semaphores on the line path: `dr_ctx`/`dr_end` take and give the layer lock, `gfx_tryblitter` and
+    `gfx_DisownBlitter` the blitter, inline under Forbid when uncontended (free, held once, nobody queued), exec's
+    Obtain/Release otherwise. `gfx_tryblitter` and ScrollRaster's blit count themselves in BlitLock.
   - `lb_core` (`src/graphics/draw.s`) ends with DisownBlitter without waiting for the last plane; `ln_draw`
     waits for the blitter before its CPU walk, the other CPU engines already did (`db_wait`). `db_enter` accepts a
     plane below ExecBase MaxLocMem as chip RAM (no TypeOfMem per blit); `gfx_Draw` sends a SuperBitMap layer

@@ -1664,7 +1664,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   RAM, SIZEVERIFY, DMRequest observed on 1.3 and matching). PC-sampling trace build `PCPROF` for the Clock and Lines
   profiles. Then A7/A5 (user: "fait A7 et A5"): planes checked against MaxLocMem, SuperBitMap Draw without the
   direct path; Lines 273 → 314 Draw/s on the trace build; Clock re-measured (passes 20.0 / 12.4 frames, flat
-  profile, left open).
+  profile, left open). Then the layered line rewrite (user: "fais la réécriture du chemin des lignes"): `dl_fast`,
+  inline uncontended semaphores, no blitter wait on Draw entry; Lines 371.8 → 408-410 lines/s on the production ROM
+  (1.3: 431), Clock unchanged; BlitLock drift fixed.
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room
