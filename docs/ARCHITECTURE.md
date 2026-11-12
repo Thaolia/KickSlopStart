@@ -2311,6 +2311,13 @@ differs.
     node without a task whose dn_Startup is a FileSysStartupMsg (above 255; SER:, PAR:, CON: … hold 0..2) gets its
     handler through `bcpl_starthandler`, under DOS_HSEM like `dos_resolve` (rom-filesystem §1.4).
   - VSprite VSTART (`src/graphics/gels.s`) = clipped top + View DyOffset, no ViewPort DyOffset, no LACE halving.
+  **File system stacks (2026-11-12)**: `FS_STK` (`src/exec/boot.s`, the DF0:-DF3: handlers) and `SH_FSSTACK`
+  (`src/dos/bcpl.s`, partitions) are 3,072 bytes instead of 4,096; measured deepest use 1,687 bytes (the handler's
+  own "You MUST replace volume" requester).
+  **Workbench drawer records on demand (2026-11-12)**: `WBS_DRAWERS` (`src/dos/workbench.s`) is a table of
+  `WB_MAXDRAWERS` pointers; a closed drawer points at `WBS_DRCLOSED`, one shared all-zero record (DR_WIN 0), so the
+  loops over every drawer and `wb_window` keep working unchanged. `wb_opendrawer` allocates a record (MEMF_CLEAR) for
+  the slot it takes, `wb_drfree` gives it back when OpenWindow fails and at the end of `wb_closedrawer`.
   **Menu flags at activation, MrgCop without CopList, async line blits, getvec, PCPROF (2026-11-12)**:
   REMAINING-WORK C3, C4, A7, D8.
   - `it_setactive` (`src/intuition/screens.s`) calls `mn_actclr` (`menus.s`) before setting WINDOWACTIVE: the new

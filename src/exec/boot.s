@@ -77,6 +77,8 @@
 
 DEMO_STK     EQU 2048         ; stack of the demo tasks (switch frames)
 D3_STK       EQU 4096         ; stack of the D3 processes (driver/handler: ser_puts + ofs/loadseg later)
+FS_STK       EQU 3072         ; stack of a floppy file system process: 1,687 bytes at most measured (a "You MUST replace"
+                              ; requester opened by the handler itself), 437-521 for reads, writes and a full disk
 CON_STK      EQU 2048         ; console handler: deepest use measured 982 bytes (window open/close, console output,
                               ; FastFonts, docs/MEMORY-USAGE.md); the rest is margin
 LYT_PIX      macro                    ; pixel (\1, \2) of the layers probe BitMap == \3, otherwise failure
@@ -4207,7 +4209,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         lea     d3b_hname(pc),a0
         move.l  #dos_handler,a1      ; absolute: handler.o linked out of 16-bit lea(pc) range
         moveq   #6,d0
-        move.l  #D3_STK,d1
+        move.l  #FS_STK,d1
         jsr     proc_create
         move.l  d0,DOS_FSPORT        ; publish the port of the OFS file-handler
                 ifeq    PROD            ; PROD: fs-driver = D3b proof client (reads kickslop) -> out of prod; the handler stays
@@ -5347,7 +5349,7 @@ mount_dfn:
         move.l  sp,a0
         move.l  #dos_handler,a1
         moveq   #6,d0
-        move.l  #D3_STK,d1
+        move.l  #FS_STK,d1
         jsr     proc_create
         tst.l   d0
         beq.s   .mn_next

@@ -150,6 +150,12 @@ wb_entry:                            ; ROMTag+44: entry point of the process cre
         tst.l   d0
         beq     .we_idle
         move.l  d0,a5                ; a5 = state
+        lea     WBS_DRCLOSED(a5),a0  ; every drawer closed
+        lea     WBS_DRAWERS(a5),a1
+        moveq   #WB_MAXDRAWERS-1,d0
+.we_drc:
+        move.l  a0,(a1)+
+        dbra    d0,.we_drc
         move.w  #-1,WBS_SELW(a5)
         move.w  #-1,WBS_DRAGW(a5)
         bsr     wb_mkmenus
@@ -186,13 +192,15 @@ wb_entry:                            ; ROMTag+44: entry point of the process cre
         bset    d1,d0
         move.l  WBS_WIN(a5),a0
         bsr     wb_sigbit
-        lea     WBS_DRAWERS(a5),a4
-        moveq   #WB_MAXDRAWERS-1,d2
+        moveq   #0,d2
 .we_sig:
+        lea     WBS_DRAWERS(a5),a4
+        move.l  0(a4,d2.w),a4
         move.l  DR_WIN(a4),a0
         bsr     wb_sigbit
-        lea     DR_SIZE(a4),a4
-        dbra    d2,.we_sig
+        addq.w  #4,d2
+        cmp.w   #WB_MAXDRAWERS*4,d2
+        blo.s   .we_sig
         jsr     LVO_WAIT(a6)
 .we_drain:                           ; public port: returned WBStartup messages, or foreign messages (replied)
         move.l  ($4).w,a6
@@ -276,8 +284,10 @@ WBS_BUSYON      EQU WBS_NSEL+3       ; BYTE: the busy pointer is shown (wb_busy)
 WBS_BUSYD       EQU WBS_NSEL+4       ; busy pointer sprite data, in CHIP memory | 0
 WBS_LEFT        EQU WBS_BUSYD+4      ; WB_MAXLEFT left-out records (desktop icons WB_LEFT0..)
 WBS_VOLS        EQU WBS_LEFT+WB_MAXLEFT*LO_SIZE ; WB_MAXVOLS volume records (desktop icons 0..)
-WBS_DRAWERS     EQU WBS_VOLS+WB_MAXVOLS*VE_SIZE ; WB_MAXDRAWERS drawer records
-WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copy of the menus (intuition writes into it)
+WBS_DRAWERS     EQU WBS_VOLS+WB_MAXVOLS*VE_SIZE ; WB_MAXDRAWERS pointers: a drawer record, allocated while its window
+                                     ; is open, or WBS_DRCLOSED
+WBS_DRCLOSED    EQU WBS_DRAWERS+WB_MAXDRAWERS*4 ; the record every closed drawer points at (all zero, DR_WIN 0)
+WBS_MENUS       EQU WBS_DRCLOSED+DR_SIZE ; copy of the menus (intuition writes into it)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
 WB_MAXVOLS      EQU 8
@@ -1161,9 +1171,10 @@ wb_window:
 .ww_dr:
         move.w  d7,d0
         subq.w  #1,d0
-        mulu    #DR_SIZE,d0
+        add.w   d0,d0
+        add.w   d0,d0
         lea     WBS_DRAWERS(a5),a4
-        add.l   d0,a4
+        move.l  0(a4,d0.w),a4
         move.l  DR_WIN(a4),a3
 .ww_ret:
         move.l  a3,d0
@@ -3405,9 +3416,10 @@ wb_selflag:
 .sf_dr:
         move.w  d7,d0
         subq.w  #1,d0
-        mulu    #DR_SIZE,d0
+        add.w   d0,d0
+        add.w   d0,d0
         lea     WBS_DRAWERS(a5),a0
-        add.l   d0,a0
+        move.l  0(a0,d0.w),a0
         add.w   d1,a0
         lea     DR_SEL(a0),a0
         rts
@@ -3443,9 +3455,11 @@ wb_selclr:
         movem.l d0/a0,-(sp)
         move.w  d7,d0
         subq.w  #1,d0
-        mulu    #DR_SIZE,d0
-        lea     WBS_DRAWERS+DR_SEL(a5),a0
-        add.l   d0,a0
+        add.w   d0,d0
+        add.w   d0,d0
+        lea     WBS_DRAWERS(a5),a0
+        move.l  0(a0,d0.w),a0
+        lea     DR_SEL(a0),a0
         moveq   #WB_MAXICONS/4-1,d0
 .sc_clr:
         clr.l   (a0)+
@@ -3625,6 +3639,19 @@ wb_opendrawer:
         bls.s   .od_free
         bra     .od_ret
 .od_slot:
+        move.l  ($4).w,a6            ; the record exists while the window is open (closed drawers share one)
+        move.l  #DR_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .od_ret
+        move.l  d0,a4
+        move.w  d7,d0
+        subq.w  #1,d0
+        add.w   d0,d0
+        add.w   d0,d0
+        lea     WBS_DRAWERS(a5),a0
+        move.l  a4,0(a0,d0.w)
         move.l  d4,a0                ; path and title in the record
         lea     DR_PATH(a4),a1
         moveq   #WB_PATHMAX-2,d0
@@ -3665,7 +3692,10 @@ wb_opendrawer:
         jsr     LVO_OPENWINDOW(a6)
         lea     NW_SIZEOF+4(sp),sp
         move.l  d0,DR_WIN(a4)
-        beq.s   .od_ret
+        bne.s   .od_win
+        bsr     wb_drfree            ; no window: the record goes again
+        bra     .od_ret
+.od_win:
         move.w  d7,DR_ID(a4)
         move.l  d0,a0                ; the desktop's IDCMP port, shared by every drawer (workbench-task §9: no UserPort
         move.l  WBS_WIN(a5),d0       ; of its own); without it ModifyIDCMP gives the drawer one
@@ -3751,8 +3781,31 @@ wb_closedrawer:
         jsr     ICON_LVO_FREEDISKOBJECT(a6)
 .cd_fnx:
         dbra    d2,.cd_free
+        bsr     wb_drfree
 .cd_ret:
         movem.l (sp)+,d2/a2-a4/a6
+        rts
+
+; wb_drfree(d7.w = drawer, a5): its record freed, the drawer points at WBS_DRCLOSED again (nothing if it already
+; does). Preserves all registers.
+wb_drfree:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.w  d7,d0
+        subq.w  #1,d0
+        add.w   d0,d0
+        add.w   d0,d0
+        lea     WBS_DRAWERS(a5),a0
+        add.w   d0,a0
+        move.l  (a0),a1
+        lea     WBS_DRCLOSED(a5),a6
+        cmpa.l  a6,a1
+        beq.s   .df_ret
+        move.l  a6,(a0)
+        move.l  #DR_SIZE,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+.df_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
 ; wb_loadicons(a4 = record, a5): walks the drawer's directory (Examine / ExNext); each "name.info" (except
@@ -4633,15 +4686,17 @@ wb_apply:
         beq.s   .ti_dr
         bsr.s   .ti_one
 .ti_dr:
-        lea     WBS_DRAWERS(a5),a4
-        moveq   #WB_MAXDRAWERS-1,d2
+        moveq   #0,d2
 .ti_lp:
+        lea     WBS_DRAWERS(a5),a4
+        move.l  0(a4,d2.w),a4
         move.l  DR_WIN(a4),d0
         beq.s   .ti_nx
         bsr.s   .ti_one
 .ti_nx:
-        lea     DR_SIZE(a4),a4
-        dbra    d2,.ti_lp
+        addq.w  #4,d2
+        cmp.w   #WB_MAXDRAWERS*4,d2
+        blo.s   .ti_lp
 .ti_ret:
         movem.l (sp)+,d2/a2/a4/a6
         rts

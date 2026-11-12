@@ -525,7 +525,7 @@ bcpl_starthandler:
         jsr     LVO_FREEMEM(a6)
 .sh_fr:
         rts
-SH_FSSTACK      EQU 4096             ; stack of a ROM file-system process (bytes)
+SH_FSSTACK      EQU 3072             ; stack of a ROM file-system process (bytes; FS_STK in boot.s, same measure)
 sh_fsname:
         dc.b    "File System",0
         even

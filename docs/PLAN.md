@@ -1666,7 +1666,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   direct path; Lines 273 → 314 Draw/s on the trace build; Clock re-measured (passes 20.0 / 12.4 frames, flat
   profile, left open). Then the layered line rewrite (user: "fais la réécriture du chemin des lignes"): `dl_fast`,
   inline uncontended semaphores, no blitter wait on Draw entry; Lines 371.8 → 408-410 lines/s on the production ROM
-  (1.3: 431), Clock unchanged; BlitLock drift fixed.
+  (1.3: 431), Clock unchanged; BlitLock drift fixed. Then A6 (user: "continue ce qu'il reste"): Workbench drawer
+  records allocated on open (5,480 bytes), file system stacks 4,096 → 3,072 after measuring 1,687 at most (2,048
+  bytes with two drives): Workbench 1.3.3 idle 860,424 → 867,952 free.
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room

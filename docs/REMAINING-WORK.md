@@ -84,7 +84,11 @@ held" qualifier bits of mouse events are not set yet.
   (Background CLI) bytes in a long Shell session with a "No disk present" requester, `Run`, `type`, `copy`,
   `newshell`/`endcli` (868 at most in the 2026-11-09 measurement), and more than 1,500 bytes of their BCPL part stay
   untouched under that. The remaining 416 bytes are not chased further.
-- **Idle desktop:** 1,024 bytes more than before (the RAM handler's stack): about 13,384 above 1.3 (860,992).
+- **Idle desktop:** 1,024 bytes more than before (the RAM handler's stack): about 13,384 above 1.3 (860,992). Since
+  2026-11-12 the Workbench allocates a drawer record only while its window is open: 5,480 bytes back at idle
+  (Workbench 1.3.3, one drive: 860,424 → 865,904 free; open/close cycles end at the same value). The floppy file
+  system stacks went from 4,096 to 3,072 bytes after measuring their deepest use (1,687 bytes, with a "You MUST
+  replace volume" requester opened by the handler; 521 otherwise): → 867,952 free, 7,528 bytes in all.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
 ### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10
