@@ -55,7 +55,12 @@ if [ $RC = 0 ]; then
   sleep 12; move 1 2; sleep 20; "$A" shot "$NAME" "$OUT/write_in_df2.png" --via ipc >/dev/null
   move 2 1
   back "FM END" || RC=1
-  sleep 8   # the file system writes the closed file back a few seconds later
+  # the file system writes the closed file back a few seconds after END: wait until the ADF holds it (emulated time
+  # runs slower than the wall clock on a loaded host), 40 s at most
+  for i in $(seq 20); do
+    sleep 2
+    xdftool "$DATA" read w "$OUT/w" >/dev/null 2>&1 && printf 'line one\nline two\n' | cmp -s - "$OUT/w" && break
+  done
 fi
 tr -d '\r' < "$DIR/serial.log" | sed -n '/^FM BEGIN/,/^FM END/p' | grep -v "^FM RD " > "$OUT/fhmove.txt"
 "$A" stop "$NAME" >/dev/null

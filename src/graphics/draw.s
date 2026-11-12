@@ -1622,35 +1622,36 @@ lb_core:
         add.w   d0,d0
         move.w  d0,BLT_BMOD(a0)
         lea     bm_Planes(a2),a2
+        move.w  2(sp),d0             ; pixels -> BLTSIZE, once per line
+        lsl.w   #6,d0
+        or.w    #2,d0
+        move.w  d0,2(sp)
+        move.w  d2,d3
+        ext.l   d3                   ; d3 = BLTAPT (the error)
+        move.l  DC_RP(a5),a3
 .lb_plane:
         subq.w  #1,(sp)
         bmi     .lb_done
         move.l  (a2)+,a1
         btst    #0,d4
         beq.s   .lb_next
-        bsr     db_wait
+        adda.l  d1,a1                ; the next plane is set up while the blitter still draws the previous one
         move.w  d7,d0
-        move.l  DC_RP(a5),a3
         move.b  RP_MINT(a3,d5.w),d0
+        bsr     db_wait
         move.w  d0,BLT_CON0(a0)
         move.w  d6,BLT_CON1(a0)
         move.w  LN_PAT(a4),BLT_BDAT(a0)  ; after BLTCON1: the texture is shifted by BSH as it is written
-        move.w  d2,d0
-        ext.l   d0
-        move.l  d0,BLT_APT(a0)
-        adda.l  d1,a1
+        move.l  d3,BLT_APT(a0)
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)
-        move.w  2(sp),d0             ; pixels
-        lsl.w   #6,d0
-        or.w    #2,d0
-        move.w  d0,BLT_SIZE(a0)
+        move.w  2(sp),BLT_SIZE(a0)
 .lb_next:
         lsr.b   #1,d4
         addq.w  #1,d5
         bra     .lb_plane
 .lb_done:
-        addq.l  #4,sp                ; depth counter, pixels
+        addq.l  #4,sp                ; depth counter, BLTSIZE
         jsr     gfx_DisownBlitter    ; the last plane may still be drawing, as after a V34 Draw: the CPU engines and
         moveq   #1,d0                ; the next blitter user wait for it first (db_wait)
         rts
@@ -5905,7 +5906,8 @@ gfx_BltBitMapRastPort:
 .bb_oret:
         rts
 
-; Word-aligned sources can be shifted into arbitrary destination phases by the blitter's B channel.
+; A source whose phase in its word is not beyond the destination's is shifted right into place by the blitter's B
+; channel (the bits it shifts in from the previous word fall under the first-word mask).
 ; Validate all selected planes, including the final masked B fetch and cross-plane aliasing, before any DMA.
 ; Unsupported alignment, constants, non-CHIP memory and aliasing retain the CPU engines below.
 RB_SOFF         EQU 0
@@ -5937,7 +5939,10 @@ br_blit:
         bmi     .rb_no
         move.w  d0,d6
         and.w   #15,d6
-        bne     .rb_no              ; clipping to a non-word-aligned source keeps the CPU path
+        move.w  d2,d7
+        and.w   #15,d7
+        cmp.w   d7,d6
+        bhi     .rb_no              ; a source phase beyond the destination's needs a left shift: CPU path
         move.w  bm_BytesPerRow(a2),d6
         or.w    bm_BytesPerRow(a3),d6
         btst    #0,d6
@@ -5988,6 +5993,9 @@ br_blit:
         moveq   #-1,d7
         lsr.w   d6,d7
         move.w  d7,RB_FWM(a4)
+        move.w  d0,d7
+        and.w   #15,d7
+        sub.w   d7,d6              ; B shift = destination phase - source phase
         ror.w   #4,d6
         move.w  d6,RB_SHIFT(a4)
         move.w  d2,d6
@@ -6018,7 +6026,8 @@ br_blit:
         or.w    d7,d4
         move.w  d4,RB_BLTSIZE(a4)
         add.w   d6,d6              ; DMA row byte count
-        lsr.w   #3,d0
+        lsr.w   #4,d0              ; source word of the first pixel
+        add.w   d0,d0
         and.l   #$ffff,d0
         mulu    bm_BytesPerRow(a2),d1
         add.l   d0,d1

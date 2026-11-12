@@ -1676,6 +1676,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Tagged v0.2.49. Then C15 (user: "fait A5, C15 et A7 après le tag"): `docs/analysis/cpu-fpu-v34.md` from black-box
   probes of the real 1.3 on 68000-68040 with and without an FPU; AFF_68881, CACR 1 on a 68020+, per-task FPU state
   saved by the dispatcher in 1.3's layout, null frame in AddTask, `make kick-a1200`, `tests/fpuctx_probe.sh`.
+  Then A5 and A7 (user: "fait A5 et A7", tag v0.2.50 after them): PC profile and Draw path counts of Clock's
+  passes; `br_blit` takes sources whose phase does not exceed the destination's (Clock's resize copies off the
+  CPU: release to last refresh 48.4 → 44.5 frames, first poll 15.9 → 12.1, 1.3: 11.7), `tests/bltrp_probe.sh`;
+  `lb_core` sets the next plane up before waiting for the blitter (Lines 416 → 420 lines/s, 1.3: 431). Ruled out
+  by measurement: clip walks, line set-up before the wait in `gfx_solidline_dma`, `dl_fast` under LAYERUPDATING.
+  `tests/fhmove_probe.sh` now polls the data ADF (up to 40 s) for the closed file instead of a fixed 8 s: on a loaded
+  host the write-back came after the session stop once (file `w` left empty; six reruns of both ROMs passed).
   **Issue #35, PR audits #36-#38, remaining work (2026-11-11)**: user request "oui fini ce qu'il reste dans
   REMAINING-WORK", then issue #35 and PRs #36, #37, #38. Paccer (issue #35, broken since v0.2.20): its `CLS` tests
   the flags left by OpenLibrary; OpenLibrary now returns them for D0 and the game starts. PRs #36-#38: clean-room

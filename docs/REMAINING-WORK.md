@@ -73,8 +73,16 @@ held" qualifier bits of mouse events are not set yet.
   walk, blitter set-up) about 25 %, waits for the blitter about 7 %, the rest spread over area fill, text and exec.
   Re-measured after the line changes of 2026-11-12: unchanged (20.0 / 12.4 frames; Clock's SIMPLE window uses the
   direct Draw path, which those changes do not touch). SizeLayer starts 2.5 frames after the release (1.3: 1);
-  the wait for Clock's first poll depends on its 10-frame Delay phase on both ROMs. Left: the passes themselves,
-  1.2-1.3 times slower with a flat profile.
+  the wait for Clock's first poll depends on its 10-frame Delay phase on both ROMs. Then (2026-11-12, third pass):
+  the copies that ClipBlit makes during the resize, before Clock's first poll (300 × 80, 130 × 105 and 170 × 105
+  pixels, two planes), ran on the CPU row by row because `br_blit` took only word-aligned sources; it now takes any
+  source whose phase in its word is not beyond the destination's (B shift = destination phase - source phase):
+  release to last EndRefresh 48.4 → 44.5 frames, first poll 15.9 → 12.1 (1.3: 11.7), Clock pixel-identical, and
+  `tests/bltrp_probe.sh` checks every pixel of 122 such copies (a ROM with the old shift fails it). Measured and
+  ruled out the same day: the clip walk (0.5 ClipRect per generic line), the line set-up before the blitter wait
+  (no change), letting `dl_fast` take lines between BeginRefresh and EndRefresh (pass 2 12.4 → 12.9). Of the 456
+  Draw calls of the two passes, 222 take the direct path, 222 the generic one (layer being refreshed) and 12 are
+  horizontal. Left: the passes themselves, still 20.0 / 12.4 frames (1.3: 15.1 / 10.4).
 
 ### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
@@ -103,7 +111,7 @@ held" qualifier bits of mouse events are not set yet.
   deliberate leniency over 1.3.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
-### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10
+### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10, Lines within 2.5 % of 1.3 since 2026-11-12
 
 `docs/analysis/wb12-demos-v34.md`, probed on the real 1.3:
 - Clock (SIMPLE_REFRESH): shrinking and growing it with the size gadget on the Workbench 1.2 disk leaves no sliver
@@ -124,9 +132,11 @@ held" qualifier bits of mouse events are not set yet.
   single context set-up and one `lb_core` blit (371.8 → 386.8 lines per second); the layer lock and the blitter
   semaphore take an inline path when nobody else holds them (→ 393.3, → 404.6); a line `dl_fast` cannot take after
   setting up its context goes to the generic engine with that context (→ 408-410). 1.3: 431. Clock is unchanged
-  (passes 19.9 / 12.4 frames, as before: lines drawn between BeginRefresh and EndRefresh skip `dl_fast`). Left:
-  about 5 %, mostly the two plane blits the CPU waits for (1.3 waits for them too) and plane validation before
-  each blit.
+  (passes 19.9 / 12.4 frames, as before: lines drawn between BeginRefresh and EndRefresh skip `dl_fast`). Then
+  (2026-11-12, third pass) `lb_core` computes BLTSIZE and BLTAPT once per line and each plane's minterm and address
+  before waiting for the previous plane, so the blitter idles less between the two planes: 416.2 / 413.3 → 419.7 /
+  421.0 lines per second (production ROM, two runs each), same pixels (`lineclip`, `gline`). Left: about 2.5 %; a
+  profile shows 29 % of the time waiting for the blitter, which 1.3 waits for too.
 - Found on the way: an internal blitter user (`gfx_tryblitter`, ScrollRaster's blit) did not count itself in GfxBase
   BlitLock while DisownBlitter took one off, so BlitLock drifted (−15,588 after a minute of Lines; 1.3 shows −1 at
   rest, graphics-blitter §3). Fixed: `tests/gline_probe.sh` L7 now reads blitlock FFFF (the previous ROM FFD0).

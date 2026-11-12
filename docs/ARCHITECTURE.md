@@ -2342,7 +2342,14 @@ differs.
   - `lb_core` (`src/graphics/draw.s`) ends with DisownBlitter without waiting for the last plane; `ln_draw`
     waits for the blitter before its CPU walk, the other CPU engines already did (`db_wait`). `db_enter` accepts a
     plane below ExecBase MaxLocMem as chip RAM (no TypeOfMem per blit); `gfx_Draw` sends a SuperBitMap layer
-    straight to the generic path (`dr_directdraw` used to lock the layer, then give up).
+    straight to the generic path (`dr_directdraw` used to lock the layer, then give up). Since 2026-11-12 it also
+    computes BLTSIZE and BLTAPT once per line and each plane's minterm and address before `db_wait`, so only the
+    register writes fall between two plane blits (Lines 416 → 420 lines/s).
+  - `br_blit` (BltBitMapRastPort, since 2026-11-12): a source whose phase in its word does not exceed the
+    destination's goes to the blitter too (B shift = destination phase − source phase, source pointer at its first
+    word); the bits shifted in from the previous word fall under the first-word mask. A larger source phase keeps
+    the CPU rows. Clock's resize copies took the CPU rows before (release to last refresh 48.4 → 44.5 frames).
+    `tests/bltrp_probe.sh`: every pixel of 122 copies, source phases 0-15 against destination phases.
   - BCPL getvec (`rt_getvec_raw`, `g_getvec`, `src/dos/bcpl.s`): (n+2)×4 bytes for any n ≥ −1, 0 with pr_Result2
     103 otherwise and on failure (dos-memory §1.1).
   - Trace build `PCPROF` (never in dev or prod): CIA-B timer A at about 1 kHz, `int6_dispatch` stores the
