@@ -2372,6 +2372,12 @@ differs.
     straight to the generic path (`dr_directdraw` used to lock the layer, then give up). Since 2026-11-12 it also
     computes BLTSIZE and BLTAPT once per line and each plane's minterm and address before `db_wait`, so only the
     register writes fall between two plane blits (Lines 416 → 420 lines/s).
+  - Since 2026-11-13, `gfx_Draw` into a layer without ClipRects, without a SuperBitMap and locked by the caller
+    (BeginRefresh with an empty damage) only moves cp and lowers the pattern counter by M once, as the generic
+    path does when nothing is drawn (FRST_DOT kept). `gfx_solidline_dma` keeps CON1/APT/SIZE in registers and
+    computes each plane's CON0 before waiting for the previous plane; `dr_directdraw` inlines Forbid/Permit
+    (Permit's vector only when a reschedule is due); `bt_blit` has no size threshold (Clock: refresh pass 2
+    12.4 → 6.8 frames).
   - `br_blit` (BltBitMapRastPort, since 2026-11-12): a source whose phase in its word does not exceed the
     destination's goes to the blitter too (B shift = destination phase − source phase, source pointer at its first
     word); the bits shifted in from the previous word fall under the first-word mask. Clock's resize copies took

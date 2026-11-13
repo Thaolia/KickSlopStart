@@ -970,10 +970,10 @@ db_leave:
 ; d6 bit 8 selects a top-to-bottom crossing edge: XOR one rounded x per row, excluding its bottom row.
 ; Used by the common Draw path and by AreaEnd's one-plane mask edges, without their generic per-pixel work.
 gfx_solidline_dma:
-        lea     -10(sp),sp         ; CON0 base, CON1, error, BLTSIZE, crossing mode
+        lea     -4(sp),sp          ; CON0 base, crossing mode
         move.w  d6,d7
         and.w   #$100,d7
-        move.w  d7,8(sp)
+        move.w  d7,2(sp)
         and.w   #$ff,d6
         sub.w   d0,d2
         sub.w   d1,d3
@@ -1041,7 +1041,7 @@ gfx_solidline_dma:
         move.w  d3,d0
         lsl.w   #2,d0
         sub.w   d1,d0
-        btst    #0,8(sp)
+        btst    #0,2(sp)
         beq.s   .sl_store_error
         or.w    #2,d4              ; one dot per row
         btst    #4,d4
@@ -1058,21 +1058,22 @@ gfx_solidline_dma:
         beq.s   .sl_store_error
         subq.w  #2,d0              ; negative x: half ties still round toward larger x
 .sl_store_error:
-        move.w  d0,4(sp)
+        move.w  d0,d1
+        ext.l   d1                 ; d1 = BLTAPT (error), d4 = CON1, d2 = BLTSIZE, d7 = CON0 base
         bpl.s   .sl_sign
         or.w    #$40,d4
 .sl_sign:
-        move.w  d4,2(sp)
-        btst    #0,8(sp)
+        btst    #0,2(sp)
         bne.s   .sl_length
         addq.w  #1,d2
 .sl_length:
         lsl.w   #6,d2
         or.w    #2,d2
-        move.w  d2,6(sp)
-.sl_plane:
-        move.w  (sp),d0
-        btst    #0,8(sp)
+        move.w  (sp),d7
+        moveq   #0,d3              ; d3 = 0: first plane, the blitter is already idle
+.sl_plane:                         ; the plane's CON0 is computed before waiting for the previous plane's blit
+        move.w  d7,d0
+        btst    #0,2(sp)
         beq.s   .sl_solid
         or.w    #$5a,d0
         bra.s   .sl_pen
@@ -1082,22 +1083,23 @@ gfx_solidline_dma:
         bne.s   .sl_pen
         eor.w   #$f0,d0
 .sl_pen:
+        tst.w   d3
+        beq.s   .sl_regs
+        bsr     db_wait
+.sl_regs:
         move.w  d0,BLT_CON0(a0)
-        move.w  2(sp),BLT_CON1(a0)
-        move.w  4(sp),d0
-        ext.l   d0
-        move.l  d0,BLT_APT(a0)
+        move.w  d4,BLT_CON1(a0)
+        move.l  d1,BLT_APT(a0)
         move.l  a3,BLT_CPT(a0)
         move.l  a3,BLT_DPT(a0)
-        move.w  6(sp),BLT_SIZE(a0)
+        move.w  d2,BLT_SIZE(a0)
         move.l  a2,a3
         lsr.b   #1,d5
+        moveq   #1,d3
         subq.w  #1,d6
-        beq.s   .sl_done
-        bsr     db_wait
-        bra.s   .sl_plane
+        bne.s   .sl_plane
 .sl_done:
-        lea     10(sp),sp
+        lea     4(sp),sp
         rts
 
 ; rc_blit(d0=x0, d1=y0, d2=x1, RC_ROWS=height-1): solid rectangle, Z clear on success. Preserves all registers.
@@ -2589,10 +2591,15 @@ gfx_Draw:
                 ifd     PCPROF
         addq.l  #1,PROF_DRAWS        ; trace build only: Draw calls, read back with the debugger
                 endc
+        move.l  rp_Layer(a1),a0
+        cmpa.w  #0,a0
+        beq.s   .dw_kind
+        tst.l   LY_CLIPRECT(a0)      ; a layer without any ClipRect (empty BeginRefresh damage): see .dw_none
+        beq     .dw_none
+.dw_kind:
         cmp.w   rp_cp_y(a1),d1     ; solid horizontal spans use the cheaper row-fill engine
         beq.s   .dw_generic
-        move.l  rp_Layer(a1),a0      ; SuperBitMap layers never take the direct path: skip its set-up
-        cmpa.w  #0,a0
+        cmpa.w  #0,a0                ; SuperBitMap layers never take the direct path: skip its set-up
         beq.s   .dw_direct
         tst.l   LY_SUPERBM(a0)
         bne.s   .dw_layer
@@ -2653,6 +2660,38 @@ gfx_Draw:
 .dw_ret:
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+; No ClipRect and no SuperBitMap, the layer locked by this task (between BeginRefresh and EndRefresh), so the
+; list cannot change under us: nothing can be drawn. The generic path's RastPort update without its set-up:
+; cp := end, pattern counter - M once (the layer's), FRST_DOT kept since no engine drew.
+.dw_none:
+        tst.l   LY_SUPERBM(a0)
+        bne     .dw_kind
+        move.l  a2,-(sp)
+        move.l  4.w,a2
+        move.l  EB_THISTASK(a2),a2
+        cmpa.l  LY_LOCK+GB_SS_OWNER(a0),a2
+        movem.l (sp)+,a2             ; (movem keeps the flags)
+        bne     .dw_kind
+        move.l  d2,-(sp)
+        move.w  d0,d2                ; d2 = |dx|, d0 = |dy|, then M = the larger (unsigned, as the generic path)
+        sub.w   rp_cp_x(a1),d2
+        bpl.s   .dn_x
+        neg.w   d2
+.dn_x:
+        move.w  d0,rp_cp_x(a1)
+        move.w  d1,d0
+        sub.w   rp_cp_y(a1),d0
+        bpl.s   .dn_y
+        neg.w   d0
+.dn_y:
+        move.w  d1,rp_cp_y(a1)
+        cmp.w   d0,d2
+        bhs.s   .dn_m
+        move.w  d0,d2
+.dn_m:
+        sub.b   d2,RP_PATCNT(a1)
+        move.l  (sp)+,d2
         rts
 
 ; dl_fast(a1 = RastPort with a layer, d0/d1 = end, a6 = GfxBase): the case the generic path draws with the
@@ -3067,7 +3106,7 @@ dr_directdraw:
         lea     gb_BlitSem(a6),a3
         move.l  a6,-(sp)
         move.l  4.w,a6
-        jsr     LVO_FORBID(a6)
+        addq.b  #1,EB_TDNEST(a6)     ; Forbid, inline
         lea     CUSTOM,a0
         btst    #6,BLT_DMACONR(a0)
         btst    #6,BLT_DMACONR(a0)
@@ -3119,7 +3158,15 @@ dr_directdraw:
 .dd_permit:
         move.l  a6,-(sp)
         move.l  4.w,a6
+        subq.b  #1,EB_TDNEST(a6)     ; Permit inline: its vector only when a reschedule is due
+        bge.s   .dd_pmok
+        tst.b   EB_IDNEST(a6)
+        bge.s   .dd_pmok
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
+        beq.s   .dd_pmok
+        addq.b  #1,EB_TDNEST(a6)
         jsr     LVO_PERMIT(a6)
+.dd_pmok:
         move.l  (sp)+,a6
         bra.s   .dd_commit
 .dd_disown:
@@ -3446,7 +3493,8 @@ bt_one:
 .bo_ret:
         rts
 
-; A word-aligned CHIP template with a nonnegative source-to-destination shift can use B DMA.
+; A word-aligned CHIP template with a nonnegative source-to-destination shift uses B DMA at any size (even a 16 x 9
+; one costs the CPU loop several times the blit set-up per plane).
 ; A supplies the destination edge masks; C/D preserve pixels outside the template. Other cases use the CPU.
 TB_SRC          EQU 0
 TB_DOFF         EQU 4
@@ -3503,10 +3551,6 @@ bt_blit:
         add.w   d4,d4
         add.l   d4,d1
         move.l  d1,TB_DOFF(a4)
-        move.w  d5,d4
-        mulu    d7,d4
-        cmp.l   #32,d4
-        blo     .tb_no
         and.w   #15,d0
         moveq   #-1,d4
         lsr.w   d0,d4

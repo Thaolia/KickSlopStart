@@ -1725,6 +1725,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   held" requester (`tests/taskheld_probe.sh`, T1 and T4-T8 on screenshots). A13: the Cadaver delay is the dev
   harness's continuous level-6 source; Gamebench's stall is a Forbid level held in the dev builds, still open.
   NewCLI copies the parent prompt on 1.3 as on ours (WB 1.3.3's s/CLI-Startup resets it to "%N> ").
+  A5 (Clock speed, implementation agent, 2026-11-13): Draw with no ClipRect under the caller's own layer lock
+  returns at once (cp, counter), BltTemplate on the blitter at any size, line set-up before the inter-plane wait,
+  inline Forbid/Permit in the direct Draw path. Clock on the production ROM: pass 1 19.8 → 18.6 frames (1.3: 15.1),
+  pass 2 12.4 → 6.8 (10.4), release to last EndRefresh 43.3 → 36.4 (38); C:Type 32.88 → 32.02 s. drawcheck,
+  lineclip, graster (156 vectors, 0 FAIL), prepush-check FAIL=0 with the Lemmings menu, settled Clock screenshots
+  identical. Pass 1 stays open (228 Draws at ~2,800 colour clocks each). New open issue A15: a PAL A500 boot is
+  sometimes detected as NTSC under Amiberry (suspect `gfx_detect_std`).
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

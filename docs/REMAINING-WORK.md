@@ -56,7 +56,7 @@ held" qualifier bits of mouse events are not set yet.
 
 ### A4. Workbench 1.3.3: menu ghosting — done 2026-11-09 (single selection)
 
-### A5. Boot time — done 2026-11-09; Clock speed — [doc], S
+### A5. Boot time — done 2026-11-09; Clock speed — pass 2 and total done 2026-11-13, pass 1 open — [src], S
 
 - **Boot:** the Workbench title bar of Workbench 1.3.3 now appears after 61.7 s (two runs), against 68.5–69.0 s on
   the real 1.3 and 71.0–71.3 s before. Cause: the file system fetched the current data block again from trackdisk at
@@ -83,6 +83,16 @@ held" qualifier bits of mouse events are not set yet.
   (no change), letting `dl_fast` take lines between BeginRefresh and EndRefresh (pass 2 12.4 → 12.9). Of the 456
   Draw calls of the two passes, 222 take the direct path, 222 the generic one (layer being refreshed) and 12 are
   horizontal. Left: the passes themselves, still 20.0 / 12.4 frames (1.3: 15.1 / 10.4).
+- 2026-11-13 (`src/graphics/draw.s`): a Draw into a layer with no ClipRect and no SuperBitMap whose lock the
+  caller holds (BeginRefresh with an empty damage) only updates cp and the pattern counter, as the generic path
+  does when nothing is drawn; BltTemplate takes the blitter at any size (Clock's 12 dial diamonds went through the
+  CPU loop); the line engine computes each plane's minterm before waiting for the previous plane and keeps
+  CON1/APT/SIZE in registers; Forbid/Permit inline in `dr_directdraw` (Permit's vector only when a reschedule is
+  due). Clock, production ROM, same harness: pass 1 19.8 → 18.6 frames (1.3: 15.1), pass 2 12.4 → 6.8 (10.4),
+  release to last EndRefresh 43.3 → 36.4 (38); ticks unchanged. drawcheck, lineclip, graster (156 vectors) and
+  settled Clock screenshots identical to HEAD. Left: pass 1 = 228 Draw calls at about 2,800 colour clocks each
+  (entry and clip tests ~580, bitmap and minterm checks ~300, blitter ownership ~270, set-up ~460, blitter waits
+  ~300); parity needs a leaner dedicated Draw path.
 
 ### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
 
@@ -200,8 +210,16 @@ artefact of attaching the debugger (it stops inside the VBlank interrupt).
 The boot CLI's loop wrote a fixed `> ` and never read cli_Prompt, so the Prompt command had no effect there either.
 Its CLI structure now starts with the prompt `%N> ` and the loop prints cli_Prompt through the same formatter as
 the other CLIs (`cli_fmtprompt`, `src/dos/shell.s`): `1> ` after a startup-sequence of one `echo`, `W1> ` after
-`prompt "W%N> "` (screenshots, production ROM). A NewCLI started from there shows `2> `; whether 1.3's C:NewCLI
-copies the parent's prompt is being probed by the analysis track.
+`prompt "W%N> "` (screenshots, production ROM). 1.3's NewCLI copies the parent's prompt as ours does; the
+`2> ` seen on Workbench 1.3.3 comes from its `s/CLI-Startup`, which sets `%N> ` (`bcpl-runtime-v34.md`).
+
+### A15. PAL A500 sometimes detected as NTSC — [src], S — open (2026-11-13)
+
+Seen during the A5 measurements: 2 of 6 plain boots of the production ROM under Amiberry (A500 PAL, no debugger)
+came up NTSC (GfxBase DisplayFlags = 1, Clock's window 170 × 89, pointer stopped at line 199). Suspected cause, not
+confirmed: `gfx_detect_std` (`src/graphics/graphics_lib.s`) decides NTSC as soon as the beam wraps below line 50
+after being above 100 without having been seen above 270, so any interruption of the loop longer than about 41
+lines (~2.6 ms) gives NTSC. vAmigaWeb and Amiberry users would see it.
 
 ## B. Deliberate deviations
 
