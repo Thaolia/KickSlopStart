@@ -1732,6 +1732,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   lineclip, graster (156 vectors, 0 FAIL), prepush-check FAIL=0 with the Lemmings menu, settled Clock screenshots
   identical. Pass 1 stays open (228 Draws at ~2,800 colour clocks each). New open issue A15: a PAL A500 boot is
   sometimes detected as NTSC under Amiberry (suspect `gfx_detect_std`).
+  A13 fixed (user: "occupe-toi aussi du Forbid tenu de Gamebench", 2026-11-13): the dev shell ran each command
+  under `ser_lock` (Forbid) until it returned, so a command looping without exec calls starved the system. Found
+  with `tests/busywait_probe.sh` (new; FAIL on the old dev ROM, PASS now) and a gdb watch on TDNestCnt; lock removed
+  from `sh_exec_cmd`, production ROM byte-identical, prepush-check FAIL=0 twice.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

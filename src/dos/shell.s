@@ -18,8 +18,6 @@
                 xref    ser_puts             ; exec/boot.s (test banner on serial)
                 xref    dos_sendpkt
                 xref    dos_unloadseg        ; dos/loadseg.s (E3: free the seglist)
-                xref    ser_lock             ; exec/boot.s (atomic serial output)
-                xref    ser_unlock
                 xref    dos_boot_assigns     ; dos/dos_lib.s (assigns + volume + current directory)
                 xref    dos_startmounts      ; dos/dos_lib.s (handlers of the mounted partitions)
                 xref    bcpl_call            ; dos/bcpl.s (A5/A6 of BCPL commands)
@@ -569,9 +567,6 @@ sh_exec_cmd:
                 bra     .x_unload
 .x_nrout:
                 ifeq    E3_NO_EXEC
-                ifeq    PROD                 ; dev ROM: the proof command emits its marker under Forbid (no
-                jsr     ser_lock             ; interleaving with the demo tasks); never in production, where
-                endc                         ; Forbid would freeze multitasking until the command's first Wait
                 ; --- dedicated stack of cli_DefaultStack longs plus RC_STKEXTRA (like runcommand): the BCPL stub puts
                 ; the base of its frames at 8(sp) - 4(sp) = (top - 4) - size -> block ONE long larger than the
                 ; announced size, otherwise the first frame overwrites the last long of the previous memory block ---
@@ -727,9 +722,6 @@ sh_exec_cmd:
                 bmi.s   .x_mod
                 move.l  d1,XF_SEG(sp)        ; 0: the command stayed resident
 .x_mod:
-                ifeq    PROD
-                jsr     ser_unlock
-                endc
                 endc                         ; RED E3_NO_EXEC: skips the JSR -> command loaded but not executed
 .x_unload:
                 move.l  ($4).w,a6

@@ -193,7 +193,7 @@ Background CLI), pr_WindowPtr = -1, TaskTrapCode, a plain task. Kept: after Canc
 whatever memory ExecBase is in (1.3 resets first and shows it at the next boot when ExecBase is in slow RAM,
 alert-v34 §1.1).
 
-### A13. Dev ROM stalls under JST 0.8c and Gamebench — [doc], unknown size — half explained (2026-11-13)
+### A13. Dev ROM stalls under JST 0.8c and Gamebench — done 2026-11-13 (dev ROM only)
 
 With `build/kick13.rom` (dev), JST 0.8c needs minutes to reach the Cadaver demo and Gamebench's `wait 20` after
 `run GameBench` never ends; the production ROM behaves like 1.3. A/B by the analysis track
@@ -204,6 +204,15 @@ never ends on both dev builds: its busy-looping AMOS process runs with ExecBase 
 held), so the `wait 20` shell never gets the CPU; the code that takes that base Forbid level is not found yet (only
 nested 0 -> 1 -> 0 pairs were seen). Dev ROM only; the earlier "every CPU sample in interrupt code" was partly an
 artefact of attaching the debugger (it stops inside the VBlank interrupt).
+
+Found and fixed 2026-11-13: the dev shell ran every CLI command under `ser_lock` (a Forbid, there so that the
+proof commands' serial markers would not interleave with the demo tasks), released only when the command returned.
+A command that loops without calling exec (Gamebench's AMOS interpreter) therefore kept that Forbid level, and the
+`Wait` shell starved. Reproduced without Gamebench by `tests/busywait_probe.sh` (an endless loop started with Run,
+then `Wait 5`: never ended on the dev ROM, ends now); a gdb watch on TDNestCnt from Run's start to the loop's entry
+named `ser_lock` as the last −1 → 0 write. The lock is gone (`src/dos/shell.s`); console output keeps its own
+per-write lock, and prepush-check stays FAIL=0 on two runs. The production ROM is byte-identical (it never had it).
+Gamebench itself was not rerun (it is behind the analysis wall).
 
 ### A14. Boot CLI prompt `> ` instead of `1> ` — done 2026-11-13
 

@@ -102,6 +102,9 @@ KickTagPtr − 16.
   illegal, `z` divide by zero, `f` line-F, `0` TRAP #0, `w` pr_WindowPtr = -1, `t` exec's TaskTrapCode, `a` a plain
   exec task; `RUN=1` starts it with Run); screenshots A (fault), B (after Retry), C (after Cancel) to read against
   `docs/analysis/task-held-v34.md` §4.
+- `tests/busywait_probe.sh <out_dir> [rom=build/kick13.rom]`: a copy of the Workbench 1.3.3 disk runs
+  `tests/busywait_probe.s` (an endless CPU loop that never calls exec) with Run, then `Wait 5` and `T after` on the
+  serial line. Prints PASS when the marker comes within 150 s; the dev ROM before the A13 fix never printed it.
 - `tests/layerbak_probe.sh <out_dir> [rom]`: fills free memory with $A5, then on a private BitMap draws two
   overlapping SMART layers and, after SizeLayer, MoveLayer, BehindLayer/UpfrontLayer and a MoveLayer with almost no
   free memory, prints `LB` lines with a ReadPixel hash of each layer (hidden parts come from their backups) and the
