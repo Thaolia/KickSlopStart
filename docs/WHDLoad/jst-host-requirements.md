@@ -67,7 +67,7 @@ its data inside the executable.
 - The two ROMs fail the same way; only the presentation differs (next point).
 - Presentation difference (our ROM vs 1.3, not specific to JST): for a user-task exception the real 1.3 first shows
   the "Software error - task held" system requester (Retry/Cancel) and only Cancel leads on; our ROM goes straight
-  to the Software Failure Guru. This requester is already described in `docs/analysis/alert-v34.md`.
+  to the Software Failure Guru. This requester is specified in `docs/analysis/task-held-v34.md`.
 - Static reading of the 3.1 and 4.7 binaries finds the same unguarded V36+ dos set in both: AllocDosObject,
   FreeDosObject, Flush, LockDosList, UnLockDosList, FindDosEntry, ReadArgs (the argument template is a ReadArgs
   template), FreeArgs, GetVar; plus lowlevel.library (V40) for the CD32 joypad emulation, opened on demand.
@@ -109,6 +109,54 @@ AROS `.conf` lists, icon.library functions up to BumpRevision counted as V34). U
   gameport VBlank server); `INTREQR` showed EXTER (and PORTS) pending and enabled each time, and the ready list held
   the development harness tasks next to `JOTDStartup`. This points at the interrupt load of the development harness,
   not at an OS function JST lacks. It was not investigated further.
+
+### A/B of 2026-11-13 (REMAINING-WORK A13)
+
+Three builds of our ROM supplied by the implementation side in `build/a13/`: `dev.rom` (development build, md5
+`255e323c...`), `dev-noint6.rom` (the same, except that the development-only level-6 test handler no longer re-arms
+the CIA-B timer A one-shot at each level-6 interrupt, so the continuous level-6 source is gone after its first
+shot; md5 `614d5f96...`) and `prod.rom` (production build, md5 `5e8e493d...`), plus the real Kickstart 1.3 as
+reference. Same setup and the same two scripts as above (`JST08 >SER: caddemo` in `DH0:Cad`; `run GameBench` then
+`wait 20` in `DH0:GB`). Times are wall clock from the script's `T ...` marker on the serial line: to the first
+screenshot whose "ENTRANCE HALL" label matches a reference picture of the first room (screenshots every 2-3 s),
+or to the `T after` marker printed after `wait 20`. One run per cell unless two values are given; the emulator
+host was loaded (up to seven sessions at once in series 1, three in series 2), so only large differences count.
+
+| Scenario | Real 1.3 | `prod.rom` | `dev-noint6.rom` | `dev.rom` |
+|---|---|---|---|---|
+| JST 0.8c + Cadaver: first room shown after | 11 s | 14 s / 11 s | 25 s / 11 s | **135 s / 115 s** |
+| `run GameBench` + `wait 20`: `T after` after | 41 s / 70 s | 48 s / 78 s | **never** (stopped at 900 s, and once at 200 s) | **never** (stopped at 900 s) |
+| Gamebench window shown | yes | yes | yes | yes |
+
+Findings:
+- **Cadaver: the continuous level-6 source is the cause.** Removing only the re-arming of the CIA-B one-shot
+  brings the development build to the production/real time (11 s in the less loaded series); with it, the game
+  needs about two minutes.
+- **Gamebench: a different cause, not the level-6 source.** Both development builds never finish `wait 20`; the
+  Gamebench window is up in both. State during the stall (both development builds,
+  identical): Gamebench is an AMOS program whose process (named `AMOS`, priority 0) is always the current task,
+  running its interpreter loop in user mode; the CLI process that runs `wait 20` (`shell`) is in the ready list
+  with its signal received, and higher-priority tasks (intuition input 20, the development `demo.timer` 10, the
+  DF0/DF1 handlers 6) are ready too. **ExecBase `TDNestCnt` is 0 (task switching forbidden, one Forbid level)**
+  at every sample, and write logs on that byte never saw it return to −1: in one session, ten minutes into the
+  stall, no write at all during 5 s; in another, logged from before `run GameBench` until a minute into the
+  stall, the last 64 writes were all nested Forbid/Permit pairs going 0→1→0. On `prod.rom` and on the real ROM, with Gamebench idle in the
+  same window, `TDNestCnt` is −1 at every sample. So in the development builds something leaves one Forbid level
+  held while the AMOS process runs, the scheduler never switches away from it, and the `wait 20` CLI starves.
+- Writers of `TDNestCnt` during the stall, as instruction addresses in **our** `dev-noint6.rom` (md5 above; map
+  them with a vlink map of that build): the 0→1 write at `$FC7E34` and the 1→0 write at `$FC7E3A`; other 0→1
+  writes at `$FD25C4`, `$FD29FA`, `$FD2A72`, `$FD318E`. Which code took the **base** level (−1→0) was not
+  identified: a debugger-scripted trace of every −1→0 transition slowed the emulation too much to reach the stall
+  within its time limit. A useful next step on the implementation side: log the −1→0 writes (with the current
+  task) from just before `run GameBench`, the last one before the stall is the culprit; or compare which
+  development-only task or server is active (`demo.forbidA`, `demo.forbidB`, `demo.H`, `demo.L`, `demo.S`,
+  `demo.port`, `demo.timer` are all present in the development builds).
+- **Sampling bias of the earlier diagnosis.** A debugger attach (and IPC `GET_CPU_REGS`) stops the CPU at a
+  frame-aligned point (raster line about 4, i.e. inside the vertical-blank interrupt): six attaches in a row gave
+  the same PC in Gamebench's own vertical-blank server, with the same stack. The earlier statement "every sample
+  was in interrupt code" is therefore at least partly an artefact of the method, not a measure of where the CPU
+  spends its time. The interrupted task context can be read from the exception frame at the top of the
+  supervisor stack instead (that is how the AMOS user-mode loop above was found).
 
 ## What this means for a 1.3-compatible ROM
 

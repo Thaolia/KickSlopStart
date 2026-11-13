@@ -1361,6 +1361,25 @@ launches NewCLI): **10, 14, 49, 51, 59, 60, 61, 62, 63, 74, 89, 93, 110, 111, 13
 **values** of slots **34** (endtask) and **42** (qpkt), which must be machine addresses
 **> 0** (start calls them as functions). [O]
 
+**Prompt inheritance, observed on the real 1.3 (2026-11-13)** [S: real ROM under Amiberry, A500 cycle-exact,
+copies of the Workbench 1.3.3 disk, screenshots read]:
+
+| Startup-sequence of the copy | What is shown |
+|---|---|
+| `echo "hello"` | boot CLI window (`AmigaDOS`): banner, `hello`, then prompt **`1> `** |
+| `prompt "W%N> "` | boot CLI prompt **`W1> `**: the boot CLI honours Prompt from its startup-sequence |
+| `prompt "W%N> "` then `newcli` (disk unchanged otherwise) | new window `New CLI process 2`, prompt **`2> `** |
+| same, with `s/CLI-Startup` deleted from the copy | new window `New CLI process 2`, prompt **`W2> `** |
+| interactive, in CLI 2: `prompt "X%N> "` (shows `X2> `) then `newcli` | `New CLI process 3`, prompt **`3> `** (stock disk) |
+
+- Step 7 is confirmed: the new CLI **does** inherit the parent's prompt string. The `2> ` seen on a stock disk is
+  not a non-inheritance: the Workbench 1.3.3 `s/CLI-Startup` (14 bytes) is the single line `prompt "%N> "`, and
+  NewCLI runs it (step 6, no `From`), which overwrites the inherited prompt.
+- So a ROM whose NewCLI copies the parent prompt shows `W2> ` only when `s:CLI-Startup` is absent or does not
+  set a prompt; with the stock Workbench disk the expected display is `2> `.
+- `%N` is expanded at display time with the process's own task number (`W1> ` in the boot CLI, `W2> ` in the
+  new one).
+
 #### 13.7.3 Start and end of the new CLI (Q3) [O ROM + WB]
 - Start §2.4/§13.5 on the segarray `[V!0, V!1, V!2, V!3, CLI]`: globin of V!1..V!V!0
   **into the shared GV** (including entry 3 = cliinit of the parent, not yet cleared at that

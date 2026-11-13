@@ -211,6 +211,7 @@ Built on the stack in the §2.1 format then passed to `DisplayAlert(0, text, 40)
 - The labels "Software error - task held", "Disk corrupt - task held", "Finish ALL disk activity",
   "Select CANCEL to reset/debug" do exist in the 1.3 ROM, but in **dos.library**: this is DOS's
   "task held" requester (system requester, not the Guru), which does not belong to exec/alert.hook.
+  Its trigger, layout, Retry/Cancel behaviour and test vectors: `task-held-v34.md`. **[S]**
   The 1.3 Guru contains only the three blocks above. **[O]**
 - AutoRequest fallback (`intuition-requesters-v34.md` §5.3): another caller of DisplayAlert, with its
   own captions `=LEFT BUTTON OK=` / `=RIGHT BUTTON CANCEL=`. **[O]**
