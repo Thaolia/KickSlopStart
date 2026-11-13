@@ -1351,7 +1351,8 @@ lr_freebm:
         jmp     LVO_FREEMEM(a6)
 
 ; lr_allocbm(a3 = ClipRect, d7.b = depth) -> cr_BitMap + origin set (0 if insufficient memory).
-; Contiguous planes after the structure, zeroed. Preserves d2-d7/a2-a6.
+; Contiguous planes after the structure, NOT cleared: lr_fill writes every pixel inside the ClipRect bounds (copy or
+; pen 0), and nothing reads the alignment margins. Preserves d2-d7/a2-a6.
 lr_allocbm:
         movem.l d2-d4/a6,-(sp)
         move.w  CR_MINX(a3),d2
@@ -1374,18 +1375,23 @@ lr_allocbm:
         mulu    d1,d0                ; planes x depth
         add.l   #bm_SIZEOF,d0
         move.l  d0,-(sp)
-        move.l  #MEMF_CHIP|MEMF_CLEAR,d1
+        moveq   #MEMF_CHIP,d1
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         bne.s   .ab_allocated
         move.l  (sp),d0
-        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        moveq   #MEMF_PUBLIC,d1
         jsr     LVO_ALLOCMEM(a6)
 .ab_allocated:
         addq.l  #4,sp
         move.l  d0,CR_BITMAP(a3)
         beq.s   .ab_r
+        move.l  d0,a0
+        moveq   #bm_SIZEOF/4-1,d1    ; header zeroed (flags, pad, unused plane pointers)
+.ab_z:
+        clr.l   (a0)+
+        dbra    d1,.ab_z
         move.l  d0,a0
         move.w  d3,bm_BytesPerRow(a0)
         move.w  d4,bm_Rows(a0)
@@ -1726,6 +1732,8 @@ lr_fill:
         sub.w   CR_ORGY(a3),d3
         sub.w   d6,d0                ; source: old absolute position
         sub.w   d7,d1
+        movem.l d6-d7,-(sp)
+        moveq   #-$40,d6             ; minterm $C0 (copy)
         tst.l   CR_LOBS(a6)
         bne.s   .fi_bk
         bsr     lr_screenbm          ; old visible area: the screen
@@ -1733,31 +1741,40 @@ lr_fill:
 .fi_bk:
         move.l  CR_BITMAP(a6),a0
         cmpa.w  #0,a0
-        beq.s   .fi_next             ; old hidden area without backup
+        bne.s   .fi_bko
+        move.l  CR_BITMAP(a3),a0     ; old hidden area without backup: pen 0
+        move.w  d2,d0
+        move.w  d3,d1
+        moveq   #0,d6
+        bra.s   .fi_do
+.fi_bko:
         sub.w   CR_ORGX(a6),d0
         sub.w   CR_ORGY(a6),d1
 .fi_do:
         move.l  CR_BITMAP(a3),a1
-        movem.l d6-d7,-(sp)
-        moveq   #-$40,d6             ; minterm $C0 (copy)
         bsr     lr_blt
         movem.l (sp)+,d6-d7
 .fi_next:
         move.l  CR_NEXT(a6),a6
         bra     .fi_lp
 .fi_new:
-        tst.b   LY_NEW(a4)
-        bne.s   .fi_free
-        move.l  (sp),a0
-.fi_dmg:
-        cmpa.w  #0,a0
+        move.l  (sp),a2              ; area without old contents: pen 0, damaged unless the layer is new
+.fi_z:
+        cmpa.w  #0,a2
         beq.s   .fi_free
-        movem.w RR_MINX(a0),d0-d3
-        move.l  a0,-(sp)             ; lr_damage overwrites a0/a1
+        movem.w RR_MINX(a2),d0-d3
+        tst.b   LY_NEW(a4)
+        bne.s   .fi_zc
         bsr     lr_damage
-        move.l  (sp)+,a0
-        move.l  RR_NEXT(a0),a0
-        bra.s   .fi_dmg
+.fi_zc:
+        sub.w   CR_ORGX(a3),d0
+        sub.w   CR_ORGX(a3),d2
+        sub.w   CR_ORGY(a3),d1
+        sub.w   CR_ORGY(a3),d3
+        move.l  CR_BITMAP(a3),a0
+        bsr     lr_clear
+        move.l  RR_NEXT(a2),a2
+        bra.s   .fi_z
 .fi_free:
         move.l  sp,a2
         bsr     rl_free

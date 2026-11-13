@@ -52,13 +52,13 @@ RP_MAX          EQU 128
 ; rp_alloc(d1 = requirements, a6 = SysBase) -> d0 = 16-byte block | 0, as AllocMem(16, d1) (MEMF_CLEAR honoured).
 ; Changes d0/a0/a1.
 rp_alloc:
-        jsr     LVO_FORBID(a6)
+        addq.b  #1,EB_TDNEST(a6)     ; Forbid, inline
         move.l  GFX_RPOOL,d0
         beq.s   .pa_exec
         move.l  d0,a0
         move.l  (a0),GFX_RPOOL
         subq.w  #1,GFX_RPOOLN
-        jsr     LVO_PERMIT(a6)
+        bsr.s   rp_permit
         btst    #16,d1               ; MEMF_CLEAR
         beq.s   .pa_ret
         clr.l   (a0)+
@@ -68,23 +68,37 @@ rp_alloc:
 .pa_ret:
         rts
 .pa_exec:
-        jsr     LVO_PERMIT(a6)
+        bsr.s   rp_permit
         moveq   #RR_SIZE,d0
         jmp     LVO_ALLOCMEM(a6)
 
 ; rp_free(a1 = 16-byte block, a6 = SysBase), as FreeMem(a1, 16). Changes d0/d1/a0; a1 preserved.
 rp_free:
-        jsr     LVO_FORBID(a6)
+        addq.b  #1,EB_TDNEST(a6)     ; Forbid, inline
         cmp.w   #RP_MAX,GFX_RPOOLN
         bhs.s   .pf_exec
         move.l  GFX_RPOOL,(a1)
         move.l  a1,GFX_RPOOL
         addq.w  #1,GFX_RPOOLN
-        jmp     LVO_PERMIT(a6)
+        bra.s   rp_permit
 .pf_exec:
-        jsr     LVO_PERMIT(a6)
+        bsr.s   rp_permit
         moveq   #RR_SIZE,d0
         jmp     LVO_FREEMEM(a6)
+
+; rp_permit: Permit, inline unless it must reschedule (then through the vector, as exec_Permit would).
+; Flags changed, registers preserved.
+rp_permit:
+        subq.b  #1,EB_TDNEST(a6)
+        bge.s   .pp_r
+        tst.b   EB_IDNEST(a6)
+        bge.s   .pp_r
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
+        beq.s   .pp_r
+        addq.b  #1,EB_TDNEST(a6)
+        jmp     LVO_PERMIT(a6)
+.pp_r:
+        rts
 
 ; gfx_rpflush(a6 = SysBase, under Forbid): the pooled blocks go back to exec. Preserves d2-d7/a2-a6.
 gfx_rpflush:

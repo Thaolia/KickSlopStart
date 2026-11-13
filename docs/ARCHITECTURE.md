@@ -2403,6 +2403,14 @@ differs.
     and that needs no console flush is appended with four registers saved instead of the whole path; BCPL
     `testflags` skips SetSignal when none of its signals is pending (clearing nothing changes nothing). C:Type of 400
     lines 35.16 -> 32.9 s; `tests/contype_probe.sh` also checks the same Type redirected to a file (REDIRECT OK).
+  - SMART layer backups (`lr_allocbm`/`lr_fill`, `src/graphics/layers.s`) are allocated without MEMF_CLEAR: `lr_fill`
+    copies the old contents and writes pen 0 itself (blitter, minterm 0) on the parts that have none, the
+    enlargement and old hidden parts without a backup; only the BitMap header is zeroed, and the alignment margins
+    outside the ClipRect bounds are never read. The region block pool (`rp_alloc`/`rp_free`) forbids inline and
+    calls Permit through its vector only when a reschedule is due. layerperf menu-like 1,405 -> 1,277 ticks (-9 %),
+    MoveLayer 493 -> 450 (-9 %), C:Type 32.88 -> 31.94 s. `tests/layerbak_probe.sh` fills free memory with $A5 and
+    hashes every pixel of two SMART layers through ReadPixel after SizeLayer, MoveLayer, Behind/Upfront and an
+    out-of-memory MoveLayer: same lines as v0.2.54.
   - ScrollRaster (`.sc_blit` in `sr_vert`): the masked B, C, D blit runs only on the partial edge words; the whole
     words between them are copied A → D ($09F0), half the blitter cycles. One or two words: one masked blit as
     before. `tests/scrollpix_probe.sh` compares 160 scrolls (edges 0-31, widths 6 to 320, dy ±1 to ±9) with a

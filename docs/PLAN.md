@@ -1703,6 +1703,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   ticks (screen and damage identical), C:Type 35.16 -> 32.9 s, redirected Type identical; a ROM with two planted faults
   fails layerperf and the redirect check. Found on the way: `tests/graster_probe.sh` reports 3 FAIL (horizontal
   ScrollRaster in a layer, "L d") on v0.2.53 and v0.2.54 as well, after 0 FAIL earlier: an older regression, open.
+  Second wave (tagged v0.2.55 with the first): SMART layer backups allocated without MEMF_CLEAR (`lr_fill` writes
+  pen 0 where it copies nothing), inline Forbid/Permit in the region pool. layerperf menu 1,405 -> 1,277, MoveLayer
+  493 -> 450 ticks, C:Type 32.88 -> 31.94 s; new `tests/layerbak_probe.sh` (backups read back pixel by pixel over
+  $A5-filled memory, out-of-memory step included) identical to v0.2.54 and failed by both planted faults; gregion,
+  layers_probe, layerperf screen/damage and the Deluxe Paint menu captures identical.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

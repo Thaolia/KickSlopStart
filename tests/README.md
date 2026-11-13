@@ -97,6 +97,10 @@ KickTagPtr − 16.
   constant source planes ($C0 and $60 every fifth phase: a 1-plane source, a plane of -1, a NULL plane); every pixel
   of the destination and its surroundings checked against the minterm of the source and the destination as filled.
   Success: `BLTRP OK` (about 20 minutes of host time).
+- `tests/layerbak_probe.sh <out_dir> [rom]`: fills free memory with $A5, then on a private BitMap draws two
+  overlapping SMART layers and, after SizeLayer, MoveLayer, BehindLayer/UpfrontLayer and a MoveLayer with almost no
+  free memory, prints `LB` lines with a ReadPixel hash of each layer (hidden parts come from their backups) and the
+  plane sums (`tests/layerbak_probe.s`, SERDAT). Two ROMs must print the same lines.
 - `tests/layerperf_probe.sh <out_dir> [rom]`: on its own screen with three overlapping windows, 300 menu-like
   CreateUpfrontLayer/DeleteLayer and 300 MoveLayer timed in DateStamp ticks, with the exec AllocMem calls counted
   (all, 16 bytes or less, 17-64 bytes) through SetFunction (`tests/layerperf_probe.s`, SERDAT); after each loop an
