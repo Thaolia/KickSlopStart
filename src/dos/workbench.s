@@ -157,6 +157,11 @@ wb_entry:                            ; ROMTag+44: entry point of the process cre
 .we_drc:
         move.l  a0,(a1)+
         dbra    d0,.we_drc
+        lea     WBS_LEFT(a5),a1      ; and no icon left out
+        moveq   #WB_MAXLEFT-1,d0
+.we_loc:
+        move.l  a0,(a1)+
+        dbra    d0,.we_loc
         move.w  #-1,WBS_SELW(a5)
         move.w  #-1,WBS_DRAGW(a5)
         bsr     wb_mkmenus
@@ -283,8 +288,9 @@ WBS_NSEL        EQU WBS_MENUMASK+2   ; WORD: icons selected, in any window (WBS_
 WBS_GROUP       EQU WBS_NSEL+2       ; BYTE: the drag moves the whole selection (Shift held at the press)
 WBS_BUSYON      EQU WBS_NSEL+3       ; BYTE: the busy pointer is shown (wb_busy)
 WBS_BUSYD       EQU WBS_NSEL+4       ; busy pointer sprite data, in CHIP memory | 0
-WBS_LEFT        EQU WBS_BUSYD+4      ; WB_MAXLEFT left-out records (desktop icons WB_LEFT0..)
-WBS_VOLS        EQU WBS_LEFT+WB_MAXLEFT*LO_SIZE ; WB_MAXVOLS volume records (desktop icons 0..)
+WBS_LEFT        EQU WBS_BUSYD+4      ; WB_MAXLEFT pointers (desktop icons WB_LEFT0..): a left-out record, allocated
+                                     ; while its icon is on the backdrop, or WBS_DRCLOSED (all zero: no icon)
+WBS_VOLS        EQU WBS_LEFT+WB_MAXLEFT*4 ; WB_MAXVOLS volume records (desktop icons 0..)
 WBS_DRAWERS     EQU WBS_VOLS+WB_MAXVOLS*VE_SIZE ; WB_MAXDRAWERS pointers: a drawer record, allocated while its window
                                      ; is open, or WBS_DRCLOSED
 WBS_DRCLOSED    EQU WBS_DRAWERS+WB_MAXDRAWERS*4 ; the record every closed drawer points at (all zero, DR_WIN 0)
@@ -360,6 +366,9 @@ WB_DEFH         EQU 100
 WB_SLOTW        EQU 96               ; column of the placement of icons without position (§8.6.2)
 WB_SLOTM        EQU 11               ; room for the name below an icon (topaz 8 + 3)
 WB_PATHMAX      EQU 96
+                ifgt    LO_SIZE-DR_SIZE
+                fail    "WBS_DRCLOSED must cover an empty left-out record"
+                endc
 WB_CPBUF        EQU 4096             ; copy buffer of Duplicate
 WB_GRIDX        EQU 80
 WB_TOOLSTACK    EQU 4096             ; minimum stack of a launched tool
@@ -433,29 +442,30 @@ wb_desktop:
 wb_loent:
         move.w  d1,d0
         sub.w   #WB_LEFT0,d0
-        mulu    #LO_SIZE,d0
+        add.w   d0,d0
+        add.w   d0,d0
         lea     WBS_LEFT(a5),a0
-        add.l   d0,a0
+        move.l  0(a0,d0.w),a0
         rts
 
 ; wb_isleft(a0 = full path, a5) -> Z = 1 if that object is left out on the backdrop. Preserves the others.
 wb_isleft:
         movem.l d0-d2/a0-a2,-(sp)
         move.l  a0,a2
-        lea     WBS_LEFT(a5),a1
-        moveq   #WB_MAXLEFT-1,d2
+        moveq   #WB_LEFT0,d2
 .il_lp:
-        tst.l   LO_DOBJ(a1)
+        move.w  d2,d1
+        bsr     wb_loent
+        tst.l   LO_DOBJ(a0)
         beq.s   .il_nx
-        move.l  a1,-(sp)
-        lea     LO_PATH(a1),a1
+        lea     LO_PATH(a0),a1
         move.l  a2,a0
         bsr     wb_streq
-        movem.l (sp)+,a1
         beq.s   .il_ret
 .il_nx:
-        lea     LO_SIZE(a1),a1
-        dbra    d2,.il_lp
+        addq.w  #1,d2
+        cmp.w   #WB_LEFT0+WB_MAXLEFT,d2
+        blo.s   .il_lp
         moveq   #1,d0                ; Z = 0
 .il_ret:
         movem.l (sp)+,d0-d2/a0-a2
@@ -3025,23 +3035,29 @@ wb_drop:
         bra     .ob_nx
 .ob_leave:                            ; left out on the backdrop: a record with our own DiskObject, at the drop point;
         lea     WBS_LEFT(a5),a2      ; the object stays in its directory and its .info is not written (spec §10.2)
+        lea     WBS_DRCLOSED(a5),a0  ; (a free slot points at the empty record)
         moveq   #WB_MAXLEFT-1,d0
 .ol_find:
-        tst.l   LO_DOBJ(a2)
+        cmpa.l  (a2)+,a0
         beq.s   .ol_free
-        lea     LO_SIZE(a2),a2
         dbra    d0,.ol_find
         bra     .ob_end              ; no room: the rest stays in place
 .ol_free:
+        move.l  #LO_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  ($4).w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .ob_nx
+        move.l  d0,a2                ; a2 = the new record
         lea     DP_SRC(sp),a0
         move.l  WBS_ICONBASE(a5),a6
         jsr     ICON_LVO_GETDISKOBJECT(a6)
         tst.l   d0
-        beq     .ob_nx
+        beq.s   .ol_nodo
         move.l  d0,LO_DOBJ(a2)
         move.w  DP_X+2(sp),LO_X(a2)
         move.w  DP_Y+2(sp),LO_Y(a2)
-        clr.b   LO_SEL(a2)
         move.l  DP_NAME(sp),a0
         lea     LO_NAME(a2),a1
         moveq   #WBS_NAMEMAX-2,d0
@@ -3050,19 +3066,39 @@ wb_drop:
         lea     LO_PATH(a2),a1
         moveq   #WB_PATHMAX-2,d0
         bsr     wb_strcpy
+        lea     WBS_LEFT(a5),a0      ; into the free slot found above (still free: only this process fills them)
+        lea     WBS_DRCLOSED(a5),a1
+.ol_slot:
+        cmpa.l  (a0)+,a1
+        bne.s   .ol_slot
+        move.l  a2,-(a0)
         move.w  DP_SW(sp),d0         ; the source drawer is re-read without it
         bset    d0,DP_MOVED(sp)
         bra     .ob_nx
-.ob_unleft:                          ; (frame at 4(sp)) the left-out record of icon DP_ICON is freed
-        move.w  4+DP_ICON(sp),d1
+.ol_nodo:
+        move.l  a2,a1
+        move.l  #LO_SIZE,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+        bra     .ob_nx
+.ob_unleft:                          ; (frame at 4(sp)) the left-out record of icon DP_ICON is freed, its slot
+        move.w  4+DP_ICON(sp),d1     ; points at the empty record again
         bsr     wb_loent
         move.l  a0,-(sp)
         move.l  LO_DOBJ(a0),a0
         move.l  WBS_ICONBASE(a5),a6
         jsr     ICON_LVO_FREEDISKOBJECT(a6)
-        move.l  (sp)+,a0
-        clr.l   LO_DOBJ(a0)
-        clr.b   LO_SEL(a0)
+        move.w  4+4+DP_ICON(sp),d0
+        sub.w   #WB_LEFT0,d0
+        add.w   d0,d0
+        add.w   d0,d0
+        lea     WBS_LEFT(a5),a0
+        lea     WBS_DRCLOSED(a5),a1
+        move.l  a1,0(a0,d0.w)
+        move.l  (sp)+,a1
+        move.l  #LO_SIZE,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
         rts
 .ob_out:
         move.l  DP_NAME(sp),-(sp)    ; a disk or a trashcan of the group stays: "'<name>' cannot be moved out..."

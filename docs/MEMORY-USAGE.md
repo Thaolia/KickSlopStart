@@ -36,6 +36,26 @@ margin 1024 (2026-11-10)".
 hand them out again. A/2, production ROM, sum of the MemHeaders (IPC reads) with and without the pool, same moments:
 Workbench idle 867,880 -> 867,368 (512 bytes held), after a disk window and a menu 855,680 -> 855,184 (496). The pool
 goes back to exec when an AllocMem fails.
+**Update (2026-11-13): re-measure and left-out records.** Production ROM, MemList walk of gdb dumps, Workbench 1.3.3
+idle about 150 s. Left-out icon records are now allocated while the icon is on the backdrop (+1,072 bytes):
+
+| | 1.3 | before (`abed372`) | now |
+|---|---:|---:|---:|
+| A/2 idle, total | 860,992 | 867,368 | **868,440** |
+| A/2 slow free (largest) | 431,480 (398,712) | 404,632 (374,624) | 405,704 (379,568) |
+| A/1 idle, total | 884,424 | 871,888 | **872,960** |
+| chip free (largest), A/1 and A/2 | 448,624 / 429,512 (448,096 / 428,984) | 462,736 (456,032) | same |
+| Shell #1 from the disk window | 33,480 | 33,880 | 33,880 |
+| Shell, steady state | 25,864 | 26,376 | 26,376 |
+| first NewShell/EndCLI cycle, one-time | 9,296 | 7,504 | 7,504 |
+
+The A/1 gap (−11,464) is the track cache: cache 22,528 (slow) + DMA buffer 13,632 (chip) = 36,160 against 1.3's
+MFM buffer 16,392 + 15 file system buffers 8,160 = 24,552; every other item cancels out (more here: DF0 file system
+process 3,344 vs 1,028, console handler kept at idle 2,320, RAM handler 2,496 vs 1,388, Workbench state 3,872; less:
+file system buffers, supervisor stack, module bases). The Shell's +512 is the two `CP_STKEXTRA` margins (1,024 each,
+Background CLI and NEWCON), kept: their measured 68000-side use is 668 and 868 bytes. Slow RAM is not more
+fragmented than on 1.3 (30,008 bytes free below its largest block, against 32,768); that block is smaller only
+because the track cache lives in slow RAM, and the largest chip block is 27,048 bytes larger than 1.3's.
 
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
@@ -201,6 +221,10 @@ Item 2 overlaps items 5 and 6 (the DF1 file system and console handler stacks ar
 | 7 | **Done (2026-11-05, `4f456b7`).** Keyboard feeder process merged into the intuition input task (one input task, as on 1.3) | 4,384 measured | Section 6.3 |
 | 8 | Initial CLI leftovers after `endcli`: console FileHandle 312, its 512-byte write buffer, BCPL global vector 808 | 1,632 | **Done 2026-11-05 for the FileHandle and its buffer, 824 saved.** The GV is not a leak: CreateProc copies the creator's pr_GlobVec, and the idle Workbench process points at this GV |
 | 9 | Command stack: every command gets its own 4,008-byte stack (`sh_exec_cmd`) while 1.3 runs it on the CLI process stack; transient only, but the initial shell also has an 8,192-byte stack (1.3: 1,600) during the whole startup-sequence | ≈ 6,600 during startup, 0 at idle | Medium (programs that need large stacks, see `SH_STK`) |
+
+| 10 | **Done 2026-11-13.** Workbench left-out records (8 × 138 bytes in the state block): allocated while the icon is on the backdrop | 1,072 measured | Leave Out, a Shell started from the left-out icon, put back: free memory back to the expected value |
+| 11 | Workbench volume records (8 × about 202 bytes) allocated per volume | about 1,200 | Not done: the disk-change code moves the records in place and fixes their internal pointers |
+| 12 | Console FileHandle write buffer 512 → 256 for interactive handles | 256 per Shell | Not done: needs a per-handle capacity (a program may change fh_Interactive) and changes how long lines are split |
 
 Not candidates: loaded code and SetPatch / FF / resident steps are byte-identical to 1.3; screen bitplanes identical;
 bases, other chip and file system buffers are already below 1.3.

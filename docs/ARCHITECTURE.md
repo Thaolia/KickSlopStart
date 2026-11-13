@@ -2341,6 +2341,9 @@ differs.
   `WB_MAXDRAWERS` pointers; a closed drawer points at `WBS_DRCLOSED`, one shared all-zero record (DR_WIN 0), so the
   loops over every drawer and `wb_window` keep working unchanged. `wb_opendrawer` allocates a record (MEMF_CLEAR) for
   the slot it takes, `wb_drfree` gives it back when OpenWindow fails and at the end of `wb_closedrawer`.
+  Since 2026-11-13 `WBS_LEFT` is the same kind of table: 8 pointers, a left-out record (`LO_SIZE`) allocated when an
+  icon is dropped on the backdrop and freed when it goes back; a free slot points at `WBS_DRCLOSED` too (assembly-time
+  check `LO_SIZE <= DR_SIZE`).
   **Data loops (2026-11-12)**: `exec_CopyMem` (`src/exec/io.s`) copies equal-parity ranges in unrolled 32-byte
   blocks (a 16-bit `dbra` with a carry into the high word), then 16/8/4/2/1 bytes taken from the low bits of the
   size, so it still uses d0/d1/a0/a1 only and no stack; CopyMemQuick clears the two low bits of the size and joins

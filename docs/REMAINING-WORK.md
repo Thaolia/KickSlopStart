@@ -96,7 +96,7 @@ held" qualifier bits of mouse events are not set yet.
   (entry and clip tests ~580, bitmap and minterm checks ~300, blitter ownership ~270, set-up ~460, blitter waits
   ~300); parity needs a leaner dedicated Draw path.
 
-### A6. Memory — [src], M — Shell gap closed to 416 bytes 2026-11-10
+### A6. Memory — done 2026-11-13 (what is left is kept on purpose)
 
 - **Shell cost:** opening a Shell from the Workbench takes 33,896 bytes here (35,944 before, 47,152 at the start of
   2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2): `CP_STKEXTRA` 2048 -> 1024 for the Background CLI and
@@ -121,7 +121,14 @@ held" qualifier bits of mouse events are not set yet.
   survives 5 levels at the default stack and crashes or hangs from 6 (dos-cli §7, probed 2026-11-12); ours stopped
   at 5 (hang) before the fix. The shell now adds the same margin (`RC_STKEXTRA`, `dos.i`): 8 levels pass, a
   deliberate leniency over 1.3.
-- **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
+- **Re-measured 2026-11-13** (production ROM, MemList walk): A/2 idle 868,440 free (1.3: 860,992), A/1 872,960
+  (1.3: 884,424). The A/1 gap is the track cache alone (4 slots, the user's floor): cache + DMA buffer 36,160
+  against 1.3's MFM buffer + file system buffers 24,552; everything else cancels out. Shell from the Workbench:
+  33,880 for the first (1.3: 33,480), then 26,376 each (1.3: 25,864); the +512 is the two `CP_STKEXTRA` margins,
+  kept above their measured use. Slow RAM is not more fragmented than on 1.3. Workbench left-out records are now
+  allocated on demand: 1,072 bytes back at idle. MEMORY-USAGE.md "Update (2026-11-13)".
+- **Reduction candidates:** listed in `docs/MEMORY-USAGE.md` (volume records and the console write buffer left, with
+  their reasons).
 
 ### A7. Workbench 1.2 Lines and Clock — mostly done 2026-11-10, Lines within 2.5 % of 1.3 since 2026-11-12
 
@@ -627,10 +634,9 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 What is still open (2026-11-13):
 1. **A5**: Clock's first refresh pass, 18.6 frames against 15.1 on 1.3 (a leaner dedicated Draw path).
 2. **A8**: the real A500 with Workbench 1.2 (right-button flicker, frozen pointer): retest on the hardware first.
-3. **A6**: the last 416 bytes of a Shell and about 13 KB more than 1.3 on the idle desktop, not chased further.
-4. **C7**: IoErr 286 on a transfer queued during "You MUST replace volume", implemented but not staged by a test.
-5. **Null vectors**: dos GetPacket/QueuePacket (no known caller).
-6. **Analysis-side open points** listed at the end of each spec (for example task-held-v34 §6), taken when a
+3. **C7**: IoErr 286 on a transfer queued during "You MUST replace volume", implemented but not staged by a test.
+4. **Null vectors**: dos GetPacket/QueuePacket (no known caller).
+5. **Analysis-side open points** listed at the end of each spec (for example task-held-v34 §6), taken when a
    program needs them.
 
 Everything else in sections A, C and D is done; section B lists the deliberate deviations.

@@ -1738,6 +1738,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   from `sh_exec_cmd`, production ROM byte-identical, prepush-check FAIL=0 twice.
   A15 fixed: `gfx_detect_std` decides NTSC only after two wraps watched from past line 240, so a loop interrupted
   for more than ~40 lines no longer turns a PAL boot into NTSC (12/12 PAL boots, was 7/12; NTSC 4/4).
+  A6 (user: "fait le A6", 2026-11-13, implementation agent): memory re-measured (A/2 868,440 free, 1.3 860,992; A/1
+  872,960, 1.3 884,424, the gap being the 4-slot track cache), every remaining difference attributed with MEMTRACK;
+  Workbench left-out records allocated on demand (+1,072 at idle). Leave Out / Shell from it / put back checked,
+  prepush-check FAIL=0 with the Lemmings menu. MEMORY-USAGE.md "Update (2026-11-13)".
   Busy pointer on icon opening (2026-11-13): the hourglass, until then only shown during a drop and Empty Trash, now
   also covers a double-click / Workbench/Open, as probed on the real 1.3 by an analysis agent (spec
   workbench-task-v34 §11, new): on at the double-click, off after the drawer's last icon or after CreateProc and
