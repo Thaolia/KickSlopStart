@@ -1708,6 +1708,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   493 -> 450 ticks, C:Type 32.88 -> 31.94 s; new `tests/layerbak_probe.sh` (backups read back pixel by pixel over
   $A5-filled memory, out-of-memory step included) identical to v0.2.54 and failed by both planted faults; gregion,
   layers_probe, layerperf screen/damage and the Deluxe Paint menu captures identical.
+  graster regression (2026-11-13): bisected to 7b06a34 (ClipBlit re-sorts the ClipRects, ScrollRaster's cached
+  DC_FIRST went stale before its strip fill); `sr_move` reloads it. graster_probe 156 vectors, 0 FAIL again;
+  clipblit OK, scrollpix and prepush-check unchanged.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

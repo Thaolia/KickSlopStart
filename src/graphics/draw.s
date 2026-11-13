@@ -4762,7 +4762,7 @@ gfx_ScrollRaster:
 ; copy is a slice of at most |dy| rows (dy != 0) or |dx| columns (dy = 0), so its source and destination are disjoint
 ; whatever the order in which ClipBlit walks the ClipRects; the slices start on the side the content moves to (top
 ; first for dy > 0, bottom first for dy < 0, left first for dx > 0, right first for dx < 0), so none overwrites a
-; source still to be read. Preserves everything.
+; source still to be read. DC_FIRST reloaded. Preserves everything but a0.
 sr_move:
         movem.l d0-d7,-(sp)
         movem.w SR_MX0(a4),d0-d3     ; destination, RastPort coordinates
@@ -4843,6 +4843,11 @@ sr_move:
         bsr.s   .mv_blit
         bra.s   .mv_rs
 .mv_ret:
+        move.l  DC_LAYER(a5),d0      ; ClipBlit re-sorted the layer's ClipRects (cb_sort): the strips walk the new list
+        beq.s   .mv_r
+        move.l  d0,a0
+        move.l  LY_CLIPRECT(a0),DC_FIRST(a5)
+.mv_r:
         movem.l (sp)+,d0-d7
         rts
 ; .mv_blit(d2/d3 = destination, d4 x d5): ClipBlit from (d2 + dx, d3 + dy) within the RastPort. Preserves d0-d7.

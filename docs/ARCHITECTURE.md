@@ -2411,6 +2411,9 @@ differs.
     MoveLayer 493 -> 450 (-9 %), C:Type 32.88 -> 31.94 s. `tests/layerbak_probe.sh` fills free memory with $A5 and
     hashes every pixel of two SMART layers through ReadPixel after SizeLayer, MoveLayer, Behind/Upfront and an
     out-of-memory MoveLayer: same lines as v0.2.54.
+  - ScrollRaster in a layer with a horizontal move: ClipBlit within one RastPort re-sorts the layer's ClipRects
+    (`cb_sort`), so `sr_move` reloads DC_FIRST from the layer afterwards; the strip fill had walked from the stale
+    head and left vacated columns of the ClipRects sorted before it unfilled (`tests/graster_probe.sh` "L d", 0 FAIL).
   - ScrollRaster (`.sc_blit` in `sr_vert`): the masked B, C, D blit runs only on the partial edge words; the whole
     words between them are copied A → D ($09F0), half the blitter cycles. One or two words: one masked blit as
     before. `tests/scrollpix_probe.sh` compares 160 scrolls (edges 0-31, widths 6 to 320, dy ±1 to ±9) with a

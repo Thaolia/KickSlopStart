@@ -361,6 +361,10 @@ Open (found 2026-11-12): `tests/graster_probe.sh` gives 3 FAIL on v0.2.53 and v0
 a layer ("L d -3,-2,2,1,40,20", "L d 2,0,0,0,45,24", "L d 2,1,0,0,45,24": pixels near the right or left edge of the
 scrolled area), after 0 FAIL in an earlier run (PLAN line "rawdofmt (205) and graster (156) probes 0 FAIL"). Bisect
 from that commit before changing `sr_horiz`.
+Fixed 2026-11-13: bisected to 7b06a34, where ClipBlit within one RastPort started re-sorting the layer's ClipRect
+list (`cb_sort`). ScrollRaster had cached the list head in DC_FIRST before its ClipBlit moves, so the strip fill
+walked from a ClipRect now in the middle of the list and skipped those sorted before it. `sr_move` reloads DC_FIRST
+from the layer after its copies; graster_probe 156 vectors, 0 FAIL.
 
 ### C11. Coldstart — done 2026-11-11
 
