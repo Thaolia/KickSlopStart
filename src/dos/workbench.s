@@ -26,7 +26,8 @@
 ; into a window; a disk dropped on another disk starts SYS:System/DiskCopy (FROM = dragged disk, TO = target, §10.6).
 ; Shift+click also adds icons of other windows; a group drag then moves or copies every selected icon, and a drop
 ; on a disk or drawer icon whose window is open places each one in a free slot (§10.5). The busy pointer is shown
-; during a drop and Empty Trash. Scope: Rename, Info, Duplicate and Discard do not apply to a left-out icon.
+; during a drop, Empty Trash and the opening of icons (§11), and on any Workbench window opened meanwhile. Scope:
+; Rename, Info, Duplicate and Discard do not apply to a left-out icon.
 ; Failures reported in the screen title like 1.3 (spec §6.9): "Error while <action>: <IoErr>" when opening a drawer,
 ; on launch, on Rename (and "Do not use ':' in names"), on Discard and on Snapshot.
 ; IMPLEMENTATION track ("clean"): spec above + exec/dos/workbench AutoDocs (WBStartup, DiskObject).
@@ -1428,8 +1429,9 @@ wb_arrowsinit:
 .ai_ret:
         rts
 
-; wb_busy(d0.l = 1: on, 0: off, a5): the busy pointer on every Workbench window while a drop or Empty Trash is
-; processed (spec workbench-task-v34 §10.1, §10.9); the image is copied once into CHIP memory. Preserves everything.
+; wb_busy(d0.l = 1: on, 0: off, a5): the busy pointer on every Workbench window while a drop, Empty Trash or the
+; opening of icons is processed (spec workbench-task-v34 §10.1, §10.9, §11); the image is copied once into CHIP
+; memory. Preserves everything.
 WB_BUSYSZ       EQU wb_busyimg_end-wb_busyimg
 wb_busy:
         movem.l d0-d3/d7/a0-a1/a3-a4/a6,-(sp)
@@ -3500,9 +3502,13 @@ wb_selfix:
         movem.l (sp)+,d0-d2/d6-d7/a0
         rts
 
-; wb_openall(a5): opens every selected icon, in any window (Workbench/Open, double-click). Preserves d2-d7/a2-a5.
+; wb_openall(a5): opens every selected icon, in any window (Workbench/Open, double-click), under the busy pointer
+; (spec §11): a drawer keeps it until its last icon is drawn, a tool until CreateProc and PutMsg are done.
+; Preserves d2-d7/a2-a5.
 wb_openall:
         movem.l d6-d7,-(sp)
+        moveq   #1,d0
+        bsr     wb_busy
         moveq   #0,d7
         moveq   #-1,d6
 .oa_lp:
@@ -3512,6 +3518,8 @@ wb_openall:
         bsr     wb_openicon
         bra.s   .oa_lp
 .oa_ret:
+        moveq   #0,d0
+        bsr     wb_busy
         movem.l (sp)+,d6-d7
         rts
 
@@ -3728,6 +3736,11 @@ wb_opendrawer:
         jsr     WB_LVO_MODIFYIDCMP(a6)
         move.l  DR_WIN(a4),a0
         bsr     wb_setmenus
+        tst.b   WBS_BUSYON(a5)       ; a window opened while busy gets the busy pointer too (spec §3.2)
+        beq.s   .od_nbusy
+        moveq   #1,d0
+        bsr     wb_busy
+.od_nbusy:
         bsr     wb_titles
         bsr     wb_gaugeinfo
         move.l  DR_WIN(a4),a3

@@ -2028,7 +2028,9 @@ differs.
   when a drawer closes or is re-read. `wb_drop` walks the whole selection, records the source windows that lost an
   object in `DP_MOVED` (one bit each) and re-reads them; mode 3 (`.ob_slot`) picks a free grid cell of the target
   directory's open window. `wb_busy` sets the hourglass (CHIP copy in `WBS_BUSYD`) on every Workbench window and
-  clears it afterwards.
+  clears it afterwards. Since 2026-11-13 `wb_openall` (double-click, Workbench/Open) runs under it as well, as 1.3
+  does (spec workbench-task-v34 §11): a drawer keeps it until its last icon is drawn, a tool until CreateProc and
+  PutMsg are done; `wb_opendrawer` gives a window opened while `WBS_BUSYON` is set the busy pointer too (§3.2).
   **Workbench device icons (2026-11-09)**: the desktop records (`VE_*`) also hold device icons (`VE_DEV`, `VE_NODE` =
   device node, `VE_DATE` = DiskType). `wb_vscan` collects the filesystem devices under Forbid (`wb_isfsdev`), then
   asks each its DiskType with its own packet (`wb_diskinfo`), adds a `wb_vdev` record for a non-DOS, inhibited or

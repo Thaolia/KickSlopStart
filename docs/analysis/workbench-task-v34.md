@@ -2038,6 +2038,100 @@ included). It is not an icon. Layout seen in every instance [disk]:
 
 ---
 
+## 11. Busy pointer: when it is shown
+
+> Black-box runs of the real Kickstart 1.3 under vAmigaWeb (live site
+> `https://vamigaweb.github.io/`, vAmiga core **4.3.6**, 2026-11-13, A500 512 KB chip +
+> 512 KB slow), session copy of the Workbench 1.3.3 boot disk (local alias
+> `assets/wb133.adf`). Method: heap screenshots (912 × 626) at 200 ms intervals driven by
+> the vamigaweb-session input script; the busy pointer is detected by counting pixels whose
+> colour is specific to the busy pointer sprite at the cursor's position in the heap image,
+> and confirmed absent (< 50 such pixels) when the arrow is shown.
+> Time origin: the double-click input command. Time resolution: 200 ms per interval; each
+> transition is located within a 200 ms window. Tags: **[shot]** = confirmed from
+> screenshots; **[D]** = deduced from observed timing or Intuition's public per-window
+> SetPointer contract. The firewall rule is respected: the busy pointer's visual appearance
+> (shape, pixels, colours) is not described; it is referred to only as "busy pointer" vs
+> "arrow".
+
+### 11.1 Opening a disk or drawer icon (double-click)
+
+Both a disk icon double-clicked on the backdrop (opening the Workbench1.3 window) and a
+drawer icon double-clicked inside an open drawer (opening the Utilities window) were
+tested. The pattern is identical.
+
+1. **t = 0 ms (double-click frame)**: the busy pointer is already showing **and** the new
+   drawer window is already open (empty; its border gadgets are drawn). Both happen in the
+   same captured frame, meaning the double-click handler calls SetPointer and OpenWindow
+   before the first screenshot can be taken. No icon is visible in the new window yet.
+   [shot: obs_03_dclick_0ms, t2_02_0ms, sub_02_0ms]
+2. **t = 200 ms … ~1 000 ms (loading in progress)**: the busy pointer persists throughout
+   the directory scan and icon-load cycle. Icons appear one by one in the new drawer window
+   while the busy pointer remains set. [shot: t2_03–t2_07, sub_03–sub_07]
+3. **t ≈ 1 000–1 200 ms (end of loading)**: the busy pointer disappears in the same 200 ms
+   window in which the remaining icons are drawn and the visible icon count makes a large
+   jump. The arrow is restored as soon as the loading cycle is complete, before the next
+   5 s tick. [shot: t2_07_1000ms (busy pointer; 3 icons visible), t2_08_1200ms (arrow;
+   all 7 icons present)]
+
+**Rule**: the busy pointer is set at the start of the double-click handler (before the
+first icon appears in the new window) and cleared at the end of that handler, after every
+icon in the directory has been rendered. The window opens empty; icons appear incrementally
+while the busy pointer holds.
+
+### 11.2 Launching a tool (double-click)
+
+Tested with Clock (SYS:Utilities/Clock) double-clicked from the Utilities drawer:
+
+1. **t = 0 ms**: busy pointer set immediately (same frame). No new window visible yet.
+   [shot: tool_02_0ms]
+2. **t = 200–600 ms**: busy pointer persists while LoadSeg, CreateProc and PutMsg
+   (WBStartup) execute. At t = 600 ms the tool's own window is **not** yet visible.
+   [shot: tool_03_200ms–tool_05_600ms]
+3. **t = 600–800 ms**: transition. At t = 800 ms the arrow is restored **and** the Clock
+   window is just beginning to appear on screen. The two events — PutMsg returning and the
+   tool opening its window — happen in rapid succession. [shot: tool_05_600ms (busy pointer,
+   no Clock window); tool_06_800ms (arrow, Clock window opening)]
+
+**Rule**: the busy pointer covers the period from the double-click until the WBStartup
+message has been sent to the new process (CreateProc + PutMsg complete). It is **not**
+held until the tool's window is usable; it is cleared roughly when the new process starts
+drawing its first window.
+
+### 11.3 Cursor position and which windows
+
+- The busy pointer is the **hardware cursor sprite**, changed globally by SetPointer().
+  It follows the cursor wherever it moves on the screen; it is **not** tied to the position
+  of the double-clicked icon. After the dclick, moving the cursor to a backdrop area far
+  from the icon shows the busy pointer at the new cursor position throughout the loading
+  period. [shot: q4_02_moved_backdrop — cursor at backdrop centre, busy pointer there;
+  t2_02 — disk icon shows its normal image at the same time]
+- SetPointer is called on **each WB window that opens while busy mode is active** (§3.2:
+  "SetPointer if a 'busy' mode is active" after OpenWindow). The busy pointer is therefore
+  visible anywhere on the backdrop and on any open WB drawer window the cursor passes
+  through during the busy period. [shot: nonwb3_02_in_shell_0ms — cursor inside the new
+  empty drawer window (a WB window), busy pointer visible there; q4_03–q4_06 — cursor on
+  the backdrop, busy pointer throughout]
+- When the cursor moves to a **non-WB window** (such as an AmigaShell console), the arrow
+  pointer is shown. [shot: nonwb4_01_in_shell — cursor in the visible part of the Shell
+  console, to the left of the drawer window; arrow visible; [D] for the per-window
+  SetPointer mechanism: each window uses its own SetPointer settings; non-WB windows do
+  not receive SetPointer(busy) from the WB]
+
+### 11.4 Summary
+
+| Action | Busy starts | Busy ends |
+|---|---|---|
+| Disk or drawer icon double-clicked | Immediately — same frame, before any icon is drawn in the new window | When the **last icon** in the new drawer is rendered |
+| Tool icon double-clicked | Immediately — same frame | After CreateProc + PutMsg; approximately when the tool's first window render starts |
+| Drop (move, copy, Empty Trash) | On the drop (§10.1, §10.4, §10.9) | When the operation completes |
+| Cursor on WB backdrop or open drawer | Busy pointer shown wherever cursor is | (depends on the active operation) |
+| Cursor on non-WB window | Arrow pointer shown | — |
+
+Time resolution: 200 ms intervals; all runs on vAmiga core 4.3.6, 2026-11-13.
+
+---
+
 ## Clean-room review
 
 - [x] No listing, no instruction sequence transcribed or paraphrased line by line: only
@@ -2106,3 +2200,9 @@ included). It is not an icon. Layout seen in every instance [disk]:
   with `xdftool` after the runs, and public structures (exec task list, WBStartup/WBArg, FileLock)
   read through the gdb monitor. No ROM address, ROM data or instruction is given; disks are named by
   title or local alias only.
+- [x] §11 (2026-11-13): black-box only under vAmigaWeb (core 4.3.6): screenshot sequences at
+  200 ms intervals; pointer type detected by counting pixels specific to the busy pointer sprite
+  at the cursor's position in the heap image. The busy pointer's shape, pixels and colours are
+  **not described** (firewall rule: it is referred to only as "busy pointer" vs "arrow"). Timing
+  figures are bounds within 200 ms windows, not exact values. The per-window SetPointer
+  mechanism ([D]) is public Intuition contract, not read from ROM code.

@@ -1732,6 +1732,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   lineclip, graster (156 vectors, 0 FAIL), prepush-check FAIL=0 with the Lemmings menu, settled Clock screenshots
   identical. Pass 1 stays open (228 Draws at ~2,800 colour clocks each). New open issue A15: a PAL A500 boot is
   sometimes detected as NTSC under Amiberry (suspect `gfx_detect_std`).
+  Busy pointer on icon opening (2026-11-13): the hourglass, until then only shown during a drop and Empty Trash, now
+  also covers a double-click / Workbench/Open, as probed on the real 1.3 by an analysis agent (spec
+  workbench-task-v34 §11, new): on at the double-click, off after the drawer's last icon or after CreateProc and
+  PutMsg of a tool; drawer windows opened meanwhile get it too. Production ROM under vAmigaWeb (core 4.3.6): the
+  hourglass over the boot disk icon while its window fills and over Say while it loads, the arrow back once Say's
+  windows open. Not probed yet: project icons, a failing launch, Snapshot/Rename/Info/Discard, the disk scan.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

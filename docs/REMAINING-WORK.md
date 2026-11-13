@@ -35,7 +35,7 @@ memory only, as in 1.3: not written to disk) and can be launched from there or d
 dropped on another disk starts DiskCopy with FROM = the dragged disk and TO = the target (§10.6). A drop on a disk or
 drawer icon whose window is open places the icon in a free slot of that window (§10.5's grid, checked against its
 test vectors; the rule itself is still marked [S] in the spec), and the busy pointer (an hourglass drawn for this
-project) is shown during a drop and Empty Trash. While DiskCopy runs, the inhibited drives show "DF0:BUSY" /
+project) is shown during a drop, Empty Trash and the opening of icons (§11). While DiskCopy runs, the inhibited drives show "DF0:BUSY" /
 "DF1:BUSY" device icons (any non-DOS disk gets its "DFn:<type>" icon), placed as probed on 1.3 (V15/V16).
 
 ### A2. Workbench 1.3.3: Disk menu — done 2026-11-09
