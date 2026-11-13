@@ -97,6 +97,11 @@ KickTagPtr − 16.
   constant source planes ($C0 and $60 every fifth phase: a 1-plane source, a plane of -1, a NULL plane); every pixel
   of the destination and its surroundings checked against the minterm of the source and the destination as filled.
   Success: `BLTRP OK` (about 20 minutes of host time).
+- `tests/taskheld_probe.sh <out_dir> [letter] [rom]`: a copy of the Workbench 1.3.3 disk (`WB_ADF`, default
+  `assets/wb133.adf`) runs `tests/taskheld_probe.s`, a CLI command that takes a CPU exception (letter: none =
+  illegal, `z` divide by zero, `f` line-F, `0` TRAP #0, `w` pr_WindowPtr = -1, `t` exec's TaskTrapCode, `a` a plain
+  exec task; `RUN=1` starts it with Run); screenshots A (fault), B (after Retry), C (after Cancel) to read against
+  `docs/analysis/task-held-v34.md` §4.
 - `tests/layerbak_probe.sh <out_dir> [rom]`: fills free memory with $A5, then on a private BitMap draws two
   overlapping SMART layers and, after SizeLayer, MoveLayer, BehindLayer/UpfrontLayer and a MoveLayer with almost no
   free memory, prints `LB` lines with a ReadPixel hash of each layer (hidden parts come from their backups) and the

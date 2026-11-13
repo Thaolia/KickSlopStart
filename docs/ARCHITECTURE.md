@@ -2411,6 +2411,12 @@ differs.
     MoveLayer 493 -> 450 (-9 %), C:Type 32.88 -> 31.94 s. `tests/layerbak_probe.sh` fills free memory with $A5 and
     hashes every pixel of two SMART layers through ReadPixel after SizeLayer, MoveLayer, Behind/Upfront and an
     out-of-memory MoveLayer: same lines as v0.2.54.
+  - Task held (`docs/analysis/task-held-v34.md`): `proc_create` puts `dos_trap` in every process's tc_TrapCode. It
+    shares exec's handler layout ([d0-d2/a0-a1][trap number][frame]) and its pieces, split out of `exc_default`:
+    `exc_diag` (serial report), `exc_guru` (Guru, reboot or hold) and `exc_touser` (rewrite the frame, any CPU
+    format, so the RTE resumes in user mode at a given PC). User-mode faults of a process with pr_WindowPtr other
+    than -1 resume in `dos_taskheld` with the trap number on their stack: the "Software error - task held" requester
+    (`vr_req`) until Cancel, then the same Guru as exec's path.
   - Boot CLI prompt: `sh_make_cli` sets cli_Prompt to `%N> ` and the boot loop prints it through `cli_fmtprompt`
     (shared with `rcli_prompt`), so the boot CLI shows `1> ` as on 1.3 and honours Prompt; `> ` stays only as the
     fallback when its CLI structure could not be allocated.

@@ -39,6 +39,12 @@
                 xdef    dos_mountlist    ; exec/boot.s: mount list, boot device
                 xdef    dos_startmounts  ; shell.s: handlers of the mounted partitions started at boot
                 xdef    vr_req           ; diskvalidator.s: validation requesters
+                xdef    dos_trap         ; dos/process.s: tc_TrapCode of every process
+                xref    exc_diag         ; exec/interrupts.s: exception report, Guru path, resume in user mode
+                xref    exc_guru
+                xref    exc_touser
+                xref    alert_show       ; exec/execmisc.s
+                xref    alert_reboot
                 xdef    dos_df0bootnode  ; exec/boot.s: DF0: BootNode after a bootblock
                 xref    boot_dos_start   ; exec/boot.s: rest of the startup (Initial CLI), does not return
 
@@ -2121,6 +2127,52 @@ vr_req:
         move.l  d7,d0
         movem.l (sp)+,d1-d7/a0-a6
         rts
+; dos_trap: tc_TrapCode of every process dos creates (task-held-v34 §1). Entered like exec's handler (supervisor,
+; (sp) = trap number above the frame, registers intact). The exception is reported on the serial port as by exec;
+; then, in user mode and in the faulting process itself, dos_taskheld shows "Software error - task held". An
+; exception in supervisor mode, or a process with pr_WindowPtr = -1, takes exec's Guru path at once.
+dos_trap:
+        movem.l d0-d2/a0-a1,-(sp)    ; the layout exc_diag/exc_guru/exc_touser expect
+        jsr     exc_diag             ; a1 = SR/PC part of the frame
+        btst    #5,(a1)
+        bne.s   .dt_guru
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        cmp.l   #-1,PR_WINDOWPTR(a0)
+        beq.s   .dt_guru
+        move.l  usp,a0               ; the trap number goes to dos_taskheld on the process's stack
+        move.l  20(sp),-(a0)
+        move.l  a0,usp
+        move.l  #dos_taskheld,d2
+        jmp     exc_touser
+.dt_guru:
+        jmp     exc_guru
+; dos_taskheld (user mode, (sp) = trap number): the requester of task-held-v34 §2 until Cancel (Retry shows it
+; again: the process never resumes, §3.2), then the Guru #<vector>.<process> (§3.3); the left button reboots,
+; otherwise the process stays held.
+dos_taskheld:
+        move.l  (sp)+,d7
+.th_ask:
+        lea     th_l1(pc),a0
+        lea     th_l2(pc),a4
+        moveq   #th_l3-th_l2-1,d3
+        lea     th_l3(pc),a1
+        moveq   #0,d0
+        bsr     vr_req
+        tst.l   d0
+        bne.s   .th_ask
+        move.l  d7,d0
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),d1
+        jsr     alert_show
+        cmp.l   #1,d0
+        bne.s   .th_hold
+        lea     alert_reboot,a5
+        jsr     LVO_SUPERVISOR(a6)
+.th_hold:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .th_hold
 ; vr_itext(a0 = IntuiText, a1 = text, d1.w = top) -> a0 = next IntuiText (chained): pen 2 on 1, JAM1.
 vr_itext:
         move.b  #2,(a0)
@@ -2147,6 +2199,9 @@ vr_nodisk:      dc.b    "No disk present",0
 vr_unit:        dc.b    "in unit  0",0
 vr_empty:       dc.b    0
 vr_unknown:     dc.b    "?",0
+th_l1:          dc.b    "Software error - task held",0
+th_l2:          dc.b    " Finish ALL disk activity",0
+th_l3:          dc.b    "Select CANCEL to reset/debug",0
 vr_retry:       dc.b    "Retry",0
 vr_cancel:      dc.b    "Cancel",0
                 even

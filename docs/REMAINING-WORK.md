@@ -169,23 +169,31 @@ remembered while the volume's icon lives; icons without position placed in 96-pi
 now does the same: CC3 at 117, 0 (read with the debugger, as on 1.3), the window back where it was dragged after a
 close; the Workbench 1.3.3 window is pixel-identical to v0.2.50.
 
-### A12. "Software error - task held" requester missing — [src], M — open (WHDLoad study, 2026-11-13)
+### A12. "Software error - task held" requester — done 2026-11-13
 
-On an exception in a user task (JST 3.1 calling a V36 dos LVO on 1.3), the real 1.3 first shows dos.library's
-system requester "Software error - task held / Finish ALL disk activity / Select CANCEL to reset/debug"
-(Retry/Cancel); Cancel then leads to the Guru. Ours shows the Software Failure Guru directly: no such requester in
-`src/` (checked 2026-11-13). Sources: `docs/analysis/alert-v34.md` (labels belong to dos, not to exec's alert),
-`docs/WHDLoad/jst-host-requirements.md`. The exact trigger path, the Retry behaviour and the requester layout need a
-spec from the analysis track before implementation.
+Spec `docs/analysis/task-held-v34.md` (probed on the real 1.3). Every process dos creates (`proc_create`) now has
+dos's trap handler in tc_TrapCode (`dos_trap`, `src/dos/dos_lib.s`): after exec's usual SOFTWARE FAILURE report on
+the serial port, the faulting process resumes in user mode in `dos_taskheld`, which opens the 320 x 72 "System
+Request" "Software error - task held / Finish ALL disk activity / Select CANCEL to reset/debug" (Retry / Cancel)
+through `vr_req`; Retry shows it again (the process never resumes), Cancel gives the Guru #<vector>.<process>. A
+plain exec task, a process with pr_WindowPtr = -1 or with exec's TaskTrapCode, and an exception in supervisor mode
+take exec's Guru path at once. `tests/taskheld_probe.sh` (screenshots) checks T1 and T4-T8 of the spec: illegal
+instruction (Retry, then Cancel), divide by zero (Guru #00000005), a command started with Run (second number = the
+Background CLI), pr_WindowPtr = -1, TaskTrapCode, a plain task. Kept: after Cancel our Guru is shown at once
+whatever memory ExecBase is in (1.3 resets first and shows it at the next boot when ExecBase is in slow RAM,
+alert-v34 §1.1).
 
-### A13. Dev ROM stalls under JST 0.8c and Gamebench — [doc], unknown size — open (WHDLoad study, 2026-11-13)
+### A13. Dev ROM stalls under JST 0.8c and Gamebench — [doc], unknown size — half explained (2026-11-13)
 
-With `build/kick13.rom` (dev), JST 0.8c needs several minutes to reach the Cadaver demo and never prints its "not a
-JOTD loader" message for a WHDLoad Slave; Gamebench's `wait 20` after `run GameBench` never ends. The production ROM
-behaves like 1.3 in both cases. CPU samples were all in interrupt code (level 6 dispatch and the CIA-B server, the
-dev-only `m7_int6_probe`, level 3 dispatch, the gameport VBlank server) with EXTER and PORTS pending and enabled.
-First step: A/B with the dev harness's level-6 proof handler and continuous CIA-B timer removed, to name the cause
-(`docs/WHDLoad/jst-host-requirements.md`).
+With `build/kick13.rom` (dev), JST 0.8c needs minutes to reach the Cadaver demo and Gamebench's `wait 20` after
+`run GameBench` never ends; the production ROM behaves like 1.3. A/B by the analysis track
+(`docs/WHDLoad/jst-host-requirements.md`, "A/B of 2026-11-13"), with a dev build whose level-6 test handler
+(`m7_int6_probe`, `src/exec/boot.s`) no longer re-arms CIA-B timer A at every interrupt: Cadaver then comes as fast
+as on the production ROM (11 s), so the continuous level-6 source of the dev harness is that cause. Gamebench still
+never ends on both dev builds: its busy-looping AMOS process runs with ExecBase TDNestCnt at 0 (one Forbid level
+held), so the `wait 20` shell never gets the CPU; the code that takes that base Forbid level is not found yet (only
+nested 0 -> 1 -> 0 pairs were seen). Dev ROM only; the earlier "every CPU sample in interrupt code" was partly an
+artefact of attaching the debugger (it stops inside the VBlank interrupt).
 
 ### A14. Boot CLI prompt `> ` instead of `1> ` — done 2026-11-13
 

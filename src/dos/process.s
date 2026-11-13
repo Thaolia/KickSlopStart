@@ -16,6 +16,7 @@
                 xdef    dos_waitreply
                 xref    dos_pktretry         ; dos/dos_lib.s
                 xref    task_alloc           ; exec/tasks.s
+                xref    dos_trap             ; dos/dos_lib.s
 
 ; proc_create(a6=SysBase, a0=name, a1=entryPC, d0=priority.b, d1=stack size) -> d0 = APTR &pr_MsgPort | 0.
 ; The name is copied (31 characters at most) after the Process, in the same tc_MemEntry block (PRX_*, dospkt.i).
@@ -64,6 +65,7 @@ proc_create:
                 move.l  d0,(a1)              ; lh_Head = &lh_Tail
                 clr.l   4(a1)                ; lh_Tail = 0
                 move.l  a1,8(a1)             ; lh_TailPred = &lh_Head
+                move.l  #dos_trap,TC_TRAPCODE(a4)   ; "Software error - task held" (task-held-v34 §1)
                 ; --- AddTask(a1=task, a2=initPC, a3=finalPC) ---
                 move.l  a4,a1
                 move.l  a3,a2                ; initPC = entryPC

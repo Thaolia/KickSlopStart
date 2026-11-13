@@ -62,6 +62,9 @@
                 xdef    exec_SetIntVector  ; M7b: by-number dispatcher (exclusive vector)
                 xdef    exec_AddIntServer  ; M7b: by-number dispatcher (server chain)
                 xdef    intr_chain_walker  ; execmisc.s (RemIntServer)
+                xdef    exc_diag           ; dos_lib.s (dos_trap: the process trap handler)
+                xdef    exc_guru
+                xdef    exc_touser
 
                 xref    task_freemem      ; tasks.s
                 xref    alert_show        ; execmisc.s (Guru of a task's exception)
@@ -916,19 +919,74 @@ exc_common:
         move.l  (sp)+,a0
         rts                          ; -> handler, stack = [trap number][frame]
 
-; exc_default: default handler. Emits "SOFTWARE FAILURE trap=XXXX pc=XXXXXXXX task=<name>" on the serial port
-; (equivalent of the real OS's Software Failure requester) then PUTS THE TASK ON HOLD: the frame is rewritten so
-; that the RTE resumes in user mode in exc_hold (Wait(0) forever); the other tasks continue. An
-; exception occurring in supervisor mode (interrupt, Supervisor) is unrecoverable: message then halt.
+; exc_default: default handler (ExecBase TaskTrapCode). Emits "SOFTWARE FAILURE trap=XXXX pc=XXXXXXXX task=<name>"
+; on the serial port, then the Software Failure Guru #<vector>.<task> (alert-v34 §3): left button reboots, right
+; button PUTS THE TASK ON HOLD (the frame is rewritten so that the RTE resumes in user mode in exc_hold, Wait(0)
+; forever; the other tasks continue). An exception in supervisor mode (interrupt, Supervisor) is a dead end.
+; dos's process handler (dos_trap) shares exc_diag, exc_guru and exc_touser with the same stack layout:
+; [d0-d2/a0-a1 saved][trap number][exception frame].
 exc_default:
         movem.l d0-d2/a0-a1,-(sp)
+        bsr     exc_diag             ; a1 = SR/PC part of the frame
+exc_guru:
+        btst    #5,(a1)              ; S bit of the pushed SR (high byte of the SR word)
+        bne     .eg_fatal
+        move.l  20(sp),d0            ; "Software Failure" Guru: #<vector number>.<task> (spec alert-v34 §3)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),d1
+        move.l  a1,-(sp)
+        jsr     alert_show
+        move.l  (sp)+,a1
+        cmp.l   #1,d0                ; left button: reboot (like 1.3); right: the task is suspended
+        bne.s   .eg_hold
+        jmp     alert_reboot
+.eg_hold:
+        move.l  #exc_hold,d2
+        bra.s   exc_touser
+.eg_fatal:                           ; exception in supervisor: dead-end alert (reset, Guru at the next boot)
+        move.l  20(sp),d0
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),d1
+        jmp     alert_deadend
+; exc_touser(a1 = SR/PC part of the frame, d2 = user-mode PC): the faulting task resumes at d2, user mode, IPL 0.
+exc_touser:
+        tst.b   CPU_FMT
+        bne.s   .er_hold10
+        clr.w   (a1)                 ; resume in user mode, IPL 0
+        move.l  d2,2(a1)
+        movem.l (sp)+,d0-d2/a0-a1
+        cmp.l   #3,(sp)
+        bhi.s   .er_pop
+        addq.l  #8,sp                ; bus/address error: also removes the 8 extra bytes of the frame
+.er_pop:
+        addq.l  #4,sp                ; remove the trap number -> stack = [SR][PC]
+        rte
+.er_hold10:                          ; 68010+: the whole frame (size by format) becomes a format-0 one
+        move.b  6(a1),d0
+        lsr.b   #4,d0
+        and.w   #$F,d0
+        moveq   #0,d1
+        move.b  .er_fsize(pc,d0.w),d1
+        lea     0(a1,d1.w),a0        ; end of the frame
+        clr.w   -(a0)                ; format 0
+        move.l  d2,-(a0)
+        clr.w   -(a0)                ; user mode, IPL 0
+        move.l  a0,20(sp)            ; (over the trap number)
+        movem.l (sp)+,d0-d2/a0-a1
+        move.l  (sp),sp
+        rte
+.er_fsize:                           ; bytes per frame format 0..$F (68010/68020)
+        dc.b    8,8,12,8,8,8,8,8,58,20,32,92,8,8,8,8
+; exc_diag (called right after the handler's movem): the SOFTWARE FAILURE line on the serial port -> a1 = SR/PC
+; part of the frame. Changes d0-d2/a0.
+exc_diag:
         move.w  #SERPER_RAW,SERPER   ; a program may have changed the port speed: readable message
         lea     exc_msg1(pc),a0
         bsr     exc_puts
-        move.l  20(sp),d1            ; trap number
+        move.l  24(sp),d1            ; trap number
         move.l  d1,d0
         bsr     exc_puthex
-        lea     24(sp),a1            ; a1 = frame
+        lea     28(sp),a1            ; a1 = frame
         tst.b   CPU_FMT
         bne.s   .ed_short            ; 68010+: SR and PC lead every frame format
         cmp.l   #3,d1
@@ -946,7 +1004,7 @@ exc_default:
         bhi.s   .ed_nofault
         lea     exc_msg4(pc),a0      ; bus/address error: faulting access address
         bsr     exc_puts
-        move.l  24+2(sp),d0
+        move.l  28+2(sp),d0
         swap    d0
         bsr     exc_puthex
         swap    d0
@@ -1016,7 +1074,7 @@ exc_default:
         bsr     exc_puthex
         lea     exc_msg9(pc),a0      ; BCPL registers: a1 = frame, a2 = GV, a4 = current routine
         bsr     exc_puts
-        move.l  16(sp),d0            ; a1 saved by the entry movem
+        move.l  20(sp),d0            ; a1 saved by the entry movem
         bsr     .ed_hex32
         move.l  a2,d0
         bsr     .ed_hex32
@@ -1024,45 +1082,7 @@ exc_default:
         bsr     .ed_hex32
         lea     exc_crlf(pc),a0
         bsr     exc_puts
-        btst    #5,(a1)              ; S bit of the pushed SR (high byte of the SR word)
-        bne     .ed_fatal
-        move.l  20(sp),d0            ; "Software Failure" Guru: #<vector number>.<task> (spec alert-v34 §3)
-        move.l  ($4).w,a0
-        move.l  EB_THISTASK(a0),d1
-        move.l  a1,-(sp)
-        jsr     alert_show
-        move.l  (sp)+,a1
-        cmp.l   #1,d0                ; left button: reboot (like 1.3); right: the task is suspended
-        bne.s   .ed_hold
-        jmp     alert_reboot
-.ed_hold:
-        tst.b   CPU_FMT
-        bne.s   .ed_hold10
-        clr.w   (a1)                 ; resume in user mode, IPL 0
-        move.l  #exc_hold,2(a1)
-        movem.l (sp)+,d0-d2/a0-a1
-        cmp.l   #3,(sp)
-        bhi.s   .ed_pop
-        addq.l  #8,sp                ; bus/address error: also removes the 8 extra bytes of the frame
-.ed_pop:
-        addq.l  #4,sp                ; remove the trap number -> stack = [SR][PC]
-        rte
-.ed_hold10:                          ; 68010+: the whole frame (size by format) becomes a format-0 one
-        move.b  6(a1),d0
-        lsr.b   #4,d0
-        and.w   #$F,d0
-        moveq   #0,d1
-        move.b  .ed_fsize(pc,d0.w),d1
-        lea     0(a1,d1.w),a0        ; end of the frame
-        clr.w   -(a0)                ; format 0
-        move.l  #exc_hold,-(a0)
-        clr.w   -(a0)                ; user mode, IPL 0
-        move.l  a0,20(sp)            ; (over the trap number)
-        movem.l (sp)+,d0-d2/a0-a1
-        move.l  (sp),sp
-        rte
-.ed_fsize:                           ; bytes per frame format 0..$F (68010/68020)
-        dc.b    8,8,12,8,8,8,8,8,58,20,32,92,8,8,8,8
+        rts
 .ed_hex32:
         swap    d0
         bsr     exc_puthex
@@ -1070,11 +1090,6 @@ exc_default:
         bsr     exc_puthex
         moveq   #' ',d0
         bra     exc_putc
-.ed_fatal:                           ; exception in supervisor: dead-end alert (reset, Guru at the next boot)
-        move.l  20(sp),d0
-        move.l  ($4).w,a0
-        move.l  EB_THISTASK(a0),d1
-        jmp     alert_deadend
 
 ; exc_hold: resume point (user mode) of a faulting task: sleeps forever.
 exc_hold:

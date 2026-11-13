@@ -1721,6 +1721,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Remaining work (2026-11-13)**: user request "continue ce qu'il reste dans REMAINING-WORK". A14: the boot CLI
   prints cli_Prompt (`%N> ` = `1> `, Prompt honoured) instead of a fixed `> `. A12 (task-held requester), A13 (dev
   ROM stall under JST/Gamebench, A/B ROMs built) and the NewCLI prompt question went to an analysis agent.
+  A12 then implemented from its spec `task-held-v34.md`: dos's process trap handler and the "Software error - task
+  held" requester (`tests/taskheld_probe.sh`, T1 and T4-T8 on screenshots). A13: the Cadaver delay is the dev
+  harness's continuous level-6 source; Gamebench's stall is a Forbid level held in the dev builds, still open.
+  NewCLI copies the parent prompt on 1.3 as on ours (WB 1.3.3's s/CLI-Startup resets it to "%N> ").
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow
