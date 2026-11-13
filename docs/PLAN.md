@@ -1736,6 +1736,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   under `ser_lock` (Forbid) until it returned, so a command looping without exec calls starved the system. Found
   with `tests/busywait_probe.sh` (new; FAIL on the old dev ROM, PASS now) and a gdb watch on TDNestCnt; lock removed
   from `sh_exec_cmd`, production ROM byte-identical, prepush-check FAIL=0 twice.
+  A15 fixed: `gfx_detect_std` decides NTSC only after two wraps watched from past line 240, so a loop interrupted
+  for more than ~40 lines no longer turns a PAL boot into NTSC (12/12 PAL boots, was 7/12; NTSC 4/4).
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

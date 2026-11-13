@@ -1996,7 +1996,9 @@ differs.
   list and resets the display registers by CPU, and the VBlank server reloads COP2LC even without a View
   (`src/graphics/graphics_lib.s`); disk.resource enables DSKEN once, trackdisk only arms DSKLEN and leaves the
   audio ADKCON bits alone (`src/exec/diskres.s`, `trackdisk.s`); graphics init detects PAL/NTSC from the beam and
-  fills the standard-dependent GfxBase fields and ExecBase VBlankFrequency (`gfx_detect_std`).
+  fills the standard-dependent GfxBase fields and ExecBase VBlankFrequency (`gfx_detect_std`). Since 2026-11-13 an NTSC
+  verdict needs two wraps whose previous sample was past line 240 (an interrupted loop no longer reads a PAL frame
+  as NTSC, REMAINING-WORK A15).
   **Long frame forced (2026-11-08)**: graphics init and `LoadView(NULL)` call `gfx_longframe` (VPOSW := VPOSR |
   `$8000`, written outside lines `$xFF`, graphics-display-v34 §7.2). Amiberry and WinUAE start with LOF = 0 and a
   non-interlaced Agnus never toggles it, so every PAL frame ended at line 311; Andromeda "D.O.S." waits for line 312

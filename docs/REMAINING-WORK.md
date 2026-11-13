@@ -222,13 +222,18 @@ the other CLIs (`cli_fmtprompt`, `src/dos/shell.s`): `1> ` after a startup-seque
 `prompt "W%N> "` (screenshots, production ROM). 1.3's NewCLI copies the parent's prompt as ours does; the
 `2> ` seen on Workbench 1.3.3 comes from its `s/CLI-Startup`, which sets `%N> ` (`bcpl-runtime-v34.md`).
 
-### A15. PAL A500 sometimes detected as NTSC — [src], S — open (2026-11-13)
+### A15. PAL A500 sometimes detected as NTSC — done 2026-11-13
 
 Seen during the A5 measurements: 2 of 6 plain boots of the production ROM under Amiberry (A500 PAL, no debugger)
 came up NTSC (GfxBase DisplayFlags = 1, Clock's window 170 × 89, pointer stopped at line 199). Suspected cause, not
 confirmed: `gfx_detect_std` (`src/graphics/graphics_lib.s`) decides NTSC as soon as the beam wraps below line 50
 after being above 100 without having been seen above 270, so any interruption of the loop longer than about 41
 lines (~2.6 ms) gives NTSC. vAmigaWeb and Amiberry users would see it.
+
+Fixed 2026-11-13: a wrap now counts toward NTSC only when the sample just before it was past line 240 (the end of
+the frame was watched), and two such wraps are needed; any line above 270 still means PAL at once. Production ROM
+under Amiberry, plain boots read back through ExecBase VBlankFrequency: 12 of 12 PAL (the previous ROM: 5 of 12
+NTSC), and 4 of 4 NTSC with `ntsc=true`. prepush-check FAIL=0.
 
 ## B. Deliberate deviations
 

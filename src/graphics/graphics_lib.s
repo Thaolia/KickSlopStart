@@ -299,27 +299,30 @@ graphics_initfunc:
         rts
 
 ; gfx_detect_std(GfxBase a2, SysBase a6): the standard is the Agnus's, read from the beam as 1.3 does
-; (graphics-display-v34 §8.1; the Agnus ID bits of VPOSR are never used): a line above 270 means PAL; climbing
-; above 100 then wrapping below 50 without passing 270 means NTSC. Bounded loop (PAL if the beam never moves).
+; (graphics-display-v34 §8.1; the Agnus ID bits of VPOSR are never used): a line above 270 means PAL; wrapping to the
+; top without passing 270 means NTSC. A wrap counts only when the sample just before it was past line 240, i.e. the
+; end of the frame was watched: an interrupt that keeps this loop away for more than about 40 lines can jump from a
+; PAL line below 270 to the next frame (A15: PAL A500s booted as NTSC). Two such wraps are needed, so a VPOSR/VHPOSR
+; pair torn at line 256 cannot decide either. Bounded loop (PAL if the beam never moves).
 ; Fills the standard-dependent GfxBase fields (§1.8) and ExecBase VBlankFrequency. Clobbers d0/d1/a0.
 gfx_detect_std:
-        move.l  d2,-(sp)
+        movem.l d2-d3,-(sp)
         move.l  #10000,d2            ; ~20 us per pass on a 7 MHz 68000: ~10 frames before giving up
-        moveq   #0,d1                ; d1 = 1 once the beam was seen above line 100
+        moveq   #0,d1                ; d1 = previous line
+        moveq   #0,d3                ; d3 = watched NTSC wraps
 .ds_lp:
         bsr     gfx_VBeamPos
         cmp.w   #270,d0
         bhi.s   .ds_pal
-        cmp.w   #100,d0
-        bls.s   .ds_low
-        moveq   #1,d1
-        bra.s   .ds_next
-.ds_low:
-        tst.b   d1
-        beq.s   .ds_next
-        cmp.w   #50,d0
-        bcs.s   .ds_ntsc
+        cmp.w   d1,d0
+        bcc.s   .ds_next             ; no wrap
+        cmp.w   #240,d1
+        bls.s   .ds_next             ; the frame's end was not watched
+        addq.b  #1,d3
+        cmp.b   #2,d3
+        beq.s   .ds_ntsc
 .ds_next:
+        move.w  d0,d1
         subq.l  #1,d2
         bne.s   .ds_lp
 .ds_pal:
@@ -340,7 +343,7 @@ gfx_detect_std:
         move.w  #640,gb_NormalDisplayColumns(a2)
         move.w  #$3F9D,gb_MicrosPerLine(a2)
         move.w  #$30,gb_MinDisplayColumn(a2)
-        move.l  (sp)+,d2
+        movem.l (sp)+,d2-d3
         rts
 ; VBlankFrequency (+ pad), DisplayFlags, MaxDisplayRow, NormalDisplayRows, NormalDPMX, NormalDPMY (spec §1.8, §8.2)
 gfx_std_pal:
