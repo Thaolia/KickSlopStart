@@ -29,7 +29,8 @@ Where to look for what → "File References" below. Scoped rules: `.claude/rules
   debugging or probing the official Kickstart ROM (`assets/kick34005.A500`, or any copy of it under another name).
   Black-box observation (a probe run, a trace, an emulator log of the real ROM) counts as probing too.
 - Such work runs ONLY in a **separate agent spawned for that purpose**. That agent writes **no code at all** (nothing
-  in `src/`, `tests/`, scripts, `Makefile`): **documentation only**, in `docs/analysis/`, in English, behaviour and
+  in `src/`, `tests/`, scripts, `Makefile`): **documentation only**, in `docs/analysis/` (`docs/WHDLoad/` for
+  WHDLoad/JST, which sit behind the same wall), in English, behaviour and
   ABI, with no ROM address and no transcribed instruction. If a probe program would help, the agent describes it in
   its report; it is written outside the agent, from that description only.
 - To run the ROM, the agent uses the `/amiberry` skill when it is available (`amiberry-session start --analysis`:

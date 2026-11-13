@@ -169,6 +169,29 @@ remembered while the volume's icon lives; icons without position placed in 96-pi
 now does the same: CC3 at 117, 0 (read with the debugger, as on 1.3), the window back where it was dragged after a
 close; the Workbench 1.3.3 window is pixel-identical to v0.2.50.
 
+### A12. "Software error - task held" requester missing — [src], M — open (WHDLoad study, 2026-11-13)
+
+On an exception in a user task (JST 3.1 calling a V36 dos LVO on 1.3), the real 1.3 first shows dos.library's
+system requester "Software error - task held / Finish ALL disk activity / Select CANCEL to reset/debug"
+(Retry/Cancel); Cancel then leads to the Guru. Ours shows the Software Failure Guru directly: no such requester in
+`src/` (checked 2026-11-13). Sources: `docs/analysis/alert-v34.md` (labels belong to dos, not to exec's alert),
+`docs/WHDLoad/jst-host-requirements.md`. The exact trigger path, the Retry behaviour and the requester layout need a
+spec from the analysis track before implementation.
+
+### A13. Dev ROM stalls under JST 0.8c and Gamebench — [doc], unknown size — open (WHDLoad study, 2026-11-13)
+
+With `build/kick13.rom` (dev), JST 0.8c needs several minutes to reach the Cadaver demo and never prints its "not a
+JOTD loader" message for a WHDLoad Slave; Gamebench's `wait 20` after `run GameBench` never ends. The production ROM
+behaves like 1.3 in both cases. CPU samples were all in interrupt code (level 6 dispatch and the CIA-B server, the
+dev-only `m7_int6_probe`, level 3 dispatch, the gameport VBlank server) with EXTER and PORTS pending and enabled.
+First step: A/B with the dev harness's level-6 proof handler and continuous CIA-B timer removed, to name the cause
+(`docs/WHDLoad/jst-host-requirements.md`).
+
+### A14. Boot CLI prompt `> ` instead of `1> ` — [doc], S — open (WHDLoad study, 2026-11-13)
+
+With a startup-sequence reduced to `SetPatch` + `execute DH0:test`, the real 1.3 boot CLI prints `1> ` and ours
+`> `. Seen by the analysis agent only; confirm on our side (same disk, same script) before fixing.
+
 ## B. Deliberate deviations
 
 These are not work unless a doc says they should change.

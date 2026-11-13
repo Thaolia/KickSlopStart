@@ -1658,6 +1658,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **WHDLoad feasibility study (2026-11-13)**: user request "regarder si tu peux faire une compatibilité avec
+  WHDLoad pour pouvoir l'utiliser avec le KSS. Fait juste une étude", WHDLoad/JST handled by a separate analysis
+  agent like the ROM (user: "faire comme ks1.3 avec un agent séparé en clean room"). `docs/WHDLoad/WHDLOAD-STUDY.md`,
+  `docs/WHDLoad/whdload-host-requirements.md`, `docs/WHDLoad/jst-host-requirements.md`. No WHDLoad version runs on
+  any 1.3 (V37 hunk type `$3F7` in LoadSeg, then a V37 version check); our ROM refuses it exactly like the real
+  1.3; JST 0.8c runs a JST loader to a playable game on the production ROM as on 1.3. Recommendation: no change
+  (a V37 API would be a 2.0 ROM). Side findings in REMAINING-WORK A12-A14. No code changed.
   **Data loop speed-ups (2026-11-12)**: user request "améliorer les performances via des optimisations du KSS"
   without new bugs, more memory or 1.3 incompatibility. CopyMem in unrolled 32-byte blocks (no extra register or
   stack), used directly by the file system and LoadSeg instead of byte loops and by trackdisk's cache copy; MFM decode,

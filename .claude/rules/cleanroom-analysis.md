@@ -1,12 +1,15 @@
 ---
 description: Clean-room rules for analysis specs — what a docs/analysis page may and may not contain
-globs: ["docs/analysis/**/*.md", "docs/audit/**/*.md"]
+globs: ["docs/analysis/**/*.md", "docs/audit/**/*.md", "docs/WHDLoad/**/*.md"]
 ---
 
 # Analysis specs — clean-room rules
 
-> Scoped to `docs/analysis/` and `docs/audit/`. The firewall itself (who may read the ROM) is in `CLAUDE.md`,
-> "Core Principles"; the method is in `docs/CLEANROOM.md` and `docs/AUDIT.md`.
+> Scoped to `docs/analysis/`, `docs/audit/` and `docs/WHDLoad/`. The firewall itself (who may read the ROM) is in
+> `CLAUDE.md`, "Core Principles"; the method is in `docs/CLEANROOM.md` and `docs/AUDIT.md`.
+> WHDLoad, JST and their Slaves sit behind the same wall as the ROM (user decision, 2026-11-13): only an analysis
+> agent downloads, runs or disassembles them, and its pages about them go to `docs/WHDLoad/` under the rules below
+> (no address or offset inside those binaries either).
 
 ## Writing a spec (analysis agent only)
 
