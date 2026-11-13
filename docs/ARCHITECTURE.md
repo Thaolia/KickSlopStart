@@ -1184,6 +1184,10 @@ differs.
     fields, pens, mode, Mask and Layer of a RastPort and restore them, the pens through SetAPen/SetBPen/SetDrMd;
     DrawBorder, PrintIText (around each ITextFont and at the end) and the window title (`wn_titlebar_nc`, which
     switches the frame RastPort to the screen's font for the title) use them.
+    Since 2026-11-13, `wn_titlebar_nc`, `wn_veil` and `wn_sysgads_nc` also keep the whole frame RastPort state
+    around their drawing (`wn_rpkeep`/`wn_rpback`, a 20-byte buffer on the stack): outside GIMMEZEROZERO that
+    RastPort is the application's own, and RefreshGList over the system gadgets used to leave it in JAM1 with the
+    pictogram pen. KindWords sets JAM2 once at start and drew its page over the old picture after a scroll.
   - Regions (spec graphics-regions-v34, 2026-11-04): the public functions of `regions.s` work on absolute nodes
     (rg_toabs) and finish with rg_rel (relative to bounds.MinX/MinY, Prev rebuilt, first Prev = region + 8) or
     rg_norm (1.3 normalisation). OrRectRegion/XorRectRegion cut through a pending list (rg_cut, rg_bands in the

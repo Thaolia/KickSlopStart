@@ -1869,7 +1869,9 @@ wn_titlebar:
         bra     it_reclip
 wn_titlebar_nc:
         movem.l d2-d7/a2,-(sp)
-        move.l  IB_GFXBASE(a5),a6
+        lea     -20(sp),sp
+        move.l  sp,a0
+        bsr     wn_rpkeep
         moveq   #0,d7
         move.b  WD_BORDERTOP(a3),d7
         subq.w  #2,d7                ; d7 = last line of the bar
@@ -1940,6 +1942,9 @@ wn_titlebar_nc:
         move.b  WD_DETAILPEN(a3),d7
         bsr.s   wn_patfill
 .tb_ret:
+        move.l  sp,a0
+        bsr     wn_rpback
+        lea     20(sp),sp
         movem.l (sp)+,d2-d7/a2
         rts
 
@@ -1947,7 +1952,9 @@ wn_titlebar_nc:
 ; area, lines 1 to BorderTop - 3. Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 wn_veil:
         movem.l d2-d7/a2,-(sp)
-        move.l  IB_GFXBASE(a5),a6
+        lea     -20(sp),sp
+        move.l  sp,a0
+        bsr     wn_rpkeep
         moveq   #0,d7
         move.b  WD_BORDERTOP(a3),d7
         subq.w  #3,d7
@@ -1962,8 +1969,26 @@ wn_veil:
         move.b  WD_BLOCKPEN(a3),d7
         bsr.s   wn_patfill
 .vl_ret:
+        move.l  sp,a0
+        bsr     wn_rpback
+        lea     20(sp),sp
         movem.l (sp)+,d2-d7/a2
         rts
+
+; wn_rpkeep(a0 = 20-byte buffer, a3 = window, a5) / wn_rpback(a0 = that buffer, a3, a6): the border RastPort's
+; drawing state (it_rpsave) kept across the frame drawing, then given back. Outside GIMMEZEROZERO it is the
+; application's own RastPort, whose pens and mode survive a title, veil or pictogram redraw ((de)activation,
+; RefreshGList over the system gadgets): KindWords draws its whole page in the JAM2 it set once at start.
+; wn_rpkeep also loads a6 = GfxBase. Clobbers d0/d1/a0-a2.
+wn_rpkeep:
+        move.l  IB_GFXBASE(a5),a6
+        bsr     wn_brp
+        move.l  a1,a2
+        bra     it_rpsave
+wn_rpback:
+        bsr     wn_brp
+        move.l  a1,a2
+        bra     it_rprest
 
 ; wn_patfill(a3 = window, a6 = GfxBase, a2 = pattern, d6 = log2 of its lines, d7.b = pen, d0-d3 = rectangle):
 ; patterned RectFill in JAM1 in the border RastPort, its original pattern restored afterwards. Empty rectangle: nothing.
@@ -2051,7 +2076,9 @@ wn_sysgads:
         bra     it_reclip
 wn_sysgads_nc:
         movem.l d2/a2/a4,-(sp)
-        move.l  IB_GFXBASE(a5),a6
+        lea     -20(sp),sp           ; RefreshGList redraws them in the application's RastPort (KindWords)
+        move.l  sp,a0
+        bsr     wn_rpkeep
         bsr     wn_brp
         move.l  a1,a4                ; a4 = border RastPort
         bsr     wn_geo
@@ -2092,6 +2119,9 @@ wn_sysgads_nc:
         moveq   #0,d1
         bsr     wn_picto
 .sg_ret:
+        move.l  sp,a0
+        bsr     wn_rpback
+        lea     20(sp),sp
         movem.l (sp)+,d2/a2/a4
         rts
 
