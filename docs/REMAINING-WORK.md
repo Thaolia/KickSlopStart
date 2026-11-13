@@ -19,7 +19,9 @@ State at `e6d7bcb` (2026-11-08). This page lists what our ROM still lacks **beyo
   - The 4 null vectors have no known caller: graphicsPrivate1/2 (already stubs in 1.3) and dos GetPacket/QueuePacket.
 - **Device commands:** all 80 are implemented, as are timer.device and audio.device.
 - **Ranked gaps:** all 15 ranks of coverage-v34 §7 are specified, implemented and checked by probes.
-- **Residents:** 22 of the 24 are complete; romboot.library and strap are partial.
+- **Residents:** all 24 are implemented. coverage-v34 §2 rates the *analysis coverage* of romboot.library and strap
+  as partial (what is specified, the DF0: attempt and RomBoot of uae-hd-boot §2-§3, is implemented: C6); no known
+  program depends on the rest of their 1.3 behaviour.
 - **Where the work is:** mostly **workbench.task**, plus behaviour details listed in the specs' open points.
 
 ## A. Gaps that break or visibly change a known program
@@ -622,8 +624,13 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 ## Suggested order
 
-1. **The S-sized leftovers** (C7, C10, C11, C13, C14), one subsystem at a time.
-2. **The analysis-side gaps** (A7-A10, D1-D4), each through an analysis agent first.
+What is still open (2026-11-13):
+1. **A5**: Clock's first refresh pass, 18.6 frames against 15.1 on 1.3 (a leaner dedicated Draw path).
+2. **A8**: the real A500 with Workbench 1.2 (right-button flicker, frozen pointer): retest on the hardware first.
+3. **A6**: the last 416 bytes of a Shell and about 13 KB more than 1.3 on the idle desktop, not chased further.
+4. **C7**: IoErr 286 on a transfer queued during "You MUST replace volume", implemented but not staged by a test.
+5. **Null vectors**: dos GetPacket/QueuePacket (no known caller).
+6. **Analysis-side open points** listed at the end of each spec (for example task-held-v34 §6), taken when a
+   program needs them.
 
-A5, A6, C1, C2, C3, C4, C5, C6, C7 (main part), C8, C9, C12 and the ADF sweep are done;
-D1/D3 are specified.
+Everything else in sections A, C and D is done; section B lists the deliberate deviations.
