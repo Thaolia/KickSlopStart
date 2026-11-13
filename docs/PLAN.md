@@ -1744,6 +1744,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   PutMsg of a tool; drawer windows opened meanwhile get it too. Production ROM under vAmigaWeb (core 4.3.6): the
   hourglass over the boot disk icon while its window fills and over Say while it loads, the arrow back once Say's
   windows open. Not probed yet: project icons, a failing launch, Snapshot/Rename/Info/Discard, the disk scan.
+  KindWords scroll corruption (2026-11-13): after a scroll, the document lines showed fragments of the previous
+  page. On 1.3 the body text is drawn in JAM2 (pens 0/1) with no SetDrMd during the redraw (analysis page
+  `kindwords-scroll-v34.md`). A trace ROM logging SetDrMd on the document window showed RefreshGList over the system
+  gadgets (`wn_sysgads` → `wn_picto`) leaving the application's RastPort in JAM1. `wn_sysgads_nc`, `wn_titlebar_nc`
+  and `wn_veil` now restore the frame RastPort state; DrawMode stays JAM2 and two page-downs are clean (vAmigaWeb,
+  production ROM).
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow
