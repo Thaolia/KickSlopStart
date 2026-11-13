@@ -187,10 +187,13 @@ dev-only `m7_int6_probe`, level 3 dispatch, the gameport VBlank server) with EXT
 First step: A/B with the dev harness's level-6 proof handler and continuous CIA-B timer removed, to name the cause
 (`docs/WHDLoad/jst-host-requirements.md`).
 
-### A14. Boot CLI prompt `> ` instead of `1> ` — [doc], S — open (WHDLoad study, 2026-11-13)
+### A14. Boot CLI prompt `> ` instead of `1> ` — done 2026-11-13
 
-With a startup-sequence reduced to `SetPatch` + `execute DH0:test`, the real 1.3 boot CLI prints `1> ` and ours
-`> `. Seen by the analysis agent only; confirm on our side (same disk, same script) before fixing.
+The boot CLI's loop wrote a fixed `> ` and never read cli_Prompt, so the Prompt command had no effect there either.
+Its CLI structure now starts with the prompt `%N> ` and the loop prints cli_Prompt through the same formatter as
+the other CLIs (`cli_fmtprompt`, `src/dos/shell.s`): `1> ` after a startup-sequence of one `echo`, `W1> ` after
+`prompt "W%N> "` (screenshots, production ROM). A NewCLI started from there shows `2> `; whether 1.3's C:NewCLI
+copies the parent's prompt is being probed by the analysis track.
 
 ## B. Deliberate deviations
 
@@ -448,8 +451,7 @@ Workbench 1.3.3 disk on a 68020 + 68882 with AGA and 2 MB of chip RAM. The excep
 and 32-47 as on 1.3 (12-23 used to be left alone) and clears 48-63, which 1.3 leaves zero for SetPatch to fill (§4.3).
 Not covered: Amiberry emulates neither the 68040's data cache nor its missing FPU instructions, so a real 68040
 board stays untested.
-- No 512 KB ROM image for an A1200.
-- Source: issue #20.
+Source: issue #20.
 
 ## D. Analysis-side gaps that block implementation
 

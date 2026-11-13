@@ -128,9 +128,22 @@ shell_main:
                 bsr     rcli_free            ; then the CLI ends as on 1.3: number 1 free for the next Shell
                 bra     rcli_exit
 .loop:
-                move.l  #sh_prompt,a4        ; prompt ">"
+                bsr     sh_cli_ptr           ; prompt: cli_Prompt ("%N> " = "1> ", or what Prompt set)
+                beq.s   .pdef
+                movem.l d2-d3/a2,-(sp)
+                bsr     cli_fmtprompt
+                move.l  d3,d4
+                movem.l (sp)+,d2-d3/a2
+                move.l  a3,a4
+                bra.s   .pwr
+.pdef:
+                move.l  #sh_prompt,a4        ; no CLI structure (memory was short): "> "
                 move.l  #sh_prompt_len,d4
+.pwr:
+                tst.l   d4
+                beq.s   .pread
                 bsr     sh_write
+.pread:
                 bsr     sh_readline          ; -> d6 = bytes, line in (a3)
                 tst.l   d6
                 bgt.s   .gotline
@@ -820,7 +833,8 @@ sh_make_cli:
                 sub.l   #SH_CLIBSTR/4,d1
                 lsl.l   #2,d1
                 move.l  d1,a1
-                move.l  #$023E2000,(a1)      ; BSTR prompt ">" (length 2)
+                move.l  #$04254E3E,(a1)      ; BSTR prompt "%N> " (length 4): "1> " on the boot CLI, as on 1.3
+                move.b  #' ',4(a1)
                 move.l  #10,CLI_FAILLEVEL(a0)
                 move.l  #SH_DEFSTACK,CLI_DEFAULTSTACK(a0)
                 move.l  #DOSTRUE,CLI_INTERACTIVE(a0)
@@ -1342,37 +1356,10 @@ rcli_prompt:
                 move.l  CLI_CURRENTINPUT(a1),d0
                 cmp.l   CLI_STANDARDINPUT(a1),d0
                 bne.s   .pp_ret
-                move.l  CLI_PROMPT(a1),d0
-                lsl.l   #2,d0
+                bsr.s   cli_fmtprompt
+                tst.l   d3
                 beq.s   .pp_ret
-                move.l  d0,a0
-                moveq   #0,d2
-                move.b  (a0)+,d2             ; d2 = length
-                move.l  a3,a2                ; a2 = formatted text
-                bra.s   .pp_nx
-.pp_ch:
-                move.b  (a0)+,d0
-                cmp.b   #'%',d0
-                bne.s   .pp_put
-                tst.w   d2
-                beq.s   .pp_put
-                cmp.b   #'N',(a0)
-                bne.s   .pp_put
-                addq.l  #1,a0
-                subq.w  #1,d2
-                move.l  ($4).w,a1
-                move.l  EB_THISTASK(a1),a1
-                move.l  PR_TASKNUM(a1),d0
-                bsr     rcli_putdec
-                bra.s   .pp_nx
-.pp_put:
-                move.b  d0,(a2)+
-.pp_nx:
-                dbra    d2,.pp_ch
                 move.l  a3,d2
-                move.l  a2,d3
-                sub.l   a3,d3
-                beq.s   .pp_ret
                 move.l  ($4).w,a1
                 move.l  EB_THISTASK(a1),a1
                 move.l  PR_COS(a1),d1
@@ -1381,6 +1368,41 @@ rcli_prompt:
                 jsr     DOS_LVO_WRITE(a6)
 .pp_ret:
                 movem.l (sp)+,d2-d4/a2/a6
+                rts
+; cli_fmtprompt(a1 = CLI, a3 = buffer) -> d3 = length of cli_Prompt formatted into the buffer ("%N" = CLI number).
+; Clobbers d0-d2/d4/a0-a2.
+cli_fmtprompt:
+                moveq   #0,d3
+                move.l  CLI_PROMPT(a1),d0
+                lsl.l   #2,d0
+                beq.s   .fp_ret
+                move.l  d0,a0
+                moveq   #0,d2
+                move.b  (a0)+,d2             ; d2 = length
+                move.l  a3,a2                ; a2 = formatted text
+                bra.s   .fp_nx
+.fp_ch:
+                move.b  (a0)+,d0
+                cmp.b   #'%',d0
+                bne.s   .fp_put
+                tst.w   d2
+                beq.s   .fp_put
+                cmp.b   #'N',(a0)
+                bne.s   .fp_put
+                addq.l  #1,a0
+                subq.w  #1,d2
+                move.l  ($4).w,a1
+                move.l  EB_THISTASK(a1),a1
+                move.l  PR_TASKNUM(a1),d0
+                bsr     rcli_putdec
+                bra.s   .fp_nx
+.fp_put:
+                move.b  d0,(a2)+
+.fp_nx:
+                dbra    d2,.fp_ch
+                move.l  a2,d3
+                sub.l   a3,d3
+.fp_ret:
                 rts
 ; rcli_putdec(d0 = integer >= 0, a2 = destination): decimal digits, a2 advanced. Clobbers d0/d1/d4.
 rcli_putdec:

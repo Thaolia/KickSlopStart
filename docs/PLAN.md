@@ -1718,6 +1718,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   graster regression (2026-11-13): bisected to 7b06a34 (ClipBlit re-sorts the ClipRects, ScrollRaster's cached
   DC_FIRST went stale before its strip fill); `sr_move` reloads it. graster_probe 156 vectors, 0 FAIL again;
   clipblit OK, scrollpix and prepush-check unchanged.
+  **Remaining work (2026-11-13)**: user request "continue ce qu'il reste dans REMAINING-WORK". A14: the boot CLI
+  prints cli_Prompt (`%N> ` = `1> `, Prompt honoured) instead of a fixed `> `. A12 (task-held requester), A13 (dev
+  ROM stall under JST/Gamebench, A/B ROMs built) and the NewCLI prompt question went to an analysis agent.
   **Remaining work, continued (2026-11-12)**: user request "continue ce qu'il reste dans REMAINING-WORK". C3 (menu
   working flags cleared at activation, EXP MACT), C4 (MrgCop leaves the lists alone without a CopList, MC KEEP), A7
   (line blits no longer wait for the last plane: Lines +19 %), D8 P2 (getvec edge sizes), D9 (Alert without slow

@@ -2411,6 +2411,9 @@ differs.
     MoveLayer 493 -> 450 (-9 %), C:Type 32.88 -> 31.94 s. `tests/layerbak_probe.sh` fills free memory with $A5 and
     hashes every pixel of two SMART layers through ReadPixel after SizeLayer, MoveLayer, Behind/Upfront and an
     out-of-memory MoveLayer: same lines as v0.2.54.
+  - Boot CLI prompt: `sh_make_cli` sets cli_Prompt to `%N> ` and the boot loop prints it through `cli_fmtprompt`
+    (shared with `rcli_prompt`), so the boot CLI shows `1> ` as on 1.3 and honours Prompt; `> ` stays only as the
+    fallback when its CLI structure could not be allocated.
   - ScrollRaster in a layer with a horizontal move: ClipBlit within one RastPort re-sorts the layer's ClipRects
     (`cb_sort`), so `sr_move` reloads DC_FIRST from the layer afterwards; the strip fill had walked from the stale
     head and left vacated columns of the ClipRects sorted before it unfilled (`tests/graster_probe.sh` "L d", 0 FAIL).
