@@ -62,6 +62,43 @@ Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de 
   au lieu de rouge. Une disquette Workbench affiche toujours le pointeur de son `devs:system-configuration`, comme
   sur la 1.3 d'origine.
 
+## Diagnostic au démarrage
+
+Lors d'un démarrage à froid (mise sous tension, ou reset qui n'a pas gardé un ExecBase valide), KickSlopStart teste la
+machine avant de construire exec et affiche le résultat en **texte**, là où les Kickstart suivants font clignoter une
+couleur. La vraie 1.3 n'en fait presque rien : elle vérifie seulement qu'il y a 256 Ko de chip RAM (écran vert
+sinon) et intercepte les exceptions CPU précoces (écran jaune). Les tests, dans l'ordre :
+
+| Ligne à l'écran | Ce qui est vérifié |
+|---|---|
+| `Chip RAM   data, address, cells` | taille (512 Ko au moins, jusqu'à 2 Mo), les 32 lignes de données, les lignes d'adresse, un long tous les 256 octets avec deux motifs ; chaque long est remis en place |
+| `Agnus      beam counter` | la position verticale du faisceau avance |
+| `Agnus      blitter` | deux blits d'un mot arrivent en chip RAM et le blitter termine |
+| `Paula      INTENA, ADKCON` | les deux registres relisent deux motifs de bits |
+| `CIA-A`/`CIA-B timer A` | le timer A décompte |
+| `ROM        checksum` | les 65 536 longs de l'image font `$FFFFFFFF` (retenue reportée) |
+
+L'écran texte apparaît dès que la chip RAM est validée (il est logé dedans) et disparaît quand tous les tests
+passent, environ un quart de seconde plus tard (estimation tirée du nombre d'instructions, surtout la somme de la ROM).
+Si un test échoue, l'écran reste, la diode d'alimentation clignote et le **bouton gauche de la souris redémarre** la
+machine. La panne est aussi écrite sur le port série (environ 9600 bauds), à regarder quand rien ne peut s'afficher.
+
+La couleur du fond indique la catégorie de la première panne. Avec une panne de chip RAM, il n'y a pas de RAM pour
+dessiner du texte : seule la couleur s'affiche. Les couleurs sont choisies pour ne jamais être confondues avec le code
+officiel (gris foncé, gris clair, rouge = ROM, vert = chip RAM, bleu = puces custom, jaune = exception CPU, blanc) :
+
+| Couleur | Signification |
+|---|---|
+| nuances de violet sombre (`$213`, `$324`, `$435`, `$326`) | démarrage en cours / tests réussis |
+| **magenta** `$F0F` | panne de chip RAM, ou moins de 512 Ko (pas de texte : couleur et port série seulement) |
+| **orange** `$F80` | Agnus, Paula ou un CIA en panne |
+| **violet** `$70E` | somme de contrôle de la ROM fausse (image abîmée ou modifiée) |
+| **turquoise** `$0DD` | exception CPU avant qu'exec soit prêt ; l'écran donne le vecteur, le PC et le SR |
+
+Denise n'est pas testé : sur une machine OCS, son seul registre lisible est celui des collisions de sprites et de
+playfields, qui demande un affichage en marche ; un écran texte lisible est son test. Le diagnostic ne tourne pas après un reset à chaud qui garde ExecBase (soft-kick, programmes KickTag,
+disques RAM résistants au reset), car ses tests de RAM écraseraient ce que ce reset conserve.
+
 ## Essayer dans le navigateur
 
 **[Lancer KickSlopStart dans vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)** : l'émulateur Amiga du navigateur démarre avec la dernière ROM publiée

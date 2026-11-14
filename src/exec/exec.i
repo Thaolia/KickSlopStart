@@ -53,11 +53,24 @@ HEAP_LOWER   EQU $00003500     ; chip heap at init_memory; with slow RAM add_low
 LOWHEAP_LO   EQU $00001000     ; bottom of that extension: LOWVARS_HI..LOWHEAP_LO is a cushion (memory.s add_low_chip)
 
 ; --- Phases (12-bit RGB) ---
-C_RED    EQU $0F00
-C_BLUE   EQU $000F
-C_CYAN   EQU $00FF
-C_WHITE  EQU $0FFF
-C_FAIL   EQU $0F0F
+; Coldstart colours (README "Power-on diagnostic"). Progress: shades of the KickSlopStart purple, so that none can be
+; read as an error colour of the official Kickstarts (grey, red, green, blue, yellow). Errors: the background of the
+; diagnostic screen, or the whole display when no screen can be drawn.
+C_BOOT1  EQU $0213               ; coldstart entered
+C_BOOT2  EQU $0324               ; stack set, low variables cleared
+C_BOOT3  EQU $0435               ; ExecBase being built (and after a passed diagnostic)
+C_WHITE  EQU $0FFF               ; graphics.library initialised
+DG_OK    EQU $0326               ; diagnostic screen while the tests pass
+DG_CHIP  EQU $0F0F               ; magenta: chip RAM fault (no screen: the colour alone)
+DG_CUSTOM EQU $0F80              ; orange: Agnus, Paula or a CIA failed
+DG_ROM   EQU $070E               ; violet: ROM checksum wrong
+DG_CPU   EQU $00DD               ; turquoise: CPU exception before exec's vectors
+C_FAIL   EQU DG_CHIP             ; ExecBase could not be built in RAM
+; DIAG_FAKE=n (test build only, never dev or prod): forces a diagnostic failure, 1 chip RAM, 2 Agnus beam, 4 Paula,
+; 5 CIA-A, 6 ROM checksum, 7 CPU exception (tests/diag_probe.sh).
+                ifnd    DIAG_FAKE
+DIAG_FAKE       EQU 0
+                endc
 
 SERPER_RAW      EQU 372          ; RawIOInit value (custom-chips-v34 §4.3): 9509 Bd PAL, 9597 Bd NTSC, 8 bits
 ; RAMKICK=1 (make kick-ram): image linked at $C00000, loaded into slow RAM by the soft-kick disk (src/softkick/).

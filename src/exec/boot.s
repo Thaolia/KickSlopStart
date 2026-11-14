@@ -17,6 +17,8 @@
                 include "expansion.i"    ; expansion.library: EXP_LVO_*/ConfigDev (round-trip proof)
 
                 xref    newlist          ; lists.s
+                xref    diag_vectors     ; diag.s (exception screen before exec's vectors)
+                xref    diag_run         ; diag.s (power-on diagnostic, cold path)
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
                 xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
@@ -209,7 +211,7 @@ coldstart:                        ; $FC00D2
         move.w  #$7FFF,DMACON
         move.w  #$7FFF,INTENA
         move.w  #$7FFF,INTREQ
-        move.w  #C_RED,COLOR00
+        move.w  #C_BOOT1,COLOR00
 
         ; --- Phase 2: overlay off then install the stack ---
         move.b  #$03,CIAA_DDRA
@@ -266,6 +268,7 @@ coldstart:                        ; $FC00D2
         bchg    #1,CIAA_PRA
 .cc_led:
         move.l  #STACKTOP,sp
+        jsr     diag_vectors         ; a CPU exception before exec's vectors shows the diagnostic screen
         move.l  d6,-(sp)             ; popped in phase 3
         lea     LOWVARS_LO,a0        ; low-RAM variables and the cushion up to LOWHEAP_LO zeroed: RAM is not null at
         move.w  #(LOWHEAP_LO-LOWVARS_LO)/4-1,d0 ; power-on on a real machine nor under WinUAE (an odd keyboard buffer
@@ -273,7 +276,7 @@ coldstart:                        ; $FC00D2
                                      ; name and frees a bogus node if it matches); FS-UAE clears RAM
         clr.l   (a0)+
         dbra    d0,.lv_clr
-        move.w  #C_BLUE,COLOR00
+        move.w  #C_BOOT2,COLOR00
         jsr     exec_RawIOInit       ; as the 1.3 coldstart does
         lea     msg_cold(pc),a0
         bsr     ser_puts
@@ -289,7 +292,7 @@ coldstart:                        ; $FC00D2
 .f2a_nokbd:
 
         ; --- Phase 3: ExecBase + jump table ---
-        move.w  #C_CYAN,COLOR00
+        move.w  #C_BOOT3,COLOR00
         jsr     slow_probe           ; d0 = end of the slow RAM (MaxExtMem) or 0
         lea     EXECBASE,a6          ; a6 = SysBase (library base convention): low chip without slow RAM,
         tst.l   d0
@@ -329,6 +332,8 @@ coldstart:                        ; $FC00D2
         ; §6). $100/$104 (a dead-end alert's numbers) stay for alert_boothook, which reads them once intuition is up
         ; (1.3 reads them before clearing); the low-RAM variables were zeroed above and are in use. The boot stack is
         ; empty and nothing is called, so its area is cleared too. RAMKICK: the image below SLOW_RSV is kept.
+        ; The power-on diagnostic runs first (src/exec/diag.s): what it writes in low chip RAM is cleared here.
+        jsr     diag_run
         moveq   #0,d1
         moveq   #0,d2
         moveq   #0,d3

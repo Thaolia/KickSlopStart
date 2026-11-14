@@ -56,6 +56,43 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 - **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in mauve instead of
   red. A Workbench disk still shows the pointer stored in its `devs:system-configuration`, as on the original 1.3.
 
+## Power-on diagnostic
+
+At a cold start (power on, or a reset that did not keep a valid ExecBase) KickSlopStart tests the machine before it
+builds exec, and reports in **text** where the later Kickstarts flash a colour. The real 1.3 does almost none of
+this: it only checks that 256 KB of chip RAM exist (green screen otherwise) and catches early CPU exceptions (yellow
+screen). The tests, in this order:
+
+| Line on the screen | What is checked |
+|---|---|
+| `Chip RAM   data, address, cells` | size (512 KB at least, up to 2 MB), the 32 data lines, the address lines, one long every 256 bytes with two patterns; every long is put back |
+| `Agnus      beam counter` | the vertical beam position moves |
+| `Agnus      blitter` | two one-word blits land in chip RAM and the blitter finishes |
+| `Paula      INTENA, ADKCON` | both registers read back two bit patterns |
+| `CIA-A`/`CIA-B timer A` | timer A counts down |
+| `ROM        checksum` | the 65,536 longs of the image add up to `$FFFFFFFF` (end-around carry) |
+
+The text screen appears as soon as the chip RAM has passed (it lives in that RAM) and goes away when every test
+passes, about a quarter of a second later (an estimate from the instruction counts, dominated by the ROM checksum).
+When a test fails, the screen stays, the power LED blinks and the **left mouse button restarts** the machine. The
+failure is also written to the serial port (about 9600 baud), the place to look when nothing can be displayed.
+
+The background colour of the screen tells the class of the first failure. With a chip RAM fault there is no RAM to
+draw text in, so the colour alone is shown. The colours were chosen so that none can be mistaken for the official
+code (dark grey, light grey, red = ROM, green = chip RAM, blue = custom chips, yellow = CPU exception, white):
+
+| Colour | Meaning |
+|---|---|
+| dark purple shades (`$213`, `$324`, `$435`, `$326`) | coldstart running / tests passing |
+| **magenta** `$F0F` | chip RAM fault, or less than 512 KB (no text: colour and serial port only) |
+| **orange** `$F80` | Agnus, Paula or a CIA failed |
+| **violet** `$70E` | ROM checksum wrong (a damaged or patched image) |
+| **turquoise** `$0DD` | CPU exception before exec was ready; the screen gives the vector, the PC and the SR |
+
+Denise is not tested: on an OCS machine its only readable register is the sprite and playfield collision register,
+which needs a running display; a readable text screen is its test. The diagnostic does not run after a warm reset that keeps ExecBase (soft-kick, KickTag programs, reset-proof
+RAM disks), since its RAM tests would overwrite what that reset preserves.
+
 ## Try it in your browser
 
 **[Run KickSlopStart in vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)**: the browser Amiga emulator starts with the latest released ROM instead of

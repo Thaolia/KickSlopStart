@@ -193,6 +193,21 @@ first chip block right above the low-RAM variables again.
 - Footer (container format, see amitools): checksum longword at `taille-0x18`, size field at
   `taille-0x14`, 8 words `0x0018..0x001F` at `taille-0x10`. Valid checksum = sum of the longwords
   (carry folded back) equal to `0xFFFFFFFF`. **Not verified by the OS before V37**, but required by the tools.
+  KickSlopStart checks it in its power-on diagnostic (below).
+- **Power-on diagnostic (2026-11-14, `src/exec/diag.s`, README "Power-on diagnostic")**: right after the stack is set,
+  `diag_vectors` points vectors 2-47 at one `bsr.w dg_exc` stub each (the stub's address gives the vector), so a CPU
+  exception before `init_ints` shows a turquoise text screen (vector, PC, SR). On the cold path only (`.eb_cold`,
+  before the CLRMEMs, which then clear what it wrote), `diag_run` tests the chip RAM non-destructively from `$4000`
+  (size by 256 KB steps against a mirror or a missing block, data lines, address lines 2^2..2^n, one long every 256
+  bytes), then draws a 640 x 200 one-plane text screen in low chip (copper list `$3800`, plane `$4000`, `font8x8`)
+  and tests Agnus (beam, two one-word blits), Paula (INTENA/INTENAR, ADKCON/ADKCONR audio bits), the CIAs' timer A
+  and the end-around-carry ROM sum. All pass: DMA off, BPLCON0 `$0200`, registers as found (INTENA clear, ADKCON
+  and CIA CRA restored, timer counters reloaded from the `$FFFF` latch) and the boot goes on; the dev ROM prints the
+  report and `DIAG OK` on the serial port, the production ROM prints only failures. A failure keeps the screen (its
+  background = the first failed class: orange custom chips, violet ROM; chip RAM magenta with no screen), blinks
+  the LED and restarts through `RESET` + coldstart on the left mouse button. Test builds: `-DDIAG_FAKE=n`
+  (`tests/diag_probe.sh`). The coldstart progress colours are purple shades (`C_BOOT1-3`) instead of red, blue and
+  cyan, which the later Kickstarts' code reads as errors.
 
 ## Resident modules (ROMTags)
 

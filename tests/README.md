@@ -102,6 +102,10 @@ KickTagPtr − 16.
   illegal, `z` divide by zero, `f` line-F, `0` TRAP #0, `w` pr_WindowPtr = -1, `t` exec's TaskTrapCode, `a` a plain
   exec task; `RUN=1` starts it with Run); screenshots A (fault), B (after Retry), C (after Cancel) to read against
   `docs/analysis/task-held-v34.md` §4.
+- `tests/diag_probe.sh <out_dir> <case>`: the power-on diagnostic (README "Power-on diagnostic"): `pass` and `dev`
+  (normal boots; dev prints `DIAG OK`), `rom` (a copy of the production ROM with one byte changed), or a test build
+  `1`, `2`, `4`, `5`, `6`, `7` made with `-DDIAG_FAKE=n` (chip RAM, Agnus beam, Paula, CIA-A, ROM checksum, CPU
+  exception). Screenshot `<case>.png` and the serial lines `<case>.txt` to read.
 - `tests/busywait_probe.sh <out_dir> [rom=build/kick13.rom]`: a copy of the Workbench 1.3.3 disk runs
   `tests/busywait_probe.s` (an endless CPU loop that never calls exec) with Run, then `Wait 5` and `T after` on the
   serial line. Prints PASS when the marker comes within 150 s; the dev ROM before the A13 fix never printed it.

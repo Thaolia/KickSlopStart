@@ -1742,6 +1742,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   872,960, 1.3 884,424, the gap being the 4-slot track cache), every remaining difference attributed with MEMTRACK;
   Workbench left-out records allocated on demand (+1,072 at idle). Leave Out / Shell from it / put back checked,
   prepush-check FAIL=0 with the Lemmings menu. MEMORY-USAGE.md "Update (2026-11-13)".
+  **Power-on diagnostic (2026-11-14)**: user request "implémente la partie Diag ... du texte, sinon un code couleur
+  différent de celui du kickstart officiel". `src/exec/diag.s`: chip RAM, Agnus, Paula, CIAs and ROM checksum tested
+  at a cold start, reported on a text screen (and the serial port); background colours magenta / orange / violet /
+  turquoise, none from the official code; early CPU exceptions get a text screen. `tests/diag_probe.sh`: pass, dev
+  (DIAG OK), a ROM with one byte changed and the DIAG_FAKE builds 1, 2, 4, 5, 6, 7 checked on screenshots; left
+  button restarts; KickTag warm reset unchanged (CoolCapture 1, tag1 1, tag2 0 as on HEAD); prepush-check FAIL=0.
   Busy pointer on icon opening (2026-11-13): the hourglass, until then only shown during a drop and Empty Trash, now
   also covers a double-click / Workbench/Open, as probed on the real 1.3 by an analysis agent (spec
   workbench-task-v34 §11, new): on at the double-click, off after the drawer's last icon or after CreateProc and
