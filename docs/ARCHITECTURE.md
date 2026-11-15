@@ -1066,6 +1066,12 @@ differs.
   - Command lookup (`sh_exec_cmd`): current directory, then each entry of cli_CommandDir (Path ADD), then C:. The
     path entry stays the current directory until LoadSeg, then the CLI's one is restored. `SetMap`, in SYS:System,
     was not found before.
+  - The command's stack (`cli_DefaultStack` + `RC_STKEXTRA` + 4 bytes) is allocated **before** LoadSeg, freed after
+    the command and before UnLoadSeg (2026-11-16, issue #43). 1.3 allocates its 4,008-byte stack after LoadSeg, and
+    first fit puts it in a low hole (`docs/analysis/dos-memory-v34.md` §4.6); ours, 2 KB larger, found no such hole
+    and landed right above the last hunks, so Bubble and Squeak (1 MB chip only) could not merge the hunks it frees
+    with the top of chip RAM and printed "Insufficient Memory". Deviation kept on purpose: placement only, nothing a
+    program can observe through the API. `runcommand` (BCPL global 121) still allocates after the load.
   - The builtin `echo` gives way to the disk's `C:Echo` when there is one (quotes and `*N` handled by the real
     command); it remains for disks without C: (harness ADFs). Deviation: `rcli_rdline` also ends a line at CR, as
     the harness scripts are CR-terminated.

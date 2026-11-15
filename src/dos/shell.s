@@ -424,6 +424,7 @@ sh_exec_cmd:
                 lea     -XF_SIZE(sp),sp
                 clr.l   XF_FLAG(sp)
                 clr.l   XF_OLDCD(sp)
+                clr.l   XF_STK(sp)
                 move.l  a0,d5                ; d5 = name
                 lea     XF_ARGS(sp),a2
                 bsr     sh_build_args        ; (a1, d1) -> filtered arguments in (a2); d0 = length
@@ -519,6 +520,24 @@ sh_exec_cmd:
                 jsr     LVO_FREEMEM(a6)
                 tst.l   d4
                 beq     .x_closelib
+                ; --- dedicated stack of cli_DefaultStack longs plus RC_STKEXTRA (like runcommand): the BCPL stub puts
+                ; the base of its frames at 8(sp) - 4(sp) = (top - 4) - size -> block ONE long larger than the
+                ; announced size, otherwise the first frame overwrites the last long of the previous memory block.
+                ; Allocated BEFORE LoadSeg, unlike 1.3 (dos-memory-v34 §4.6): 1.3's 4,008-byte stack fits in a low
+                ; hole after the load, ours (with the margin) often does not and would land right above the last
+                ; hunks, so a program freeing those hunks could not merge them with the free top of memory
+                ; (Bubble and Squeak, 1 MB chip: "Insufficient Memory"). 0 = no memory, reported after the load. ---
+                move.l  #SH_DEFSTACK*4,d0
+                bsr     sh_cli_ptr
+                beq.s   .x_stk
+                move.l  CLI_DEFAULTSTACK(a1),d0
+                lsl.l   #2,d0
+.x_stk:
+                add.l   #RC_STKEXTRA+4,d0
+                move.l  d0,XF_STKSZ(sp)
+                move.l  #MEMF_PUBLIC,d1
+                jsr     LVO_ALLOCMEM(a6)
+                move.l  d0,XF_STK(sp)
                 move.l  a4,a6                ; LoadSeg reads the file as a stream (no buffer for the whole file)
                 move.l  d5,d1
                 jsr     DOS_LVO_LOADSEG(a6)  ; BPTR seglist | 0 (IoErr: 103 memory, 121 not an executable)
@@ -567,21 +586,7 @@ sh_exec_cmd:
                 bra     .x_unload
 .x_nrout:
                 ifeq    E3_NO_EXEC
-                ; --- dedicated stack of cli_DefaultStack longs plus RC_STKEXTRA (like runcommand): the BCPL stub puts
-                ; the base of its frames at 8(sp) - 4(sp) = (top - 4) - size -> block ONE long larger than the
-                ; announced size, otherwise the first frame overwrites the last long of the previous memory block ---
-                move.l  #SH_DEFSTACK*4,d0
-                bsr     sh_cli_ptr
-                beq.s   .x_stk
-                move.l  CLI_DEFAULTSTACK(a1),d0
-                lsl.l   #2,d0
-.x_stk:
-                add.l   #RC_STKEXTRA+4,d0
-                move.l  d0,XF_STKSZ(sp)
-                move.l  #MEMF_PUBLIC,d1
-                move.l  ($4).w,a6
-                jsr     LVO_ALLOCMEM(a6)
-                move.l  d0,XF_STK(sp)
+                tst.l   XF_STK(sp)
                 beq     .x_nostack
                 ; --- arguments: copied into the aligned CLI buffer, injected into the input FileHandle ---
                 bsr     sh_cli_ptr
@@ -684,10 +689,7 @@ sh_exec_cmd:
                 move.l  XF_SEND(sp),FH_END(a0)
 .x_norest:
                 bsr     sh_redclose
-                move.l  XF_STK(sp),a1
-                move.l  XF_STKSZ(sp),d0
-                move.l  ($4).w,a6
-                jsr     LVO_FREEMEM(a6)
+                bsr     .x_freestk           ; before UnLoadSeg, as in 1.3
                 move.l  XF_RC(sp),d0
                 bra.s   .x_ran
 .x_nostack:
@@ -729,6 +731,7 @@ sh_exec_cmd:
                 jsr     dos_unloadseg
 .x_closelib:
                 bsr     .x_restcd
+                bsr     .x_freestk           ; command not run (not loadable, redirection failed)
                 move.l  ($4).w,a6
                 move.l  XF_DOS(sp),a1
                 jsr     LVO_CLOSELIBRARY(a6)
@@ -747,6 +750,17 @@ sh_exec_cmd:
                 jsr     DOS_LVO_CURRENTDIR(a6)
                 move.l  (sp)+,a6
 .rc_r:
+                rts
+; .x_freestk: frees the command's stack if one is held (frame 4 bytes higher). Clobbers d0-d1/a0-a1/a6.
+.x_freestk:
+                move.l  XF_STK+4(sp),d0
+                beq.s   .fs_r
+                clr.l   XF_STK+4(sp)
+                move.l  d0,a1
+                move.l  XF_STKSZ+4(sp),d0
+                move.l  ($4).w,a6
+                jsr     LVO_FREEMEM(a6)
+.fs_r:
                 rts
 
 ; sh_redclose(): closes the redirection files of the command (caller's XF frame, at 4(sp)). Preserves d0.

@@ -380,6 +380,100 @@ CLI stays except what cliinit made for the system (RootNode, DosInfo, rn_TaskArr
 | WB tool that calls Exit without replying WBStartup | its seglist and arguments | [D] `dos-exit-packets-v34.md` §1.5 |
 | Process created by C `CreateProc` | its `pr_CurrentDir`, `pr_CIS`/`pr_COS` are not released by endtask | [O] `dos-exit-packets-v34.md` §1.4 (the creator's lock is shared, not duplicated) |
 
+### 4.6 Command stack timing and chip placement: Bubble and Squeak, 1 MB chip only [O, 2026-11-15]
+
+**Why it matters.** The game (one disk, startup-sequence `Assign Bubble2: df0:`, `add21k`, `code`) reaches its
+title screen on the real 1.3 with **1 MB chip RAM and no other RAM**. Its loader frees hunks 7 and 8, then asks
+`AvailMem(MEMF_CHIP|MEMF_LARGEST)` and needs at least 270,000 bytes. Whether it passes depends only on where the
+CLI command stack and the small hunks land, i.e. on exec's first-fit (`exec-memory-semaphores-v34.md`) and on the
+**order** of the dos/CLI allocations below.
+
+**Method.** Real ROM under Amiberry, A500 preset (cycle-exact), `--chip 1024 --slow 0`, a session copy of the
+disk, booted unmodified. Two full runs (the second attached a few frames after ExecBase existed); every exec
+`AllocMem`, `FreeMem` and `AvailMem` was caught by hardware breakpoints on the targets of the ExecBase jump-table
+entries (LVO −198, −210, −216), with a second breakpoint at the caller's return to read D0; the running task name
+was read from `ThisTask`, and the chip `MemHeader` and its free chunk list were walked at every call of 4000 bytes
+or more and at every largest-chip `AvailMem`. Both runs gave **the same sizes and the same RAM addresses**. Roles
+are deduced from the task, size, flags and timing. Addresses below are RAM addresses of this configuration.
+
+**Chip header.** `mh_Lower` $0008E8, `mh_Upper` $0FE800: the top 6 KB ($0FE800–$100000) is the supervisor stack
+(`SysStkLower`/`SysStkUpper`), outside the header. ExecBase at $000676. No other memory header.
+
+**Allocations of 4000 bytes or more, boot to the check** (flags: 1 PUBLIC, 2 CHIP, $10000 CLEAR):
+
+| # | Who (role) | Call | Size | Flags | RAM block |
+|---|---|---|---:|---|---|
+| 1 | trackdisk, first unit (boot task) | AllocMem | 16,388 | PUBLIC+CHIP+CLEAR | $006490 |
+| 2 | trackdisk, second unit, while the second file system starts [D: second drive of the preset] | AllocMem | 16,388 | PUBLIC+CHIP+CLEAR | $00D090 |
+| 3 | Initial CLI console (task CON) opening the Workbench screen: bitplane 0 | AllocMem | 20,480 | PUBLIC+CHIP | $012150–$017150 |
+| 4 | same, bitplane 1 | AllocMem | 20,480 | PUBLIC+CHIP | $017160–$01C160 |
+| 5 | `Assign`: segments 324 + 2,648 loaded first, **then** the command stack | AllocMem | 4,008 | PUBLIC | $01DE78 |
+| 6 | `Assign` ends: stack freed, then UnLoadSeg (324, 2,648) | FreeMem | 4,008 | — | $01DE78 |
+| 7 | `add21k`: segments (16-byte hunk table, hunks 184 + 12) loaded first, then the command stack | AllocMem | 4,008 | PUBLIC | $01D208 (start of the big chunk: no lower hole was large enough) |
+| 8 | `add21k`, graphics `FreeRaster` of bitplane 1 | FreeMem | 20,480 | — | $017160–$01C160 |
+| 9 | `add21k` ends: stack freed, then its segments | FreeMem | 4,008 | — | $01D208 |
+| 10–18 | LoadSeg of `code`, hunks 0–8 in hunk order (block = hunk + 8) | AllocMem | 128 · 188,548 · 10,920 · 2,300 · 186,068 · 236,236 · 520 · **132,876** · **18,688** | all PUBLIC except hunk 4 CHIP | $017668 · $01D208 · $0176E8 · $01A190 · $04B290 · $078968 · $01AA90 · **$0B2438** · **$0D2B48** |
+| 19 | CLI command stack for `code` (default stack) | AllocMem | **4,008** | PUBLIC | **$01AC98–$01BC40** |
+| 20 | `code` (its hunk 0) frees hunk 8, hunk 7, then hunk 6 (520) | FreeMem | 18,688 · 132,876 · 520 | — | as allocated |
+| 21 | `code`: `AvailMem(MEMF_CHIP|MEMF_LARGEST)` | AvailMem | → **312,264** | — | — |
+| 22 | `code`: AllocMem of that size, chip | AllocMem | 312,264 | CHIP | $0B2438–$0FE800 |
+| 23 | `code`: `AvailMem` largest again | AvailMem | → 1,328 | — | — |
+
+After step 23 the game frees the 312,264-byte block and allocates it again at the same address, then keeps
+opening files through dos (48 + 608 + 24-byte blocks per Open) and shows its title screen.
+
+**Command stack timing.** For every CLI command seen (`Assign`, `add21k`, `code`) the order is: LoadSeg
+(read buffer 408, FileHandle 48, file-system block 608, lock 24, hunk table, all hunks, relocation
+temporaries), then the loader frees its read buffer, lock, file-system block, FileHandle and hunk table, and only
+**then** the CLI allocates the stack: **4,008 bytes = cli_DefaultStack 1000 longs × 4 + 8, `MEMF_PUBLIC`,
+not cleared**. For `code` the stack came about 11 s (emulated) after the hunk allocations, i.e. after the whole
+776 KB file was read. At the command's end the stack is freed **before** UnLoadSeg. (Consistent with §4.1.)
+
+**Where the stack lands, and why the check passes.** First fit from the lowest address puts the stack in the
+**lowest free chunk of at least 4,008 bytes**. Here that is the remainder of the hole left by add21k's
+`FreeRaster`, far **below** the game's hunks; the game's hunks 7 and 8 sit directly under the top free chunk, so
+when they are freed they merge with it into one 312,264-byte chunk.
+
+What filled the freed bitplane hole ($017160–$01C160, merged with a 16-byte neighbour below it), in order:
+1. right after `FreeRaster`, add21k's display rebuild: a 10-byte block at $017150 and a 148-byte **chip** block
+   at $017160 (a 168-byte chip block elsewhere is freed at the same time [D: copper lists]);
+2. the LoadSeg of `code`: read buffer $0171F8, FileHandle, file-system block, lock, hunk table (44), hunk 0
+   (128) at $017668, hunk 2 (10,920) at $0176E8, hunk 3 (2,300) at $01A190, hunk 6 (520) at $01AA90
+   (hunks 1, 4, 5, 7 and 8 do not fit and go to the big chunk above $01D208);
+3. the command stack of `code` at $01AC98–$01BC40 (the 5,336-byte remainder at $01AC98–$01C170 was the first
+   chunk large enough).
+
+**Chip free list, just before the LoadSeg of `code` starts** (after add21k's stack and segments are freed;
+`mh_Free` 944,496):
+
+| Chunk | Size |
+|---|---:|
+| $0171F8–$01C170 | 20,344 |
+| $01C1A0–$01C1B0 | 16 |
+| $01C1E0–$01C1F0 | 16 |
+| $01C460–$01C518 | 184 |
+| $01CE98–$01D1C0 | 808 |
+| $01D208–$0FE800 | 923,128 |
+
+**Chip free list at the game's first `AvailMem(MEMF_CHIP|MEMF_LARGEST)`** (hunks 6, 7 and 8 already freed;
+`mh_Free` 316,272):
+
+| Chunk | Size |
+|---|---:|
+| $0171F8–$017668 | 1,136 (loader temporaries, freed) |
+| $01AA90–$01AC98 | 520 (hunk 6) |
+| $01BC40–$01C170 | 1,328 (above the command stack) |
+| $01C1A0–$01C1B0 | 16 |
+| $01C1E0–$01C1F0 | 16 |
+| $01C460–$01C518 | 184 |
+| $01CE98–$01D1C0 | 808 |
+| $0B2438–$0FE800 | **312,264** (hunks 7 + 8 + the top chunk) |
+
+A 1.3-compatible system must therefore leave, at the moment the CLI allocates a command's stack, a free hole of
+at least the stack size **below** the program's last hunks when such a hole exists on 1.3. If the stack lands
+directly above hunks 7/8 instead, the freed space splits into two chunks of about 151 KB and 163 KB and the game
+reports "Insufficient Memory" (implementation-side observation reported in the brief, not run on the real ROM).
+
 ---
 
 ## 5. Low-memory behaviour
@@ -552,3 +646,7 @@ Review of 2026-11-04.
   watchpoint on `$0-$7`, one `AllocMem` size changed at the call; results given as relations (inside / below a
   stack range, offsets in bytes) and as the values written at `$0-$7` described by meaning, no RAM or ROM
   address, no ROM code read, no code written.
+- [x] 2026-11-15 addition (§4.6): breakpoints on the exec jump-table targets and on the callers' return
+  points, free lists walked in RAM; the page gives sizes, flags, call order and **RAM** addresses of blocks
+  in that configuration only, with roles by name. No ROM address, no return address, no ROM code read or
+  transcribed, no code written; the game's own code was not disassembled (only its exec calls observed).

@@ -9,6 +9,9 @@ handled on the reschedule path only); the M7e diagnostic store is dev-only. Ever
 was audited for the D2-D7/A2-A4 convention, statically and with the new `IRQCHECK` canary build. The COPER path takes
 349 colour clocks from int3 entry to RTE on `make kick-prod` (551 before). Bubble and Squeak, whose main loop waits
 for the line after its COPER interrupt, now reaches its title, menu and first level.
+Follow-up (2026-11-16): with 1 MB chip RAM only, the game printed "Insufficient Memory" (it needs a 270,000-byte
+chip block after loading). The ROM shell now allocates a command's stack before LoadSeg, so the stack no longer
+splits the free memory above the hunks the game frees; it reaches its first level in that configuration too.
 
 Exec compatibility update (2026-11-10): AddTask builds its initial frame below the supplied `tc_SPReg`,
 preserving arguments placed above it; zero retains the existing stack-upper fallback for internal callers.
