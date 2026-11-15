@@ -12,6 +12,7 @@
                 include "exec.i"
 
                 xdef    diag_vectors
+                xdef    diag_anyvec
                 xdef    diag_run
                 xref    font8x8
                 xref    kss_idstr
@@ -75,9 +76,16 @@ dg_exc:
         lsr.l   #2,d6
         addq.l  #2,d6                ; d6 = vector number
         cmp.w   #4,d6
-        bhs     .ex_frame
+        bhs     dg_frame
         addq.l  #8,sp
-.ex_frame:
+        bra     dg_frame
+
+; diag_anyvec: the one handler coldstart's first vector fill points every vector at, until diag_vectors gives each
+; its own stub (only ColdCapture runs in between). The vector is unknown (shown as 0) and the frame taken as short.
+diag_anyvec:
+        move.w  #$2700,sr
+        moveq   #0,d6
+dg_frame:
         move.w  (sp),d5              ; SR
         move.l  2(sp),d7             ; PC
         move.l  #STACKTOP,sp

@@ -186,6 +186,11 @@ first chip block right above the low-RAM variables again.
 - Reset header in the first 8 bytes: longword `$0` = initial SSP (`0x11114EF9`, ROM-ID word
   `0x1111` + opcode `0x4EF9`), longword `$4` = initial PC = coldstart address (`$FC00D2` on an
   authentic ROM; `RESET` instruction `$4E70` at `$FC00D0`).
+- Two more fixed offsets, imposed by the Action Replay MK III cartridge (2026-11-15,
+  [freezer-cartridge-ar3.md](freezer-cartridge-ar3.md)): the first access to `$8` after a reset is the vector fill
+  loop `move.l a1,(a0)+` / `dbra d1` with the `dbra` at `$FC0144` (`VEC_FILL_AT`), and `ar_reentry` sits at
+  `$FC0240` (`AR_REENTRY_AT`), where the cartridge may enter after finishing that loop. Both are checked at
+  assembly time; zero padding fills the gap between them.
 - ID block (not in a Commodore ROM, README "Identifying the ROM"): `$18` = ASCII `KSS!`, `$1C` = 64-byte field
   holding a NUL-terminated version string. `boot.s` reserves it zeroed; `mkrom.py --id` writes `KickSlopStart
   $(KSS_VERSION)` before the checksum (Makefile: `git describe`, release workflow: the tag or short SHA). A stamp
@@ -194,8 +199,9 @@ first chip block right above the low-RAM variables again.
   `taille-0x14`, 8 words `0x0018..0x001F` at `taille-0x10`. Valid checksum = sum of the longwords
   (carry folded back) equal to `0xFFFFFFFF`. **Not verified by the OS before V37**, but required by the tools.
   KickSlopStart checks it in its power-on diagnostic (below).
-- **Power-on diagnostic (2026-11-14, `src/exec/diag.s`, README "Power-on diagnostic")**: right after the stack is set,
-  `diag_vectors` points vectors 2-47 at one `bsr.w dg_exc` stub each (the stub's address gives the vector), so a CPU
+- **Power-on diagnostic (2026-11-14, `src/exec/diag.s`, README "Power-on diagnostic")**: right after the overlay is
+  switched off, coldstart's first vector fill points vectors 2-47 at `diag_anyvec` (vector shown as 0; the loop the
+  Action Replay MK III recognises, see "ROM model"); after ColdCapture, `diag_vectors` points vectors 2-47 at one `bsr.w dg_exc` stub each (the stub's address gives the vector), so a CPU
   exception before `init_ints` shows a turquoise text screen (vector, PC, SR). On the cold path only (`.eb_cold`,
   before the CLRMEMs, which then clear what it wrote), `diag_run` tests the chip RAM non-destructively from `$4000`
   (size by 256 KB steps against a mirror or a missing block, data lines, address lines 2^2..2^n, one long every 256

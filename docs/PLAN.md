@@ -1748,6 +1748,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   turquoise, none from the official code; early CPU exceptions get a text screen. `tests/diag_probe.sh`: pass, dev
   (DIAG OK), a ROM with one byte changed and the DIAG_FAKE builds 1, 2, 4, 5, 6, 7 checked on screenshots; left
   button restarts; KickTag warm reset unchanged (CoolCapture 1, tag1 1, tag2 0 as on HEAD); prepush-check FAIL=0.
+  **Action Replay MK III (2026-11-15)**: EAB report, the cartridge left a black screen. It traps the first access
+  to `$8` after a reset and only boots a Kickstart whose stacked PC there is `$FC0144`; otherwise it opens its own
+  screen. Contract taken from the cartridge ROM (third-party, implementation side): `docs/freezer-cartridge-ar3.md`.
+  coldstart now fills the vectors first with a `move.l a1,(a0)+` / `dbra d1` loop whose `dbra` sits at `$FC0144`,
+  and has an entry `ar_reentry` at `$FC0240` (memory sizes it passes are not honoured). Amiberry with the cartridge:
+  Workbench boots, freeze shows the cartridge screen, `x` returns; resets with and without slow RAM boot again.
   Busy pointer on icon opening (2026-11-13): the hourglass, until then only shown during a drop and Empty Trash, now
   also covers a double-click / Workbench/Open, as probed on the real 1.3 by an analysis agent (spec
   workbench-task-v34 §11, new): on at the double-click, off after the drawer's last icon or after CreateProc and

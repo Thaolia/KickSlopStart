@@ -110,6 +110,7 @@ appears in the AROS autodoc; it was rewritten as a plain French comment.
 | **System gadget pictograms** (close, depth, size) | **Open.** They follow the pixel geometry described in `intuition-frame-v34.md` §5.3 and therefore render like the 1.3 originals. Compatibility does not require this; a redesign is proposed. |
 | Workbench "Discard" warning strings | **Open.** No source trace in the notes; they were most likely recalled by the model. They are public user-interface text, but their provenance is undocumented. |
 | Minor items (reduced copper list, SetPatch-compatible exception handler, RESET word) | Imposed by hardware or by external software; see report §3. |
+| Vector fill loop with its `dbra` at `$FC0144`, entry at `$FC0240` (2026-11-15) | Imposed by the Action Replay MK III cartridge, whose code holds both addresses; taken from the cartridge, not the ROM ([freezer-cartridge-ar3.md](freezer-cartridge-ar3.md)). |
 
 The notes still contain a few reproduced ROM *data* items that would be better described than copied: the check
 mark and Amiga symbol images (`intuition-input-menus-v34.md`), the gadget pictogram geometry

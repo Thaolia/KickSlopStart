@@ -115,6 +115,7 @@ clean-room y répond.
 | **Pictogrammes des gadgets système** (fermeture, profondeur, taille) | **Ouvert.** Ils suivent la géométrie au pixel de `intuition-frame-v34.md` §5.3 et ressemblent donc à ceux de la 1.3. La compatibilité ne l'exige pas ; une refonte est proposée. |
 | Messages d'avertissement « Discard » du Workbench | **Ouvert.** Aucune trace dans les notes : ils viennent très probablement de la mémoire du modèle. Ce sont des textes d'interface publics, mais leur provenance n'est pas documentée. |
 | Points mineurs (liste copper réduite, gestionnaire d'exception compatible SetPatch, mot RESET) | Imposés par le matériel ou par des logiciels externes ; voir le §3 du rapport. |
+| Boucle de remplissage des vecteurs avec son `dbra` en `$FC0144`, point d'entrée en `$FC0240` (2026-11-15) | Imposés par la cartouche Action Replay MK III, dont le code contient les deux adresses ; tirés de la cartouche, pas de la ROM ([freezer-cartridge-ar3.md](freezer-cartridge-ar3.md)). |
 
 Les notes contiennent encore quelques *données* de la ROM qu'il vaudrait mieux décrire que reproduire :
 - les images de la coche et du symbole Amiga (`intuition-input-menus-v34.md`) ;

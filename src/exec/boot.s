@@ -18,6 +18,7 @@
 
                 xref    newlist          ; lists.s
                 xref    diag_vectors     ; diag.s (exception screen before exec's vectors)
+                xref    diag_anyvec      ; diag.s (handler of coldstart's first vector fill)
                 xref    diag_run         ; diag.s (power-on diagnostic, cold path)
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
@@ -166,6 +167,8 @@ TT_MICRO_REQ EQU 7000         ; M7l: 7000 REAL us (~= old rate ~140/s)
 ; (cf. Makefile), so its CODE carries the reset vector. hdr_start = offset 0 of the
 ; section; the padding uses an intra-section difference (constant in relocatable output).
 KSS_ID_LEN      EQU 64       ; must match ID_LEN in src/rom/mkrom.py
+VEC_FILL_AT     EQU $142     ; offsets in the ROM imposed by the Action Replay MK III (see coldstart)
+AR_REENTRY_AT   EQU $240
 hdr_start:
         dc.w    $1111
         dc.w    $4EF9
@@ -216,6 +219,37 @@ coldstart:                        ; $FC00D2
         ; --- Phase 2: overlay off then install the stack ---
         move.b  #$03,CIAA_DDRA
         move.b  #$02,CIAA_PRA        ; OVL off -> chip RAM at $0
+        ; First access to $8: vectors 2-47 -> diag_anyvec. The Action Replay MK III cartridge traps this access
+        ; with an NMI and takes a 1.3 Kickstart by the stacked PC: the dbra must sit at $FC0144, the store just
+        ; before it (D1 = count, A0 = next vector, A1 = fill value, which it may finish itself). It then resumes
+        ; at the dbra with SP moved, or enters at ar_reentry. The NMI frame needs an even stack in RAM.
+        ; Fixed offsets: docs/freezer-cartridge-ar3.md.
+        move.l  #STACKTOP,sp
+        lea     ($8).w,a0
+        lea     diag_anyvec,a1
+        moveq   #46-1,d1
+        bra.s   vec_fill
+        dcb.b   VEC_FILL_AT-(*-hdr_start),0
+vec_fill:
+        move.l  a1,(a0)+
+        dbra    d1,vec_fill
+                ifne    vec_fill-hdr_start-VEC_FILL_AT
+                fail    "vec_fill must sit at VEC_FILL_AT"
+                endif
+        bra.w   vec_filled
+        dcb.b   AR_REENTRY_AT-(*-hdr_start),0
+; ar_reentry: the cartridge finished the vector fill and gives its memory sizes (A3, A4/D0) and ExecBase address
+; (A6), which our own sizing finds again and ignores. It consumed the 'HELP' mark of a dead-end alert and passes
+; its numbers in D6/D7 (D6 = -1: none): the mark is put back. SP is valid; SR is still the NMI's.
+ar_reentry:
+                ifne    ar_reentry-hdr_start-AR_REENTRY_AT
+                fail    "ar_reentry must sit at AR_REENTRY_AT"
+                endif
+        cmp.l   #-1,d6
+        beq.s   vec_filled
+        move.l  #$48454C50,($0).w    ; 'HELP'
+        movem.l d6-d7,($100).w
+vec_filled:
         ; ColdCapture of an ExecBase that survived the reset (docs/analysis/coldstart-hardware-v34.md §5.1):
         ; *(4) even, ChkBase, word sum of +$22..+$52 = $FFFF; the vector is cleared, then called with the return
         ; address in a5. This is how the soft-kick image in slow RAM survives a reset.
