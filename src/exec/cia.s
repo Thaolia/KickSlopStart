@@ -253,9 +253,12 @@ cia_dispatch:                        ; a2 = resource base (0 ok), a6 = SysBase
 .cd_loop:
         btst    d2,d3
         beq.s   .cd_next
-        move.w  d2,d0
-        mulu    #IV_SIZE,d0
-        movem.l CIAR_VECTORS(a2,d0.l),a1/a5   ; a1 = iv_Data, a5 = iv_Code
+        move.w  d2,d0                ; d0 = d2 * IV_SIZE (12)
+        add.w   d0,d0
+        add.w   d2,d0
+        add.w   d0,d0
+        add.w   d0,d0
+        movem.l CIAR_VECTORS(a2,d0.w),a1/a5   ; a1 = iv_Data, a5 = iv_Code
         move.l  a5,d0
         beq.s   .cd_next
         jsr     (a5)

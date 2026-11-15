@@ -5522,7 +5522,7 @@ task_fb:
         bra.s   .fb_loop
 
 ; task_fa (pri 3, Forbid atomicity proof): takes Forbid, wakes task_fb (pri 7 > 3 -> arms SAR),
-; waits 2 VBlanks UNDER Forbid (guarantees >= 1 IRQ exit during the Forbid, where intr_isr_defer could switch).
+; waits 2 VBlanks UNDER Forbid (guarantees >= 1 IRQ exit during the Forbid, where intr_exit could switch).
 ; If FORBID_TEST_FLAG stayed 0 -> task_fb did NOT preempt under Forbid -> "FORBID ATOMIC OK". Runs ONCE
 ; then blocks (no hogging). RED SCHED_NO_FORBID_GATE: fb preempts during the Forbid -> flag=1 -> absent.
 task_fa:
@@ -6255,7 +6255,7 @@ vbl_tail_server:
 
 ; coper_test (M7g): EXCLUSIVE handler of the COPER source (level 3), installed by SetIntVector. Proves
 ; that int3's INTREQR decoding dispatches a 2nd level 3 source. a0=$DFF000, a1=IS_DATA (unused),
-; a6=SysBase. Preserves d2-d7/a2-a4 (only touches COPER_FIRED -> int3_dispatch's d2 survives).
+; a6=SysBase. Preserves d2-d7/a2-a4 (only touches COPER_FIRED).
 coper_test:
         addq.l  #1,COPER_FIRED
         rts

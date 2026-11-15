@@ -433,7 +433,8 @@ exec_RawPutChar:
 
 ; ExitIntr (-36): entry = the 1.3 autovector frame: D0, D1, A0, A1, A5, A6 (24 bytes) above {SR, PC}. Resumes the
 ; interrupted code unless it was a task in user mode, switching is allowed and a reschedule is pending (SAR).
-; Our own autovector handlers use the 60-byte frame and intr_exit; this entry serves code built for the 1.3 frame.
+; Our own autovector handlers build the same frame and leave through intr_exit (which also honours Disable); this
+; entry serves code built for the 1.3 frame.
 exec_ExitIntr:
         btst    #5,24(sp)           ; S bit of the stacked SR
         bne.s   .ei_resume

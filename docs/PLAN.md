@@ -2,6 +2,14 @@
 
 ## Context
 
+Exec interrupt latency update (2026-11-15, issue #43): the level 1-6 autovectors save only D0/D1/A0/A1/A5/A6, the
+1.3 frame, and build the full scheduler frame only when the exit reschedules. Dispatch uses constant `IntVects` offsets
+without `mulu`; the chain walker saves only A2/A3; the common path no longer tests `CPU_FMT` (68010+ format word
+handled on the reschedule path only); the M7e diagnostic store is dev-only. Every handler and server the ROM installs
+was audited for the D2-D7/A2-A4 convention, statically and with the new `IRQCHECK` canary build. The COPER path takes
+349 colour clocks from int3 entry to RTE on `make kick-prod` (551 before). Bubble and Squeak, whose main loop waits
+for the line after its COPER interrupt, now reaches its title, menu and first level.
+
 Exec compatibility update (2026-11-10): AddTask builds its initial frame below the supplied `tc_SPReg`,
 preserving arguments placed above it; zero retains the existing stack-upper fallback for internal callers.
 This preserves narrator.device's worker context. The initial CLI also uses the standard priority zero,

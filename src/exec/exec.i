@@ -161,14 +161,16 @@ BTRACE       macro
         movem.l (sp)+,d0-d1/a0-a1/a6
                 endc
              endm
-; INT_ENTRY: first instructions of a level 1-6 autovector: with INTEN (bit 14) clear in INTENAR, plain RTE, nothing
-; acknowledged and no schedule check (custom-chips-v34 §3.3).
-INT_ENTRY    macro
-        btst    #6,INTENAR
-        bne.s   .ie\@
-        rte
-.ie\@:
-             endm
+; Level 1-6 autovector frame (exec-scheduling-v34 §2.6): IREGS (24 bytes, D0 at +0) above the CPU frame, SR at
+; IFRAME_SR. The handlers called from it may destroy only these registers and must preserve D2-D7/A2-A4.
+IREGS        reg d0/d1/a0/a1/a5/a6
+IFRAME_SR    EQU 24
+; IRQCHECK=1 (check build only, never dev or prod): every interrupt handler and server is called with canary values
+; in D2-D7/A2-A4 and any one it changes is reported on the serial port ("IRQCHK code=... regs=...", bit 0 = D2 ..
+; bit 5 = D7, bit 6 = A2 .. bit 8 = A4), counted in the free low RAM at $7E0 (count) / $7E4 (code) / $7E8 (mask).
+                ifnd    IRQCHECK
+IRQCHECK        EQU 0
+                endc
 FRAME_IN     macro
         tst.b   CPU_FMT
         beq.s   .fi\@
@@ -204,6 +206,7 @@ INTB_COPER   EQU 4            ; M7g: COPER number (INT3) — INTF_COPER=$0010=bi
 INTB_VERTB   EQU 5            ; M7f: VERTB number (INT3) — INTF_VERTB=$0020=bit5
 INTB_BLIT    EQU 6            ; M7g: BLIT number (INT3) — INTF_BLIT=$0040=bit6
 INTB_EXTER   EQU 13           ; Paula EXTER interrupt number (INT6)
+INTB_INTEN   EQU 14           ; master enable bit of INTENA/INTENAR
 INTB_SOFTINT EQU 2            ; software interrupt (level 1) — Cause
 INTB_TBE     EQU 0            ; hardware/intbits.i: serial transmit (level 1)
 INTB_DSKBLK  EQU 1            ; disk block done (level 1)
@@ -289,7 +292,6 @@ STRESS_MAGIC  EQU $5D7C0DE5   ; expected MAGIC value
 ; instead of a uniform IPL7. SELECTIVE proof: INT6 (level 6) preempts the BODY of vbl (level 3)
 ; BUT the scheduler's list surgery stays atomic (critical section of the switch raised to IPL7).
 VBL_INBODY       EQU $0000056E ; UBYTE: vbl_handler body in progress (window preemptible by INT6)
-VBL_IPL          EQU $0000056F ; UBYTE: IPL read by vbl via "move sr" (value-check: must == 3, not 7)
 VBL_PREEMPT_COUNT EQU $00000570 ; long: INT6 observed VBL_INBODY set (preempted the body) -> > 0 in GREEN
 IDLE_ENTERED     EQU $00000574 ; long: idle episodes of the dispatcher (instrumentation; > 0 in a normal run)
 M7E_STAT         EQU $00000578 ; UBYTE: b0 = "M7E IPL OK" marker already emitted
