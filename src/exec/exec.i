@@ -565,7 +565,7 @@ FORBID_TEST_FLAG EQU $000006E2 ; long: Forbid atomicity proof — task_fb sets i
 FB_TASK      EQU $000006E6 ; long: TCB of task_fb (so that task_fa signals it)
 SH_STK       EQU 8192       ; stack of the initial CLI (shell.s): the commands it launches run on it
 TD_CACHEBUF  EQU $000006EA ; trackdisk: long — cache of decoded tracks (TD_CNSLOTS x 5632 bytes; 0 = not yet allocated)
-TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE in expansion fast RAM, else 1)
+TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE in expansion fast RAM, TD_NSLOW in slow RAM, else 1)
 TD_BUSY      EQU $00000701 ; trackdisk: byte — drive access in progress (the VBlank server does not turn the motor off)
 TD_VBLINT    EQU $00000704 ; trackdisk: struct Interrupt (22 bytes) of the motor turn-off VBlank server
 TD_MOTORIDLE EQU 100       ; 2 s of inactivity (50 Hz) before turn-off, like the delay of the original trackdisk
@@ -573,6 +573,9 @@ TD_CTICK     EQU $0000071A ; trackdisk: word — LRU clock of the track cache
 TD_CTRK      EQU $00000720 ; trackdisk: TD_NCACHE words — track of each slot ($FFFF = empty)
 TD_CAGE      EQU $00000730 ; trackdisk: TD_NCACHE words — last access (TD_CTICK) of each slot
 TD_NCACHE    EQU 4         ; tracks kept in cache (4 x 5632 = 22 KB; WB boot 54 s -> 63 s against 8, 2026-11-06)
+        ifnd    TD_NSLOW
+TD_NSLOW     EQU 2         ; tracks kept in cache when the only fast memory is the A500 slow RAM (programs count it)
+        endif
 DOS_DOSBASE  EQU $000006F0 ; long: DosBase (set by dos initFunc) — the BCPL runtime does not have a6 = DosBase
 GFX_RPOOL    EQU $000006F4 ; graphics: long — pooled 16-byte region blocks (chained through their first long) | 0
 GFX_RPOOLN   EQU $000006F8 ; graphics: word — how many (at most RP_MAX, regions.s)

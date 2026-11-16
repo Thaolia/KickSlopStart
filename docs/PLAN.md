@@ -15,6 +15,9 @@ splits the free memory above the hunks the game frees; it reaches its first leve
 Second follow-up (2026-11-16): with 512 KB chip + 512 KB slow, the Workbench showed about 13 KB less free memory
 than with 1 MB chip, against about 1 KB on the real 1.3. The trackdisk 4-track cache counted the A500 slow RAM as
 fast memory; it now takes 4 slots only in expansion fast RAM, and a single 1.3-sized track buffer otherwise.
+Then 2 slots in slow RAM (`TD_NSLOW`, user choice after measuring, production ROM, Workbench 1.3.3 boot to the
+desktop): 1 slot 92-97 s and 885,336 free, 2 slots 73-74 s and 879,704, 4 slots 60 s and 868,440. `td_lowmem` now
+frees the cache's actual size.
 
 Exec compatibility update (2026-11-10): AddTask builds its initial frame below the supplied `tc_SPReg`,
 preserving arguments placed above it; zero retains the existing stack-upper fallback for internal callers.

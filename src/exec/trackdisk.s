@@ -151,7 +151,7 @@ trackdisk_null:
 ; td_decode_track), copies up to the end of the track, and advances -> a request that CROSSES a track boundary
 ; is served in several reads (dos will read the filesystem beyond track 0). trackdisk contract: io_Offset
 ; and io_Length multiples of TD_SECTOR (512) -> IOERR_BADLENGTH guard otherwise; TD_DISKBYTES bound guard.
-; LRU cache of TD_NCACHE decoded tracks (TD_CACHEBUF, allocated at the 1st CMD_READ; 1 slot without expansion fast RAM):
+; LRU cache of TD_NCACHE decoded tracks (TD_CACHEBUF, allocated at the 1st CMD_READ; TD_NSLOW in A500 slow RAM, 1 without):
 ; a track only enters it if its 11 sectors have been decoded AND carry the requested number; flushed by /CHNG
 ; (td_check_change). The motor stays on between reads (td_motor_server turns it off after 2 s of inactivity).
 ; DEBT: a partially decoded track is not cached but its unreadable sectors return STALE
@@ -1531,10 +1531,10 @@ td_require:
 .rq_ret:
         rts
 
-; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in expansion fast memory;
-; otherwise a single slot, the footprint of the 1.3 track buffer. Chip RAM and the A500 slow RAM at $C00000 are
-; what programs count with AvailMem: on a 512 KB chip-only A500 the multi-track cache made Bubble Bobble fail to
-; start, and with 512 KB slow it left the Workbench 17 KB short of the 1.3 figure (issue #43).
+; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots in expansion fast memory, TD_NSLOW
+; when the only fast memory is the A500 slow RAM at $C00000, otherwise a single slot (the footprint of the 1.3 track
+; buffer). Chip and slow RAM are what programs count with AvailMem: on a 512 KB chip-only A500 the multi-track cache
+; made Bubble Bobble fail to start, and 4 slots in slow RAM left the Workbench 17 KB short of 1.3 (issue #43).
 ; Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 td_cachebuf:
         tst.l   TD_CACHEBUF
@@ -1553,9 +1553,15 @@ td_cachebuf:
         bcs.s   .cb_got
         cmp.l   #SLOW_BASE+SLOW_MAXBLK*SLOW_STEP,d0
         bcc.s   .cb_got
-        move.l  d0,a1                ; slow RAM: given back, a single slot instead
+        move.l  d0,a1                ; slow RAM: given back for TD_NSLOW slots
         move.l  #MFM_SECBUF*TD_NCACHE,d0
         jsr     LVO_FREEMEM(a6)
+        move.l  #MFM_SECBUF*TD_NSLOW,d0
+        moveq   #MEMF_FAST,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.w  #TD_NSLOW,TD_CNSLOTS
+        tst.l   d0
+        bne.s   .cb_got
 .cb_one:
         move.l  #MFM_SECBUF,d0
         moveq   #MEMF_PUBLIC,d1
@@ -1572,7 +1578,7 @@ td_cachebuf:
         rts
 
 ; td_lowmem(a6 = SysBase, under Forbid): called by AllocMem after a failure, before its retry. Gives the multi-slot
-; cache back (the next access allocates it again, or a single slot if memory stays short). Only when no drive access
+; cache back, TD_CNSLOTS slots (the next access allocates it again, or a single slot if memory stays short). Only when no drive access
 ; is under way (the device semaphore is free: the caller may be trackdisk itself, in td_cachebuf) and no slot waits
 ; for CMD_UPDATE. Preserves everything.
 td_lowmem:
@@ -1598,7 +1604,8 @@ td_lowmem:
         move.l  TD_CACHEBUF,a1
         clr.l   TD_CACHEBUF
         bsr     td_cache_flush
-        move.l  #MFM_SECBUF*TD_NCACHE,d0
+        move.w  TD_CNSLOTS,d0
+        mulu    #MFM_SECBUF,d0
         jsr     LVO_FREEMEM(a6)
 .lm_ret:
         movem.l (sp)+,d0-d1/a0-a1

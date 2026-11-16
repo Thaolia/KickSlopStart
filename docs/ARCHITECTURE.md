@@ -1116,7 +1116,7 @@ differs.
     `docs/analysis/memory-budget-v34.md`, same Amiberry configuration; 840,536 since the keyboard feeder runs in the
     intuition input task, see (28)). Stage, category and caller breakdown, and
     the ranked reduction candidates, in `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
-    12 bytes. The trackdisk track cache (45 KB, 22 KB since the 4-slot change of 2026-11-06, and a single 5.5 KB slot unless expansion fast RAM is present since 2026-11-16: the A500 slow RAM is counted by programs) and the 4 KB intuition input task are deliberate; the cache is given back
+    12 bytes. The trackdisk track cache (45 KB, 22 KB since the 4-slot change of 2026-11-06, and since 2026-11-16 2 slots (`TD_NSLOW`) when the only fast memory is the A500 slow RAM, which programs count, 1 slot without fast memory) and the 4 KB intuition input task are deliberate; the cache is given back
     when an `AllocMem` fails (`td_lowmem`, called before the expunge and the retry, 2026-11-05). The console
     self-test #3a in `boot.s` left a 10 KB chip bitmap allocated; it now frees `CONB_BITMAP` and resets the
     cursor.
