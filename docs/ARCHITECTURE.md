@@ -1,5 +1,25 @@
 # Architecture
 
+## Repeated-source bitmap rows (2026-11-16)
+
+`BltBitMap` treats a zero source `BytesPerRow` as a repeated caller-backed raster, rather than a zero-width
+allocation. Source width and `Rows` metadata do not truncate the requested replication; the destination
+retains its ordinary clipping. This matters when a one-row cursor image must be repeated into several rows.
+The DMA rectangle engine accepts the same source representation: its negative source modulo returns the
+fetch pointer to the same raster on each line. Existing CHIP-range, alignment, alias and destination checks
+still precede DMA. Unsupported layouts retain the CPU path.
+
+Distinct raw bitmap operations use the existing minterm-aware rectangle engines for Boolean combines as
+well as copies. Non-copy combines become DMA candidates at 16 words; ordinary copies keep their 64-word
+threshold. This avoids the per-byte truth-table cost in small magnification updates without changing pixels,
+plane counts, RastPort state or blitter ownership. Zero-stride destinations and their traversal order are
+outside this change.
+
+The normal/quick Graphics `copymin` regression adds repeated-source rows with a declared source height of one,
+all Boolean minterms, masks and aligned/odd CHIP/non-DMA storage. Separate five-plane OR workloads check both
+full and small dirty-region combines. The independent reference observations are recorded in
+[the zoom behavior report](analysis/dpaint3-zoom-stride-v34.md).
+
 ## Interrupt entry and exit with the 1.3 register frame (2026-11-15)
 
 The level 1-6 autovectors (`src/exec/interrupts.s`) save only D0/D1/A0/A1/A5/A6, the frame of
