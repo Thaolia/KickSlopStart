@@ -36,6 +36,13 @@ margin 1024 (2026-11-10)".
 hand them out again. A/2, production ROM, sum of the MemHeaders (IPC reads) with and without the pool, same moments:
 Workbench idle 867,880 -> 867,368 (512 bytes held), after a disk window and a menu 855,680 -> 855,184 (496). The pool
 goes back to exec when an AllocMem fails.
+**Update (2026-11-16, `84e5310`): no multi-track cache in slow RAM.** A user reported (issue #43) that with 512 KB
+chip + 512 KB slow the Workbench showed about 20 KB less than 1.3, while with 1 MB chip it showed slightly more. The
+4-slot cache counted the A501 slow RAM as fast memory; it now needs expansion fast RAM, and is a single slot
+otherwise. Production ROM, Workbench 1.3.3 desktop title, DF0 + empty DF1: A/2 **868,440 -> 885,336** (+16,896, three
+slots), 1 MB chip only 881,168 (unchanged, it already had one slot), 512 KB + 512 KB + 2 MB fast 2,965,488 (4 slots
+in fast RAM). Cost: on an A500 with slow RAM and no fast RAM, the disk runs with one cached track, as without slow RAM.
+The tables below predate this change.
 **Update (2026-11-13): re-measure and left-out records.** Production ROM, MemList walk of gdb dumps, Workbench 1.3.3
 idle about 150 s. Left-out icon records are now allocated while the icon is on the backdrop (+1,072 bytes):
 
@@ -212,7 +219,7 @@ Item 2 overlaps items 5 and 6 (the DF1 file system and console handler stacks ar
 
 | # | Candidate | Saving | Risk |
 |---|-----------|-------:|------|
-| 1 | **Done 2026-11-06 (4 slots, +22,528 measured, section 6.1).** Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
+| 1 | **Done 2026-11-06 (4 slots, +22,528 measured, section 6.1); since 2026-11-16 a single slot unless expansion fast RAM is present (+16,896 in A/2).** Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
 | 2 | **File system part done 2026-11-12: 4,096 → 3,072 per floppy drive or partition (`FS_STK`, `SH_FSSTACK`), 2,048 measured with DF0 + DF1.** High-water marks on pattern-free (cleared) stacks: 437-521 bytes for reads, writes, a full disk and disk moves; 1,687 when the handler opens "You MUST replace volume" itself (fhmove with the ejection 1 s after the first write); the same 1,687 on the 3,072-byte stack, file written. RAM handler measured 2026-11-12 on its `$ABABABAB`-filled stack (BCPL frames grow upwards from the bottom, our runtime downwards from the top): 384 + 161 = 545 bytes of 2,220 after eight nested RAM: directories, a copy, `dir all`, `rename`, `protect` and `delete all`; kept, since a BCPL process stack has seen 868 bytes at the top (2026-11-09). Original text: Process stacks larger than 1.3's: file system handler 4,096 per drive (1.3: 840), console handler 4,096 (1.3: 2,800, and only while a CON window is open), RAM handler +4,096 `CP_STKEXTRA` over its 1,200 (1.3: none) | up to ≈ 3,250 per drive + 1,296 + 4,096 | High unless the stack high-water mark of each process is measured first (fill pattern, then a long Workbench session, copy, DiskCopy): an overflow corrupts the neighbouring block silently |
 | 3 | **Done 2026-11-05 (section 3).** Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
 | 4 | **Done 2026-11-12.** Workbench state: the block reserved 6 drawer records at start; a record is now allocated when its drawer window opens and freed when it closes, the closed drawers sharing one empty record | 5,480 measured | Workbench 1.3.3 idle 860,424 → 865,904 free (one drive, production ROM); two open/close cycles of the disk and Utilities drawers end at the same free memory |
@@ -244,10 +251,11 @@ memory.
 
 **How it behaves.**
 - It is allocated at the first `CMD_READ`, not at boot.
-- The 4 slots are taken only from fast memory (`MEMF_FAST`, which includes the A501 slow RAM at `$C00000`).
-  Without fast memory, or if 22 KB of it is not available, it falls back to a single slot of 5,632 bytes (1.3
-  instead keeps a 16,388-byte raw MFM buffer per drive in chip RAM; our raw buffer is allocated in chip for each
-  track read and freed right after). On a 512 KB chip-only A500 the 45 KB cache came out of the chip RAM that games
+- The 4 slots are taken only from expansion fast memory. Since 2026-11-16 (`84e5310`, issue #43) the A501 slow RAM
+  at `$C00000` no longer counts: an allocation that lands there is given back. Without expansion fast memory, or if
+  22 KB of it is not available, the cache is a single slot of 5,632 bytes (`MEMF_PUBLIC`, so in slow RAM when there
+  is some). 1.3 instead keeps a 16,388-byte raw MFM buffer per drive in chip RAM; our raw buffer (13,630 bytes) is
+  chip, allocated at trackdisk init and kept since 2026-11-09. On a 512 KB chip-only A500 the 45 KB cache came out of the chip RAM that games
   need: Bubble Bobble could not start (its last chip requests failed). With one slot, the free chip RAM at the
   game's startup-sequence is 411,392 bytes, against 395,392 on the original Kickstart 1.3 (black-box
   measurement, 2026-11-02).

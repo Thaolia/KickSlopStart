@@ -122,7 +122,8 @@ held" qualifier bits of mouse events are not set yet.
   at 5 (hang) before the fix. The shell now adds the same margin (`RC_STKEXTRA`, `dos.i`): 8 levels pass, a
   deliberate leniency over 1.3.
 - **Re-measured 2026-11-13** (production ROM, MemList walk): A/2 idle 868,440 free (1.3: 860,992), A/1 872,960
-  (1.3: 884,424). The A/1 gap is the track cache alone (4 slots, the user's floor): cache + DMA buffer 36,160
+  (1.3: 884,424). The A/1 gap is the track cache alone (4 slots, the user's floor; one slot in slow RAM since
+  2026-11-16, A/2 885,336): cache + DMA buffer 36,160
   against 1.3's MFM buffer + file system buffers 24,552; everything else cancels out. Shell from the Workbench:
   33,880 for the first (1.3: 33,480), then 26,376 each (1.3: 25,864); the +512 is the two `CP_STKEXTRA` margins,
   kept above their measured use. Slow RAM is not more fragmented than on 1.3. Workbench left-out records are now
@@ -249,7 +250,8 @@ NTSC), and 4 of 4 NTSC with `ntsc=true`. prepush-check FAIL=0.
 These are not work unless a doc says they should change.
 
 - **Theme:** CDE colours, a purple pointer and our own boot art.
-- **Track cache:** 4 slots, released under memory pressure. 1.3 has no cache.
+- **Track cache:** 4 slots in expansion fast RAM, released under memory pressure; a single slot without expansion
+  fast RAM (A500 chip and slow RAM, since 2026-11-16). 1.3 has no cache.
 - **Input:** one input task replaces the keyboard feeder process.
 - **Validator:** runs in ROM inside the handler, instead of `L:Disk-Validator`. It also rebuilds a bitmap with a bad
   checksum and follows bitmap extension blocks.
