@@ -2,6 +2,13 @@
 
 ## Context
 
+Deluxe Paint III zoom response update (2026-11-16): tall one/two-word copies can reach the existing DMA path
+at 16 words, retaining the ordinary 64-word copy threshold for other shapes and all memory/alias checks.
+This removes repeated per-row CPU setup when zoom focus is selected or moved with cursor keys. The expanded
+normal/quick `test-graphics-copymin` includes phase/height boundary cases and a forty-column timing gate;
+the baseline passes its pixels but exceeds that timing budget. Matching input replays check completed
+frames and record the remaining latency gap against the independent official-ROM reference.
+
 Deluxe Paint III zoom update (2026-11-16): raw bitmap operations accept a repeated source raster whose
 `BytesPerRow` is zero, independently of its `Rows` metadata. This restores the magnified pane and the full
 height of cursor-underlay restores. Boolean combines also share the existing DMA rectangle path, with a

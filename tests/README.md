@@ -194,7 +194,7 @@ within the module can change the requested update interval.
 `make test-graphics-copymin` (also included through the normal and quick Graphics groups) tests authored
 bitmap patterns through `BltBitMap`, `BltBitMapRastPort` and `ClipBlit` in CHIP and non-DMA memory. The independent
 per-pixel Boolean oracle in `mk_copymin_cases.py` generates whole-buffer fingerprints, including untouched
-rows, columns, masked planes and allocation guards. The 481 cases cover all 256 minterms, constant source
+rows, columns, masked planes and allocation guards. The 530 cases cover all 256 minterms, constant source
 planes, safe leftward aliasing, negative destination clipping, zero/partial/full masks, shifted bit phases,
 odd strides, odd plane addresses, different source/destination parity and multi-block row tails. The fixture
 also verifies preserved destination RastPort state, the minterm register and the BltBitMap plane count.
@@ -206,6 +206,11 @@ an intentional CPU-fallback extension. Raster-port source clipping and zero-stri
 are not inferred from these raw-bitmap cases.
 Five-plane copies exercise every destination word phase in CHIP and non-DMA memory, including odd strides and
 addresses; boundary cases cover word-aligned source offsets, clipping and the blitter's 64-word/1024-row limits.
+Forty-eight additional shapes cover one-pixel and seventeen-pixel columns at different source/destination
+phases and heights 8/16/49, on both sides of the narrow-copy DMA threshold. A `COPYMIN COLUMN` workload
+times forty identical five-plane one-pixel-by-49-row copies through `BltBitMap` and `WaitBlit`. Their final
+whole-buffer fingerprint must agree with the independent oracle, and the total must remain below 3120 PAL
+scanlines (about 200 ms). The previous zoom-fix ROM passes the pixels but fails this timing gate.
 
 A five-plane, 40-byte-stride, 256-row workload restores `(0,11)` to `(0,11)` over 296 by 245 pixels. Four
 `ClipBlit` restores followed by `WaitBlit` are measured for each of `$C0` and `$CC`, first in CHIP and then

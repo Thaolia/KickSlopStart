@@ -1,5 +1,17 @@
 # Architecture
 
+## Tall narrow bitmap copies (2026-11-16)
+
+The rectangle blitter keeps the 64-word source-copy threshold for ordinary shapes. Copies at most two
+words wide and at least eight rows high can use DMA from 16 total words: their CPU fallback would repeat
+row addressing, source alignment and edge setup on every scanline. The existing CHIP-range, alias,
+mask, phase and geometry checks remain unchanged. Wider small copies retain their CPU path.
+
+This addresses the one-pixel columns used to rebuild a magnified view during focus selection and cursor-key
+panning. COPYMIN adds masked/shifted one- and two-word cases across the threshold boundary, plus a timed
+forty-column workload. Completed pan/selection frames are checked separately from input feedback;
+[the independent latency report](analysis/dpaint3-zoom-latency-v34.md) records the official-ROM behavior.
+
 ## Repeated-source bitmap rows (2026-11-16)
 
 `BltBitMap` treats a zero source `BytesPerRow` as a repeated caller-backed raster, rather than a zero-width

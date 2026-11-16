@@ -40,6 +40,12 @@ def cases():
                 (40, 14, 72, 8, 87, 176, 5, 5, 31),
                 (14, 40, 8, 72, 87, 176, 5, 5, 5)]:
             yield [sb, db, 16, 51232, sd, dd, mask, sx, 0, dx, 1, width, height, mt, 256, 27648]
+    # Tall one/two-word copies exercise the masked/shifted blitter paths below the ordinary size threshold.
+    for sx, dx in [(0, 0), (15, 0), (14, 0), (15, 5), (3, 7), (0, 15), (3, 1), (5, 4)]:
+        for height in [8, 16, 49]:
+            for width in [1, 17]:
+                yield [40, 8, 16, 12288, 5, 5, 31, sx, 0, dx, 0,
+                       width, height, 0xCC, 49, 4096]
     # Raw bitmap blits can repeat one backing row independently of BytesPerRow/Rows metadata.
     # Native initialization declares a single source row for these zero-stride replication cases.
     for odd in [0, 1]:
@@ -47,6 +53,8 @@ def cases():
             for mt in range(0, 256, 16):
                 yield [0, 8, 16 + odd, 2048 + odd, 2, 2, mask,
                        3, 1, 11, 2, 37, 5, mt | 0xF, 16, 1024]
+    # Forty repeated column copies have the same pixel oracle as one, but expose per-row CPU overhead.
+    yield [40, 8, 16, 12288, 5, 5, 31, 14, 0, 0, 0, 1, 49, 0xCC, 49, 4096]
     yield [8, 8, 16, 2048, 5, 5, 31, 0, 0, 4, 0, 51, 11, 0xEE, 11, 1024]
     # Repeated OR combines the sparse columns of a magnified image; four calls are idempotent.
     yield [26, 26, 16, 8192, 5, 5, 31, 0, 0, 1, 0, 191, 49, 0xEE, 49, 4096]
@@ -90,6 +98,8 @@ def main():
     print(f"COPYMIN_CASES EQU {len(data)}")
     print("copymin_cases:")
     for i, c in enumerate(data):
+        if i == len(data) - 8:
+            print("copymin_column:")
         if i == len(data) - 7:
             print("copymin_logic_small:")
         if i == len(data) - 6:

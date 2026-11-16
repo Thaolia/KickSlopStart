@@ -65,6 +65,9 @@ _start:
         dbra    d7,.case
         lea     pixels_ok(pc),a0
         bsr     puts
+        lea     copymin_column(pc),a4
+        move.w  #1,api
+        bsr     column_motion
         lea     copymin_logic_small(pc),a4
         move.w  #1,api
         bsr     motion
@@ -281,6 +284,28 @@ benchmark:
         cmp.l   d0,d5              ; equivalent minterms must stay within25% under interrupt/bus variation
         bhi     fail
         rts
+column_motion:
+        move.l  chip(pc),a3
+        bsr     initialize
+        bsr     now
+        move.l  d0,d2
+        moveq   #39,d7
+.column:
+        bsr     copy
+        dbra    d7,.column
+        bsr     now
+        sub.l   d2,d0
+        move.l  d0,d6
+        bsr     check
+        lea     column_timing(pc),a0
+        bsr     puts
+        move.l  d6,d0
+        bsr     hex
+        moveq   #10,d0
+        bsr     putc
+        cmp.l   #3120,d6           ; forty five-plane columns fit in a 200 ms pan/update budget
+        bhs     fail
+        rts
 motion:
         move.l  chip(pc),a3
         bsr     initialize
@@ -357,6 +382,7 @@ gfxname: dc.b "graphics.library",0
 pixels_ok: dc.b "COPYMIN PIXELS OK",10,0
 timing: dc.b "COPYMIN RESTORE ",0
 motion_timing: dc.b "COPYMIN MOTION ",0
+column_timing: dc.b "COPYMIN COLUMN ",0
 ok: dc.b "COPYMIN OK",10,"COPYMIN END",10,0
 error: dc.b "COPYMIN FAIL",10,"COPYMIN END",10,0
         even

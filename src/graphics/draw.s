@@ -6205,6 +6205,12 @@ br_blit:
         bra.s   .rb_size_ready
 .rb_copy_threshold:
         cmp.l   #64,d4
+        bhs.s   .rb_size_ready
+        cmp.w   #2,d6              ; narrow columns pay the CPU row/edge setup on every scanline
+        bhi     .rb_no
+        cmp.w   #8,d5
+        blo     .rb_no
+        cmp.l   #16,d4
         blo     .rb_no
 .rb_size_ready:
         move.w  d5,d4
