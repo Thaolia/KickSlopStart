@@ -42,6 +42,9 @@ mode A500 au cycle près), avec captures d'écran ou sortie série à l'appui.
 - **HRTMon v2.37** (le freezer intégré à Amiberry/WinUAE) : cartouche activée, la ROM démarre, la touche de gel
   (Pause sous Amiberry, Page Up sous WinUAE) ouvre le moniteur, `x` revient au programme gelé et un reset redémarre
   (testé sous Amiberry et WinUAE).
+- **Chipset ECS (A500+)** : la ROM démarre le Workbench 1.3.3 avec une Agnus et une Denise ECS et 1 Mo de chip RAM,
+  et traite la machine comme un A500 OCS, comme la 1.3 : aucun registre ECS n'est écrit, et la chip RAM est détectée
+  jusqu'à 2 Mo (testé sous Amiberry).
 
 Les manques connus et la feuille de route détaillée sont dans [`docs/PLAN.md`](docs/PLAN.md).
 

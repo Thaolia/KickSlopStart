@@ -40,6 +40,9 @@ screenshots or serial output as evidence.
 - **HRTMon v2.37** (the freezer built into Amiberry/WinUAE): with the cartridge enabled, the ROM boots, the freeze
   key (Pause in Amiberry, Page Up in WinUAE) opens the monitor, `x` returns to the frozen program, and a reset boots
   again (tested under Amiberry and WinUAE).
+- **ECS chipset (A500+)**: the ROM boots the Workbench 1.3.3 on an ECS Agnus and Denise with 1 MB of chip RAM, and
+  treats the machine as an OCS A500, as 1.3 does: it writes no ECS register, and chip RAM is sized up to 2 MB
+  (tested under Amiberry).
 
 Known gaps and the detailed roadmap are in [`docs/PLAN.md`](docs/PLAN.md).
 
