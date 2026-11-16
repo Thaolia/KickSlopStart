@@ -37,6 +37,11 @@ mode A500 au cycle près), avec captures d'écran ou sortie série à l'appui.
   Clean Up et Preferences fonctionnent.
 - **Logiciels testés** : SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (jouable), Caesar, SimCity 1.2, The Secret of
   Monkey Island (disquette 1), Scooby-Doo and Scrappy-Doo.
+- **Action Replay MK III** (depuis la v0.2.61) : cartouche branchée, la ROM démarre normalement, le bouton de gel
+  ouvre l'écran de la cartouche et `x` revient au programme gelé (testé sous Amiberry, avec et sans slow RAM).
+- **HRTMon v2.37** (le freezer intégré à Amiberry/WinUAE) : cartouche activée, la ROM démarre, la touche de gel
+  (Pause sous Amiberry, Page Up sous WinUAE) ouvre le moniteur, `x` revient au programme gelé et un reset redémarre
+  (testé sous Amiberry et WinUAE).
 
 Les manques connus et la feuille de route détaillée sont dans [`docs/PLAN.md`](docs/PLAN.md).
 

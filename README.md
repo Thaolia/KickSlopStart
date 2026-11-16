@@ -34,6 +34,12 @@ screenshots or serial output as evidence.
   and Preferences all work.
 - **Software tested**: SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (playable), Caesar, SimCity 1.2, The Secret of Monkey
   Island (disk 1), Scooby-Doo and Scrappy-Doo.
+- **Action Replay MK III** (since v0.2.61): with the cartridge plugged in, the ROM boots normally, the freeze button
+  opens the cartridge screen, and `x` returns to the frozen program (tested under Amiberry, with and without slow
+  RAM).
+- **HRTMon v2.37** (the freezer built into Amiberry/WinUAE): with the cartridge enabled, the ROM boots, the freeze
+  key (Pause in Amiberry, Page Up in WinUAE) opens the monitor, `x` returns to the frozen program, and a reset boots
+  again (tested under Amiberry and WinUAE).
 
 Known gaps and the detailed roadmap are in [`docs/PLAN.md`](docs/PLAN.md).
 
