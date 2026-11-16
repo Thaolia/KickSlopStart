@@ -151,7 +151,7 @@ trackdisk_null:
 ; td_decode_track), copies up to the end of the track, and advances -> a request that CROSSES a track boundary
 ; is served in several reads (dos will read the filesystem beyond track 0). trackdisk contract: io_Offset
 ; and io_Length multiples of TD_SECTOR (512) -> IOERR_BADLENGTH guard otherwise; TD_DISKBYTES bound guard.
-; LRU cache of TD_NCACHE decoded tracks (TD_CACHEBUF, allocated at the 1st CMD_READ; 1 slot if memory is short):
+; LRU cache of TD_NCACHE decoded tracks (TD_CACHEBUF, allocated at the 1st CMD_READ; 1 slot without expansion fast RAM):
 ; a track only enters it if its 11 sectors have been decoded AND carry the requested number; flushed by /CHNG
 ; (td_check_change). The motor stays on between reads (td_motor_server turns it off after 2 s of inactivity).
 ; DEBT: a partially decoded track is not cached but its unreadable sectors return STALE
@@ -1531,9 +1531,10 @@ td_require:
 .rq_ret:
         rts
 
-; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in fast memory (slow RAM at
-; $C00000 included); otherwise a single slot, the footprint of the 1.3 track buffer: on a 512 KB chip-only A500 the
-; multi-track cache would be taken from the chip RAM that games need (Bubble Bobble then fails to start).
+; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in expansion fast memory;
+; otherwise a single slot, the footprint of the 1.3 track buffer. Chip RAM and the A500 slow RAM at $C00000 are
+; what programs count with AvailMem: on a 512 KB chip-only A500 the multi-track cache made Bubble Bobble fail to
+; start, and with 512 KB slow it left the Workbench 17 KB short of the 1.3 figure (issue #43).
 ; Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 td_cachebuf:
         tst.l   TD_CACHEBUF
@@ -1547,7 +1548,14 @@ td_cachebuf:
         jsr     LVO_ALLOCMEM(a6)
         move.w  #TD_NCACHE,TD_CNSLOTS
         tst.l   d0
-        bne.s   .cb_got
+        beq.s   .cb_one
+        cmp.l   #SLOW_BASE,d0
+        bcs.s   .cb_got
+        cmp.l   #SLOW_BASE+SLOW_MAXBLK*SLOW_STEP,d0
+        bcc.s   .cb_got
+        move.l  d0,a1                ; slow RAM: given back, a single slot instead
+        move.l  #MFM_SECBUF*TD_NCACHE,d0
+        jsr     LVO_FREEMEM(a6)
 .cb_one:
         move.l  #MFM_SECBUF,d0
         moveq   #MEMF_PUBLIC,d1

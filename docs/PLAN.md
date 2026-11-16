@@ -12,6 +12,9 @@ for the line after its COPER interrupt, now reaches its title, menu and first le
 Follow-up (2026-11-16): with 1 MB chip RAM only, the game printed "Insufficient Memory" (it needs a 270,000-byte
 chip block after loading). The ROM shell now allocates a command's stack before LoadSeg, so the stack no longer
 splits the free memory above the hunks the game frees; it reaches its first level in that configuration too.
+Second follow-up (2026-11-16): with 512 KB chip + 512 KB slow, the Workbench showed about 13 KB less free memory
+than with 1 MB chip, against about 1 KB on the real 1.3. The trackdisk 4-track cache counted the A500 slow RAM as
+fast memory; it now takes 4 slots only in expansion fast RAM, and a single 1.3-sized track buffer otherwise.
 
 Exec compatibility update (2026-11-10): AddTask builds its initial frame below the supplied `tc_SPReg`,
 preserving arguments placed above it; zero retains the existing stack-upper fallback for internal callers.

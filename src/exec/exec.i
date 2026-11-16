@@ -565,7 +565,7 @@ FORBID_TEST_FLAG EQU $000006E2 ; long: Forbid atomicity proof — task_fb sets i
 FB_TASK      EQU $000006E6 ; long: TCB of task_fb (so that task_fa signals it)
 SH_STK       EQU 8192       ; stack of the initial CLI (shell.s): the commands it launches run on it
 TD_CACHEBUF  EQU $000006EA ; trackdisk: long — cache of decoded tracks (TD_CNSLOTS x 5632 bytes; 0 = not yet allocated)
-TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE, or 1 if memory is tight)
+TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE in expansion fast RAM, else 1)
 TD_BUSY      EQU $00000701 ; trackdisk: byte — drive access in progress (the VBlank server does not turn the motor off)
 TD_VBLINT    EQU $00000704 ; trackdisk: struct Interrupt (22 bytes) of the motor turn-off VBlank server
 TD_MOTORIDLE EQU 100       ; 2 s of inactivity (50 Hz) before turn-off, like the delay of the original trackdisk
