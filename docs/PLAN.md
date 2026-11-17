@@ -2,6 +2,21 @@
 
 ## Context
 
+Deluxe Paint III zoom response update (2026-11-16): tall one/two-word copies can reach the existing DMA path
+at 16 words, retaining the ordinary 64-word copy threshold for other shapes and all memory/alias checks.
+This removes repeated per-row CPU setup when zoom focus is selected or moved with cursor keys. The expanded
+normal/quick `test-graphics-copymin` includes phase/height boundary cases and a forty-column timing gate;
+the baseline passes its pixels but exceeds that timing budget. Matching input replays check completed
+frames and record the remaining latency gap against the independent official-ROM reference.
+
+Deluxe Paint III zoom update (2026-11-16): raw bitmap operations accept a repeated source raster whose
+`BytesPerRow` is zero, independently of its `Rows` metadata. This restores the magnified pane and the full
+height of cursor-underlay restores. Boolean combines also share the existing DMA rectangle path, with a
+smaller non-copy threshold for dirty regions. The expanded normal/quick `test-graphics-copymin` checks
+independent complete-buffer fingerprints, masks, returned plane counts, odd/non-DMA fallbacks and bounded
+five-plane OR workloads. Independent official-ROM observations confirm the repeated-source behavior;
+registered split-view/freehand captures match in both drawing directions, including held-button updates.
+
 Exec interrupt latency update (2026-11-15, issue #43): the level 1-6 autovectors save only D0/D1/A0/A1/A5/A6, the
 1.3 frame, and build the full scheduler frame only when the exit reschedules. Dispatch uses constant `IntVects` offsets
 without `mulu`; the chain walker saves only A2/A3; the common path no longer tests `CPU_FMT` (68010+ format word

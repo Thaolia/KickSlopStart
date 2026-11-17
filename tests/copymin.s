@@ -36,11 +36,18 @@ _start:
         move.w  #COPYMIN_CASES-1,d7
 .case:
         clr.w   api
+        tst.w   (a4)
+        beq.s   .raw_bitmap
+        bra.s   .api
+.raw_bitmap:
+        move.w  #1,api             ; zero stride is a raw BitMap contract, not a RastPort clipping extent
 .api:
         move.l  chip(pc),a3
         bsr     initialize
         bsr     copy
         bsr     check
+        tst.w   (a4)
+        beq.s   .next
         move.l  soft(pc),a3
         bsr     initialize
         bsr     copy
@@ -58,6 +65,15 @@ _start:
         dbra    d7,.case
         lea     pixels_ok(pc),a0
         bsr     puts
+        lea     copymin_column(pc),a4
+        move.w  #1,api
+        bsr     column_motion
+        lea     copymin_logic_small(pc),a4
+        move.w  #1,api
+        bsr     motion
+        lea     copymin_logic(pc),a4
+        move.w  #1,api
+        bsr     motion
         move.w  #2,api
         lea     copymin_large(pc),a4
         move.l  chip(pc),a3
@@ -109,6 +125,10 @@ initialize:
         move.l  a0,srp+rp_BitMap
         move.w  (a4),bm_BytesPerRow(a0)
         move.w  28(a4),bm_Rows(a0)
+        tst.w   (a4)
+        bne.s   .source_rows
+        move.w  #1,bm_Rows(a0)     ; a single raster is repeated across the entire requested height
+.source_rows:
         move.b  9(a4),bm_Depth(a0)
         move.w  (a4),d2
         mulu    28(a4),d2
@@ -264,6 +284,28 @@ benchmark:
         cmp.l   d0,d5              ; equivalent minterms must stay within25% under interrupt/bus variation
         bhi     fail
         rts
+column_motion:
+        move.l  chip(pc),a3
+        bsr     initialize
+        bsr     now
+        move.l  d0,d2
+        moveq   #39,d7
+.column:
+        bsr     copy
+        dbra    d7,.column
+        bsr     now
+        sub.l   d2,d0
+        move.l  d0,d6
+        bsr     check
+        lea     column_timing(pc),a0
+        bsr     puts
+        move.l  d6,d0
+        bsr     hex
+        moveq   #10,d0
+        bsr     putc
+        cmp.l   #3120,d6           ; forty five-plane columns fit in a 200 ms pan/update budget
+        bhs     fail
+        rts
 motion:
         move.l  chip(pc),a3
         bsr     initialize
@@ -281,7 +323,7 @@ motion:
         bsr     hex
         moveq   #10,d0
         bsr     putc
-        cmp.l   #1000,d6           ; four 40x40, five-plane updates: average below one PAL frame
+        cmp.l   #1000,d6           ; four small five-plane combining/copy updates: average below one PAL frame
         bhs     fail
         rts
 measure:
@@ -340,6 +382,7 @@ gfxname: dc.b "graphics.library",0
 pixels_ok: dc.b "COPYMIN PIXELS OK",10,0
 timing: dc.b "COPYMIN RESTORE ",0
 motion_timing: dc.b "COPYMIN MOTION ",0
+column_timing: dc.b "COPYMIN COLUMN ",0
 ok: dc.b "COPYMIN OK",10,"COPYMIN END",10,0
 error: dc.b "COPYMIN FAIL",10,"COPYMIN END",10,0
         even

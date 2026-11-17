@@ -6117,7 +6117,7 @@ br_blit:
         btst    #0,d6
         bne     .rb_no
         tst.w   bm_BytesPerRow(a2)
-        ble     .rb_no
+        bmi     .rb_no              ; zero stride repeats the same CHIP source row through a negative modulo
         tst.w   bm_BytesPerRow(a3)
         ble     .rb_no
         moveq   #0,d6
@@ -6131,9 +6131,11 @@ br_blit:
         bcs     .rb_no
         moveq   #0,d7
         move.w  bm_BytesPerRow(a2),d7
+        beq.s   .rb_source_width    ; stride zero is not a zero-width source allocation
         lsl.l   #3,d7
         cmp.l   d7,d6
         bhi     .rb_no
+.rb_source_width:
         moveq   #0,d6
         move.w  d2,d6
         add.w   d4,d6
@@ -6146,8 +6148,11 @@ br_blit:
         move.w  d1,d6
         add.w   d5,d6
         bcs     .rb_no
+        tst.w   bm_BytesPerRow(a2)
+        beq.s   .rb_source_height   ; a repeated row needs no extra backing rows
         cmp.w   bm_Rows(a2),d6
         bhi     .rb_no
+.rb_source_height:
         move.w  d3,d6
         add.w   d5,d6
         bcs     .rb_no
@@ -6193,8 +6198,21 @@ br_blit:
         bhi     .rb_no
         move.w  d6,d4
         mulu    d5,d4
-        cmp.l   #64,d4
+        cmp.b   #$c0,DC_MINTERM(a5)
+        beq.s   .rb_copy_threshold
+        cmp.l   #16,d4             ; Boolean combines otherwise pay the generic per-byte truth-table cost
         blo     .rb_no
+        bra.s   .rb_size_ready
+.rb_copy_threshold:
+        cmp.l   #64,d4
+        bhs.s   .rb_size_ready
+        cmp.w   #2,d6              ; narrow columns pay the CPU row/edge setup on every scanline
+        bhi     .rb_no
+        cmp.w   #8,d5
+        blo     .rb_no
+        cmp.l   #16,d4
+        blo     .rb_no
+.rb_size_ready:
         move.w  d5,d4
         lsl.w   #6,d4
         move.w  d6,d7
@@ -7084,7 +7102,8 @@ dr_bits:
         rts
 
 ; BltBitMap(src a0, srcX d0, srcY d1, dest a1, destX d2, destY d3, width d4, height d5, minterm d6, mask d7,
-; buffer a2 ignored) -> d0 = number of planes processed. Rectangle clipped to both BitMaps. Planes: those of the mask
+; buffer a2 ignored) -> d0 = number of planes processed. Rectangle clipped to ordinary BitMaps; a zero
+; source BytesPerRow repeats the same addressed row independently of its Rows metadata. Planes: those of the mask
 ; present in BOTH BitMaps (NULL or -1 destination plane ignored); a NULL or -1 source plane counts as 0 / 1. Same
 ; source and destination BitMap: each source row goes through a buffer (no overlap possible within the row) and the
 ; rows are walked from bottom to top if the destination is lower.
@@ -7141,6 +7160,7 @@ gfx_BltBitMap:
         moveq   #0,d3
 .bm_4:
         move.w  bm_BytesPerRow(a4),d6    ; right / bottom edges
+        beq.s   .bm_5                ; zero stride repeats a caller-backed row, as in bitmap magnification
         lsl.w   #3,d6
         sub.w   d0,d6
         cmp.w   d6,d4
@@ -7154,6 +7174,8 @@ gfx_BltBitMap:
         ble.s   .bm_6
         move.w  d6,d4
 .bm_6:
+        tst.w   bm_BytesPerRow(a4)
+        beq.s   .bm_7                ; all requested source rows address the same caller-backed raster
         move.w  bm_Rows(a4),d6
         sub.w   d1,d6
         cmp.w   d6,d5
@@ -7299,13 +7321,11 @@ gfx_BltBitMap:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; Distinct bitmap copies can use the existing rectangle-copy engines instead of rebuilding row/plane
-; addresses for every scanline. A temporary unlayered RastPort retains BltBitMap's common-plane/count rules.
+; Distinct bitmap operations can use the existing minterm-aware rectangle engines instead of rebuilding
+; row/plane addresses for every scanline. A temporary unlayered RastPort retains common-plane/count rules.
 ; Those engines validate alignment and aliasing before acceleration; unsupported cases keep their forward walk.
 bb_copy:
         movem.l d0-d7/a0-a4/a6,-(sp)
-        cmp.b   #$c0,DC_MINTERM(a5)
-        bne.s   .bc_no
         cmpa.l  a3,a4
         beq.s   .bc_no
         lea     -rp_SIZEOF(sp),sp
@@ -7346,7 +7366,8 @@ bb_copy:
 .bc_draw:
         move.l  a4,a0
         movem.w BB_SX(a5),d0-d5
-        moveq   #-$40,d6
+        moveq   #0,d6
+        move.b  DC_MINTERM(a5),d6
         bsr     gfx_BltBitMapRastPort
         lea     rp_SIZEOF(sp),sp
         moveq   #1,d0
