@@ -4213,7 +4213,7 @@ wb_loadicons:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
-; wb_launch(a0 = path of the tool, a1 = path of the project | 0, a2 = DiskObject of the tool (stack) if a1 = 0, a5):
+; wb_launch(a0 = path of the tool, a1 = path of the project | 0, a2 = DiskObject opened (its stack, 4096 at least) | 0, a5):
 ; LoadSeg of the tool, WBStartup message (argument 0 = the tool, 1 = the project: lock of the directory + name),
 ; CreateProc then PutMsg; the message comes back to the "Workbench" port when the tool ends (wb_toolreturn).
 ; wb_launch2: same with d1 = path of a second project | 0, argument 2 (DiskCopy FROM / TO disks, spec §10.6).
@@ -4228,8 +4228,8 @@ wb_launch2:
         move.l  a0,a3                ; a3 = tool
         move.l  a1,a4                ; a4 = project | 0
         move.l  #WB_TOOLSTACK,d6     ; d6 = stack
-        move.l  a4,d0
-        bne.s   .la_stk
+        move.l  a2,d0
+        beq.s   .la_stk
         move.l  DO_STACKSIZE(a2),d0
         cmp.l   d6,d0
         bls.s   .la_stk
@@ -4717,9 +4717,9 @@ wb_initialize:
         cmp.w   #WB_LEFT0,d1
         bhs.s   .in_ret
         bsr     wb_volent
-        move.l  VE_DOBJ(a0),a2
         lea     VE_PATH(a0),a1
         lea     wb_format(pc),a0
+        suba.l  a2,a2
         bsr     wb_launch
 .in_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
