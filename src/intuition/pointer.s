@@ -454,18 +454,31 @@ it_ptrapply:
                 move.l  d0,a2
                 tst.l   IB_GFXBASE(a2)
                 beq.s   .pa_ret
-                clr.l   IB_PTRWIN(a2)
                 move.l  IB_PTRDATA(a2),d1
                 moveq   #PTR_HEIGHT,d0
                 cmpa.w  #0,a0
                 beq.s   .pa_def
                 tst.l   WD_POINTER(a0)
-                beq.s   .pa_def
+                beq.s   .pa_def0
                 move.l  WD_POINTER(a0),d1
                 move.b  WD_PTRHEIGHT(a0),d0
                 ext.w   d0
+                bra.s   .pa_set
+.pa_def0:
+                sub.l   a0,a0
+.pa_def:                             ; default pointer already on sprite 0: nothing to redo (Fantavision calls
+                tst.l   IB_PTRWIN(a2)        ; ClearPointer dozens of times per frame while it plays a movie)
+                bne.s   .pa_set
+                cmp.l   IB_PTRSS+ss_posctldata(a2),d1
+                bne.s   .pa_set
+                cmp.w   IB_PTRSS+ss_height(a2),d0
+                bne.s   .pa_set
+                move.l  IB_GFXBASE(a2),a1
+                lea     IB_PTRSS(a2),a6
+                cmpa.l  gb_SprSS(a1),a6
+                beq.s   .pa_ret
+.pa_set:
                 move.l  a0,IB_PTRWIN(a2)
-.pa_def:
                 tst.l   d1
                 beq.s   .pa_ret              ; no default image (no chip memory at init)
                 lea     IB_PTRSS(a2),a1

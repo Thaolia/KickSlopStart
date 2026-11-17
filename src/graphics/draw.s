@@ -3494,7 +3494,9 @@ bt_one:
         rts
 
 ; A word-aligned CHIP template with a nonnegative source-to-destination shift uses B DMA at any size (even a 16 x 9
-; one costs the CPU loop several times the blit set-up per plane).
+; one costs the CPU loop several times the blit set-up per plane). A ClipRect that cuts the template's left side
+; moves the B start to the word under the first kept column (Fantavision's full-screen templates, clipped by its
+; window, otherwise took the CPU loop).
 ; A supplies the destination edge masks; C/D preserve pixels outside the template. Other cases use the CPU.
 TB_SRC          EQU 0
 TB_DOFF         EQU 4
@@ -3510,10 +3512,10 @@ bt_blit:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -TB_SIZE(sp),sp
         move.l  sp,a4
-        cmp.w   #15,BT_XS(a5)
-        bhi     .tb_no
-        cmp.w   BT_X(a5),d0         ; left-clipped masks need a different source alignment
-        bne     .tb_no
+        move.w  d0,d6
+        sub.w   BT_X(a5),d6
+        add.w   BT_XS(a5),d6        ; d6 = template bit under the first kept column
+        bmi     .tb_no
         move.l  DC_RP(a5),a1
         move.b  rp_DrawMode(a1),d4
         and.b   #INVERSVID,d4
@@ -3531,6 +3533,11 @@ bt_blit:
         sub.w   BT_Y(a5),d4
         mulu    BT_MOD(a5),d4
         add.l   BT_SRC(a5),d4
+        moveq   #0,d5
+        move.w  d6,d5
+        lsr.w   #4,d5
+        add.l   d5,d5
+        add.l   d5,d4               ; word holding that bit
         btst    #0,d4
         bne     .tb_no
         move.l  d4,TB_SRC(a4)
@@ -3555,7 +3562,8 @@ bt_blit:
         moveq   #-1,d4
         lsr.w   d0,d4
         move.w  d4,TB_FWM(a4)
-        sub.w   BT_XS(a5),d0
+        and.w   #15,d6
+        sub.w   d6,d0
         bmi     .tb_no              ; ascending B DMA needs a nonnegative source-to-destination shift
         ror.w   #4,d0
         move.w  d0,TB_SHIFT(a4)
