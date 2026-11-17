@@ -17,6 +17,12 @@ independent complete-buffer fingerprints, masks, returned plane counts, odd/non-
 five-plane OR workloads. Independent official-ROM observations confirm the repeated-source behavior;
 registered split-view/freehand captures match in both drawing directions, including held-button updates.
 
+Workbench project launch (2026-11-17): opening a Fantavision movie failed twice. The default tool now starts with
+the stack of the icon that was opened (project, tool, or disk for DiskCopy; 4096 at least, Format exactly 4096), in the
+project's directory, and argument 0 follows the 1.3 shape (workbench-task-v34 §7.9.1): the default tool as written,
+with a DupLock of the icon's directory, or lock 0 when it names a volume. Fantavision does CurrentDir on that lock and
+finds the movie by name.
+
 Exec interrupt latency update (2026-11-15, issue #43): the level 1-6 autovectors save only D0/D1/A0/A1/A5/A6, the
 1.3 frame, and build the full scheduler frame only when the exit reschedules. Dispatch uses constant `IntVects` offsets
 without `mulu`; the chain walker saves only A2/A3; the common path no longer tests `CPU_FMT` (68010+ format word

@@ -149,6 +149,7 @@ DOS_LVO_DATESTAMP EQU -192         ; DateStamp(ds d1 APTR) -> ds
 DOS_LVO_RENAME   EQU -78           ; Rename(old d1, new d2) -> boolean
 DOS_LVO_LOCK     EQU -84           ; Lock(name d1, mode d2) -> BPTR lock | 0
 DOS_LVO_UNLOCK   EQU -90           ; UnLock(lock d1) -> frees
+DOS_LVO_DUPLOCK  EQU -96           ; DupLock(lock d1) -> BPTR lock | 0
 DOS_LVO_EXAMINE  EQU -102          ; Examine(lock d1, fib d2) -> DOSTRUE/DOSFALSE
 DOS_LVO_EXNEXT   EQU -108          ; ExNext(lock d1, fib d2) -> DOSTRUE/DOSFALSE (DOSFALSE + IoErr=232 -> end)
 
