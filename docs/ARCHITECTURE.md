@@ -2112,7 +2112,9 @@ differs.
   (`WB_LEFT0`) in the backdrop window, so `wb_hit`, `wb_iconrect`, `wb_drawwin` and `wb_openicon` treat them as icons
   of window 0; they are kept in memory only, and `wb_loadicons` skips the objects that are left out. `wb_drop` mode 2
   leaves an icon out, and a drop back into a window brings it home (`.ob_unleft`). A disk dropped on another disk
-  launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). `wb_discard` runs `dc_one`
+  launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). A project or disk launch builds argument 0 with
+  `wb_toolarg` (default tool as written; DupLock of the icon's directory, or 0 for a name with a volume), gives the
+  process the project's directory as `pr_CurrentDir` and the opened icon's `do_StackSize` (4096 at least). `wb_discard` runs `dc_one`
   (requester + `wb_rmtree`) for each selected icon, then deselects and re-reads the window once.
   **Workbench free slots, busy pointer, selection across windows (2026-11-09)**: the selection flags may be set in
   several windows; `wb_selnext` iterates them (desktop, then drawers), `wb_selclr`/`wb_selfix` repair the counters
