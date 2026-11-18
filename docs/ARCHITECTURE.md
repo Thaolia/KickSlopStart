@@ -2495,6 +2495,10 @@ differs.
     DMA cycles per word instead of four. Fantavision restores its full-screen background with such copies
     (20 words x 200 rows, 1-5 planes) on every frame of a movie; the Dinosaurs loop went from 117.0 to 101.5 s
     side by side with the previous ROM (the real 1.3: 58 s alone, against 90.1 s before).
+  - `dr_directdraw` (`src/graphics/draw.s`) refuses a BitMap of more than two planes before it takes the layer lock
+    and walks the ClipRects (it refused it after them): a 5-plane screen paid that walk on every Draw before
+    `dl_fast` did it again. `tests/fvperf_probe.sh` (the calls of a vector animation player on a LORES 5-plane
+    screen, emulated time, plane fingerprints): 400 Draws 666 -> 553 ms, pixels identical; the real 1.3 takes 288 ms.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

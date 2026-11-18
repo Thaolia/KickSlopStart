@@ -2916,6 +2916,9 @@ dr_directdraw:
         bne     .dd_exit
         cmp.w   #$ffff,rp_LinePtrn(a5)
         bne     .dd_exit
+        move.l  rp_BitMap(a5),a2     ; more than two planes is refused below: before the layer lock and the ClipRect
+        cmp.b   #2,bm_Depth(a2)      ; walk, which a 5-plane screen (Fantavision) paid on every line
+        bhi     .dd_exit
         move.w  d0,d4
         sub.w   rp_cp_x(a5),d4
         bvs     .dd_exit
