@@ -26,6 +26,9 @@ and starts by stopping and deleting them: when another Claude session may run it
 (`PP_PREFIX=cx prepush-check …` -> `cx512`, `cx0`, `cxlem`), or each run stops the other's ("session pplem is not
 running", a total near 50 s; such a run is neither a pass nor a regression). Under heavy load (many sessions at
 once) a boot marker such as `MATHFFP OK` can also be missed once: a rerun on the same ROM md5 settles it.
+The Lemmings run follows the screen, not fixed delays (since 2026-11-17): it waits for the FAIRLIGHT intro, clicks
+(again while the intro stays), then waits up to 5 minutes for the game menu, detected by its colour count in an IPC
+capture; "game menu not reached" fails the run. The game takes about a minute to load after the click.
 
 ## Clean-room firewall (read first)
 

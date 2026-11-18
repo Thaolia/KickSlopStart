@@ -2112,7 +2112,9 @@ differs.
   (`WB_LEFT0`) in the backdrop window, so `wb_hit`, `wb_iconrect`, `wb_drawwin` and `wb_openicon` treat them as icons
   of window 0; they are kept in memory only, and `wb_loadicons` skips the objects that are left out. `wb_drop` mode 2
   leaves an icon out, and a drop back into a window brings it home (`.ob_unleft`). A disk dropped on another disk
-  launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). `wb_discard` runs `dc_one`
+  launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). A project or disk launch builds argument 0 with
+  `wb_toolarg` (default tool as written; DupLock of the icon's directory, or 0 for a name with a volume), gives the
+  process the project's directory as `pr_CurrentDir` and the opened icon's `do_StackSize` (4096 at least). `wb_discard` runs `dc_one`
   (requester + `wb_rmtree`) for each selected icon, then deselects and re-reads the window once.
   **Workbench free slots, busy pointer, selection across windows (2026-11-09)**: the selection flags may be set in
   several windows; `wb_selnext` iterates them (desktop, then drawers), `wb_selclr`/`wb_selfix` repair the counters
@@ -2491,7 +2493,31 @@ differs.
     phase pairs, $30/$60/$80/$E0 every third phase). A source plane beyond the source's depth or NULL reads as 0 and
     -1 as 1, as in the CPU engines: such a plane is blitted with B off, BLTBDAT = $0000 / $FFFF and a B shift of 0
     (shifted, the constant mixes with the previous B word: wrong bits under emulation). Deluxe Paint's 1-plane
-    toolbox images onto its 5-plane screen went to the CPU row by row.
+    toolbox images onto its 5-plane screen went to the CPU row by row. Since 2026-11-18, a blit whose edge masks are
+    both $FFFF, with no shift, and whose minterm gives the same result for both values of the destination (copy
+    $C0, inverted copy $30, clear, set) runs as A -> D (BLTCON0 = USEA|USED, LF = $F0/$0F/$00/$FF): no C fetch, two
+    DMA cycles per word instead of four. Fantavision restores its full-screen background with such copies
+    (20 words x 200 rows, 1-5 planes) on every frame of a movie; the Dinosaurs loop went from 117.0 to 101.5 s
+    side by side with the previous ROM (the real 1.3: 58 s alone, against 90.1 s before).
+  - `dr_directdraw` (`src/graphics/draw.s`) refuses a BitMap of more than two planes before it takes the layer lock
+    and walks the ClipRects (it refused it after them): a 5-plane screen paid that walk on every Draw before
+    `dl_fast` did it again. `tests/fvperf_probe.sh` (the calls of a vector animation player on a LORES 5-plane
+    screen, emulated time, plane fingerprints): 400 Draws 666 -> 553 ms, pixels identical; the real 1.3 takes 288 ms.
+  - Draw on a layer (`gfx_Draw`, 2026-11-18): a BitMap of more than two planes skips `dr_directdraw` altogether;
+    `dl_quick` then draws, in registers and without the drawing context, the line `dl_fast` would draw as one blit
+    when both ends lie in one visible ClipRect inside the layer and the BitMap, the layer lock is free or already
+    held (a contended lock, a hidden ClipRect, a SuperBitMap or refreshing layer, COMPLEMENT and ONE_DOT go on to
+    `dl_fast`, nothing changed). Same blit as `lb_core` and same RastPort update. `db_enter` acquires the blitter with
+    `gfx_tryown`, which does not wait for it to be idle (every engine behind `db_enter` waits before programming a
+    blit and before touching the planes): a line's set-up overlaps the previous line's last plane; `gfx_tryblitter`
+    (area, 2-plane direct path) still waits. `tests/fvperf_probe.sh`: 400 Draws 553 -> 399 ms (real 1.3: 288 ms),
+    test M (moved outlines, pens 1..20, dashed LinePtrn) gives the real 1.3's fingerprint on all five planes;
+    `tests/drawcheck.s` output identical.
+  - BltTemplate's blitter path (`bt_blit`): with no shift and a minterm where a template 0 keeps the destination
+    (JAM1, COMPLEMENT), the template goes through A, whose edge masks then fall on the destination columns, and B
+    is the constant 1 (A, C, D instead of B, C, D; JAM2 writes template 0s, so it keeps B with A as the edge mask).
+    AreaEnd composites its word-aligned mask this way: `tests/fvperf_probe.sh` 50 filled polygons 1420 -> 1303 ms
+    (real 1.3: 1008 ms), fingerprints unchanged; `tests/drawcheck.s` output identical.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

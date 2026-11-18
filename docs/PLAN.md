@@ -17,12 +17,26 @@ independent complete-buffer fingerprints, masks, returned plane counts, odd/non-
 five-plane OR workloads. Independent official-ROM observations confirm the repeated-source behavior;
 registered split-view/freehand captures match in both drawing directions, including held-button updates.
 
+Fantavision playback (2026-11-18): one loop of the Dinosaurs movie takes 58 s on the real 1.3 and 90.1 s on
+v0.2.66 (wall clock, one Amiberry session alone). A PC profile put 21% of the time in waits for `br_blit` blits,
+nearly all full-screen background copies with full edge masks; they now run as A -> D without the C fetch (-13%).
+Still open: the BltTemplate part of PR #46 and the area-fill path. `tests/fvperf_probe.sh` (emulated time) against
+the real 1.3: 400 Draws 399 ms (288), 50 filled polygons 1303 ms (1008), 20 full-window copies 271 ms (420),
+50 RectFills 138 ms (113); the plane fingerprints match. Not waiting for the last plane at the end of `br_blit`
+gave no measurable gain (tried, reverted).
+
 Fantavision playback update (2026-11-17): BltTemplate takes the blitter for templates clipped on the left and
 for xSrc ≥ 16 (the B start moves to the word under the first kept column). Profiled on the production ROM during
 movie playback, the CPU template loop took about 21% of the CPU. Skipping ClearPointer when the default pointer
 looked already shown was dropped: its test does not prove the sprite is placed in the current View (Workbench
 1.3.3 boot showed no pointer until the mouse moved), and Fantavision plays the same frames without it.
 `tests/drawcheck.s` fingerprints are unchanged.
+
+Workbench project launch (2026-11-17): opening a Fantavision movie failed twice. The default tool now starts with
+the stack of the icon that was opened (project, tool, or disk for DiskCopy; 4096 at least, Format exactly 4096), in the
+project's directory, and argument 0 follows the 1.3 shape (workbench-task-v34 §7.9.1): the default tool as written,
+with a DupLock of the icon's directory, or lock 0 when it names a volume. Fantavision does CurrentDir on that lock and
+finds the movie by name.
 
 Exec interrupt latency update (2026-11-15, issue #43): the level 1-6 autovectors save only D0/D1/A0/A1/A5/A6, the
 1.3 frame, and build the full scheduler frame only when the exit reschedules. Dispatch uses constant `IntVects` offsets

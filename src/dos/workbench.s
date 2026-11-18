@@ -4213,9 +4213,10 @@ wb_loadicons:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
-; wb_launch(a0 = path of the tool, a1 = path of the project | 0, a2 = DiskObject of the tool (stack) if a1 = 0, a5):
+; wb_launch(a0 = path of the tool, a1 = path of the project | 0, a2 = DiskObject opened (its stack, 4096 at least) | 0, a5):
 ; LoadSeg of the tool, WBStartup message (argument 0 = the tool, 1 = the project: lock of the directory + name),
-; CreateProc then PutMsg; the message comes back to the "Workbench" port when the tool ends (wb_toolreturn).
+; CreateProc (current directory: that of the project, or of the tool) then PutMsg; the message comes back to the
+; "Workbench" port when the tool ends (wb_toolreturn).
 ; wb_launch2: same with d1 = path of a second project | 0, argument 2 (DiskCopy FROM / TO disks, spec §10.6).
 ; Failure (tool not found, memory): nothing. Preserves d7/a5.
 WBSM_NARGS      EQU 3
@@ -4228,8 +4229,8 @@ wb_launch2:
         move.l  a0,a3                ; a3 = tool
         move.l  a1,a4                ; a4 = project | 0
         move.l  #WB_TOOLSTACK,d6     ; d6 = stack
-        move.l  a4,d0
-        bne.s   .la_stk
+        move.l  a2,d0
+        beq.s   .la_stk
         move.l  DO_STACKSIZE(a2),d0
         cmp.l   d6,d0
         bls.s   .la_stk
@@ -4258,19 +4259,23 @@ wb_launch2:
         move.l  d0,a2                ; a2 = WBStartup
         lea     SM_SIZE(a2),a0
         move.l  a0,SM_ARGLIST(a2)
+        move.l  a4,d0
+        bne.s   .la_proj
         move.l  a3,a0                ; argument 0: the tool
         moveq   #0,d2
         bsr     wb_arg
-        move.l  a4,d0
-        beq.s   .la_proc
+        bra.s   .la_proc
+.la_proj:
         move.l  a4,a0                ; argument 1: the project
         moveq   #1,d2
         bsr     wb_arg
         tst.l   d7
-        beq.s   .la_proc
+        beq.s   .la_tool
         move.l  d7,a0                ; argument 2: the second one
         moveq   #2,d2
         bsr     wb_arg
+.la_tool:
+        bsr     wb_toolarg           ; argument 0: the default tool
 .la_proc:
         move.l  SM_ARGLIST(a2),a0
         move.l  WA_NAME(a0),d1       ; process name = name of the tool
@@ -4282,6 +4287,12 @@ wb_launch2:
         tst.l   d0
         beq.s   .la_noproc
         move.l  d0,a0
+        move.l  SM_ARGLIST(a2),a1    ; current directory of the tool: that of the project, or of the tool,
+        move.l  a4,d1                ; shared with the WBStartup, which keeps it until the tool returns
+        beq.s   .la_dir
+        addq.l  #WA_SIZE,a1
+.la_dir:
+        move.l  WA_LOCK(a1),PR_CURRENTDIR-PR_MSGPORT(a0)
         move.b  #NT_MESSAGE,LN_TYPE(a2)
         move.l  WBS_PORT(a5),MN_REPLYPORT(a2)
         move.w  #SM_SIZE,MN_LENGTH(a2)
@@ -4364,6 +4375,35 @@ wb_arg:
         addq.l  #1,d2
         move.l  d2,SM_NUMARGS(a2)
         movem.l (sp)+,d2-d4/a2-a4/a6
+        rts
+
+; wb_toolarg(a2 = WBStartup with argument 1 built, a3 = default tool, a5): argument 0 of a project or disk launch
+; (spec workbench-task-v34 §7.9.1): wa_Name = the default tool as written; wa_Lock = 0 when it names a volume
+; (a ':' after the first character), otherwise a DupLock of the directory of the icon, which a tool such as
+; Fantavision makes its current directory to find the project by name.
+wb_toolarg:
+        lea     SM_SIZE+WBSM_NARGS*WA_SIZE(a2),a1
+        move.l  SM_ARGLIST(a2),a0
+        move.l  a1,WA_NAME(a0)
+        move.l  a3,a0
+        moveq   #WBS_NAMEMAX-2,d0
+        bsr     wb_strcpy
+        move.l  a3,a0
+        tst.b   (a0)+
+        beq.s   .ta_dup
+.ta_scan:
+        move.b  (a0)+,d0
+        beq.s   .ta_dup
+        cmp.b   #':',d0
+        bne.s   .ta_scan
+        rts                          ; wa_Lock stays 0 (MEMF_CLEAR)
+.ta_dup:
+        move.l  SM_ARGLIST(a2),a0
+        move.l  WA_SIZE+WA_LOCK(a0),d1
+        move.l  WBS_DOSBASE(a5),a6
+        jsr     DOS_LVO_DUPLOCK(a6)
+        move.l  SM_ARGLIST(a2),a0
+        move.l  d0,WA_LOCK(a0)
         rts
 
 ; wb_toolreturn(a1 = returned WBStartup, a5): the tool has finished: segment unloaded, locks returned, message freed.
@@ -4717,9 +4757,9 @@ wb_initialize:
         cmp.w   #WB_LEFT0,d1
         bhs.s   .in_ret
         bsr     wb_volent
-        move.l  VE_DOBJ(a0),a2
         lea     VE_PATH(a0),a1
         lea     wb_format(pc),a0
+        suba.l  a2,a2
         bsr     wb_launch
 .in_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
