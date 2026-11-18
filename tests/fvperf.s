@@ -7,7 +7,8 @@
 ;   B: 20 full-window BltBitMapRastPort copies from an off-screen 5-plane BitMap, minterm $C0, rp_Mask $07
 ;   R: 50 RectFills of 64 x 48, pens 1..31
 ;   Q: 5000 VBeamPos calls
-; After L and after A, "FV S n p0 p1 p2 p3 p4": a fingerprint (rotate-add of the longs) of each plane of the screen, to
+;   M: 20 polygon outlines moved by (4, 2) pixels each, pens 1..20, every other one with LinePtrn $F0F0 (SetDrPt)
+; After L, A and M, "FV S p0 p1 p2 p3 p4": a fingerprint (rotate-add of the longs) of each plane of the screen, to
 ; check that two ROMs draw the same pixels.
 ; Each line: "FV name F L" = elapsed VERTB frames and video line difference (duration ~= F x 313 + L lines of 64 us).
 ; Clean-room: public structures and calls (NewScreen, NewWindow, RastPort, AreaInfo, TmpRas, BitMap), authored code.
@@ -102,6 +103,11 @@ _start:
                 bsr     copies
                 bsr     rects
                 bsr     beams
+                move.l  a2,a1
+                moveq   #0,d0
+                jsr     -234(a6)             ; SetRast 0
+                bsr     moved
+                bsr     sums
                 lea     t_end(pc),a0
                 bsr     puts
                 bsr     nl
@@ -182,6 +188,51 @@ lines:
                 jsr     -246(a6)
                 dbra    d7,.poly
                 lea     s_l(pc),a0
+                bra     stopt
+
+moved:
+                bsr     start
+                moveq   #19,d7
+.poly:
+                bsr     pen
+                move.w  #$FFFF,d0            ; SetDrPt: LinePtrn, FRST_DOT, linpatcnt 15
+                btst    #0,d7
+                beq.s   .solid
+                move.w  #$F0F0,d0
+.solid:
+                move.w  d0,34(a2)
+                bset    #0,33(a2)
+                move.b  #15,30(a2)
+                move.w  d7,d4
+                lsl.w   #2,d4                ; d4/d5 = offset
+                move.w  d7,d5
+                add.w   d5,d5
+                lea     pts(pc),a3
+                move.l  a2,a1
+                move.w  (a3),d0
+                add.w   d4,d0
+                move.w  2(a3),d1
+                add.w   d5,d1
+                jsr     -240(a6)             ; Move
+                moveq   #18,d6
+.e:
+                addq.l  #4,a3
+                move.l  a2,a1
+                move.w  (a3),d0
+                add.w   d4,d0
+                move.w  2(a3),d1
+                add.w   d5,d1
+                jsr     -246(a6)             ; Draw
+                dbra    d6,.e
+                move.l  a2,a1
+                move.w  pts(pc),d0
+                add.w   d4,d0
+                move.w  pts+2(pc),d1
+                add.w   d5,d1
+                jsr     -246(a6)
+                dbra    d7,.poly
+                move.w  #$FFFF,34(a2)
+                lea     s_m(pc),a0
                 bra     stopt
 
 areas:
@@ -363,6 +414,7 @@ s_a:            dc.b    "A",0
 s_b:            dc.b    "B",0
 s_r:            dc.b    "R",0
 s_q:            dc.b    "Q",0
+s_m:            dc.b    "M",0
 s_s:            dc.b    "FV S",0
                 even
 pts:            dc.w    230,100,227,119,217,135,201,149,182,157,160,160,138,157,119,149,103,135,93,119

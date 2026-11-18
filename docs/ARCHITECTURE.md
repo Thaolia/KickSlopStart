@@ -2499,6 +2499,16 @@ differs.
     and walks the ClipRects (it refused it after them): a 5-plane screen paid that walk on every Draw before
     `dl_fast` did it again. `tests/fvperf_probe.sh` (the calls of a vector animation player on a LORES 5-plane
     screen, emulated time, plane fingerprints): 400 Draws 666 -> 553 ms, pixels identical; the real 1.3 takes 288 ms.
+  - Draw on a layer (`gfx_Draw`, 2026-11-18): a BitMap of more than two planes skips `dr_directdraw` altogether;
+    `dl_quick` then draws, in registers and without the drawing context, the line `dl_fast` would draw as one blit
+    when both ends lie in one visible ClipRect inside the layer and the BitMap, the layer lock is free or already
+    held (a contended lock, a hidden ClipRect, a SuperBitMap or refreshing layer, COMPLEMENT and ONE_DOT go on to
+    `dl_fast`, nothing changed). Same blit as `lb_core` and same RastPort update. `db_enter` acquires the blitter with
+    `gfx_tryown`, which does not wait for it to be idle (every engine behind `db_enter` waits before programming a
+    blit and before touching the planes): a line's set-up overlaps the previous line's last plane; `gfx_tryblitter`
+    (area, 2-plane direct path) still waits. `tests/fvperf_probe.sh`: 400 Draws 553 -> 399 ms (real 1.3: 288 ms),
+    test M (moved outlines, pens 1..20, dashed LinePtrn) gives the real 1.3's fingerprint on all five planes;
+    `tests/drawcheck.s` output identical.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

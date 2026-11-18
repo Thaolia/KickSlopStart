@@ -20,8 +20,10 @@ registered split-view/freehand captures match in both drawing directions, includ
 Fantavision playback (2026-11-18): one loop of the Dinosaurs movie takes 58 s on the real 1.3 and 90.1 s on
 v0.2.66 (wall clock, one Amiberry session alone). A PC profile put 21% of the time in waits for `br_blit` blits,
 nearly all full-screen background copies with full edge masks; they now run as A -> D without the C fetch (-13%).
-Still open: the wait for the last plane at the end of `br_blit`, the BltTemplate part of PR #46, and the CPU cost of
-the line and area-fill paths (about a quarter of the samples).
+Still open: the BltTemplate part of PR #46 and the area-fill path. `tests/fvperf_probe.sh` (emulated time) against
+the real 1.3: 400 Draws 399 ms (288), 50 filled polygons 1425 ms (1008), 20 full-window copies 271 ms (420),
+50 RectFills 138 ms (113); the plane fingerprints match. Not waiting for the last plane at the end of `br_blit`
+gave no measurable gain (tried, reverted).
 
 Workbench project launch (2026-11-17): opening a Fantavision movie failed twice. The default tool now starts with
 the stack of the icon that was opened (project, tool, or disk for DiskCopy; 4096 at least, Format exactly 4096), in the
