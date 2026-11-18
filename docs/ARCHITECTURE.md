@@ -2489,7 +2489,12 @@ differs.
     phase pairs, $30/$60/$80/$E0 every third phase). A source plane beyond the source's depth or NULL reads as 0 and
     -1 as 1, as in the CPU engines: such a plane is blitted with B off, BLTBDAT = $0000 / $FFFF and a B shift of 0
     (shifted, the constant mixes with the previous B word: wrong bits under emulation). Deluxe Paint's 1-plane
-    toolbox images onto its 5-plane screen went to the CPU row by row.
+    toolbox images onto its 5-plane screen went to the CPU row by row. Since 2026-11-18, a blit whose edge masks are
+    both $FFFF, with no shift, and whose minterm gives the same result for both values of the destination (copy
+    $C0, inverted copy $30, clear, set) runs as A -> D (BLTCON0 = USEA|USED, LF = $F0/$0F/$00/$FF): no C fetch, two
+    DMA cycles per word instead of four. Fantavision restores its full-screen background with such copies
+    (20 words x 200 rows, 1-5 planes) on every frame of a movie; the Dinosaurs loop went from 117.0 to 101.5 s
+    side by side with the previous ROM (the real 1.3: 58 s alone, against 90.1 s before).
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

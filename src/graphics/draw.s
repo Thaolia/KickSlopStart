@@ -6075,7 +6075,8 @@ RB_GFX          EQU 32
 RB_CON0         EQU 36               ; BLTCON0: channels B, C, D and the minterm
 RB_DESC         EQU 38               ; byte: descending blit (left shift)
 RB_STRIP        EQU 40               ; WORD: right-edge columns left to the CPU
-RB_SIZE         EQU 42
+RB_FASTCON      EQU 42               ; WORD: BLTCON0 of an A -> D blit without C, or 0
+RB_SIZE         EQU 44
 br_blit:
         movem.l d0-d7/a0-a4/a6,-(sp)
         move.l  a4,a2
@@ -6213,6 +6214,34 @@ br_blit:
         cmp.l   #16,d4
         blo     .rb_no
 .rb_size_ready:
+        clr.w   RB_FASTCON(a4)       ; full-word edges, no shift and a minterm that ignores the destination: A -> D,
+        moveq   #-1,d7               ; without the C fetch (half the DMA cycles per word of B, C, D)
+        cmp.w   RB_FWM(a4),d7
+        bne.s   .rb_slow
+        cmp.w   RB_LWM(a4),d7
+        bne.s   .rb_slow
+        move.w  RB_SHIFT(a4),d7
+        and.w   #$f000,d7
+        bne.s   .rb_slow
+        moveq   #0,d7
+        move.b  DC_MINTERM(a5),d7
+        lsr.w   #4,d7                ; terms ABC, AB!C, A!BC, A!B!C
+        move.w  d7,d4
+        and.w   #3,d4                ; B = 0: both values of C must give the same result
+        beq.s   .rb_f0
+        cmp.w   #3,d4
+        bne.s   .rb_slow
+        moveq   #$0f,d4
+.rb_f0:
+        lsr.w   #2,d7                ; B = 1
+        beq.s   .rb_f1
+        cmp.w   #3,d7
+        bne.s   .rb_slow
+        or.w    #$f0,d4
+.rb_f1:
+        or.w    #$0900,d4            ; USEA, USED; the source goes through A
+        move.w  d4,RB_FASTCON(a4)
+.rb_slow:
         move.w  d5,d4
         lsl.w   #6,d4
         move.w  d6,d7
@@ -6334,7 +6363,11 @@ br_blit:
         bsr     db_wait
         bsr     .rb_splane
         beq.s   .rb_const
-        move.w  RB_CON0(a4),BLT_CON0(a0)
+        move.w  RB_FASTCON(a4),d6
+        bne.s   .rb_c0
+        move.w  RB_CON0(a4),d6
+.rb_c0:
+        move.w  d6,BLT_CON0(a0)
         move.w  RB_SHIFT(a4),BLT_CON1(a0)
         clr.w   BLT_BDAT(a0)
         bra.s   .rb_con
@@ -6349,6 +6382,7 @@ br_blit:
 .rb_con:
         move.w  #$ffff,BLT_ADAT(a0)
         move.w  RB_SMOD(a4),BLT_BMOD(a0)
+        move.w  RB_SMOD(a4),BLT_AMOD(a0)
         move.w  RB_DMOD(a4),BLT_CMOD(a0)
         move.w  RB_DMOD(a4),BLT_DMOD(a0)
         move.l  d3,a1
@@ -6370,6 +6404,7 @@ br_blit:
         subq.l  #2,d6
 .rb_ptr:
         move.l  a1,BLT_BPT(a0)
+        move.l  a1,BLT_APT(a0)
         move.l  d6,a1
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)

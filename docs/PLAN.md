@@ -17,6 +17,12 @@ independent complete-buffer fingerprints, masks, returned plane counts, odd/non-
 five-plane OR workloads. Independent official-ROM observations confirm the repeated-source behavior;
 registered split-view/freehand captures match in both drawing directions, including held-button updates.
 
+Fantavision playback (2026-11-18): one loop of the Dinosaurs movie takes 58 s on the real 1.3 and 90.1 s on
+v0.2.66 (wall clock, one Amiberry session alone). A PC profile put 21% of the time in waits for `br_blit` blits,
+nearly all full-screen background copies with full edge masks; they now run as A -> D without the C fetch (-13%).
+Still open: the wait for the last plane at the end of `br_blit`, the BltTemplate part of PR #46, and the CPU cost of
+the line and area-fill paths (about a quarter of the samples).
+
 Workbench project launch (2026-11-17): opening a Fantavision movie failed twice. The default tool now starts with
 the stack of the icon that was opened (project, tool, or disk for DiskCopy; 4096 at least, Format exactly 4096), in the
 project's directory, and argument 0 follows the 1.3 shape (workbench-task-v34 §7.9.1): the default tool as written,
