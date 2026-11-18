@@ -25,6 +25,13 @@ the real 1.3: 400 Draws 399 ms (288), 50 filled polygons 1303 ms (1008), 20 full
 50 RectFills 138 ms (113); the plane fingerprints match. Not waiting for the last plane at the end of `br_blit`
 gave no measurable gain (tried, reverted).
 
+Fantavision playback update (2026-11-17): BltTemplate takes the blitter for templates clipped on the left and
+for xSrc ≥ 16 (the B start moves to the word under the first kept column). Profiled on the production ROM during
+movie playback, the CPU template loop took about 21% of the CPU. Skipping ClearPointer when the default pointer
+looked already shown was dropped: its test does not prove the sprite is placed in the current View (Workbench
+1.3.3 boot showed no pointer until the mouse moved), and Fantavision plays the same frames without it.
+`tests/drawcheck.s` fingerprints are unchanged.
+
 Workbench project launch (2026-11-17): opening a Fantavision movie failed twice. The default tool now starts with
 the stack of the icon that was opened (project, tool, or disk for DiskCopy; 4096 at least, Format exactly 4096), in the
 project's directory, and argument 0 follows the 1.3 shape (workbench-task-v34 §7.9.1): the default tool as written,

@@ -2476,6 +2476,10 @@ differs.
     computes each plane's CON0 before waiting for the previous plane; `dr_directdraw` inlines Forbid/Permit
     (Permit's vector only when a reschedule is due); `bt_blit` has no size threshold (Clock: refresh pass 2
     12.4 → 6.8 frames).
+  - Since 2026-11-17, `bt_blit` also takes templates cut on the left by a ClipRect and templates whose xSrc is 16
+    or more: B starts at the word holding the template bit under the first kept column, and the shift is the
+    destination phase minus that bit's phase (still CPU when negative). Fantavision's window-clipped
+    full-screen templates used the CPU loop before.
   - `br_blit` (BltBitMapRastPort, since 2026-11-12): a source whose phase in its word does not exceed the
     destination's goes to the blitter too (B shift = destination phase − source phase, source pointer at its first
     word); the bits shifted in from the previous word fall under the first-word mask. Clock's resize copies took
