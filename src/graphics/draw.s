@@ -976,16 +976,11 @@ db_leave:
         bsr.s   db_wait              ; CPU consumers (AreaEnd, Text, ReadPixel) may immediately touch the result
         jmp     gfx_DisownBlitter
 
-; Private line engine: caller owns the blitter and validates CHIP planes, bounds and <=1024 pixels.
-; d0/d1 start, d2/d3 end, d4 stride, d5 pen bits, d6 depth 1/2, a0/a1 plane bases. Clobbers d0-d7/a0-a3.
-; d6 bit 8 selects a top-to-bottom crossing edge: XOR one rounded x per row, excluding its bottom row.
-; Used by the common Draw path and by AreaEnd's one-plane mask edges, without their generic per-pixel work.
+; Private line engine of the common Draw path: caller owns the blitter and validates CHIP planes, bounds and
+; <=1024 pixels. d0/d1 start, d2/d3 end, d4 stride, d5 pen bits, d6 depth 1/2, a0/a1 plane bases.
+; Clobbers d0-d7/a0-a3.
 gfx_solidline_dma:
-        lea     -4(sp),sp          ; CON0 base, crossing mode
-        move.w  d6,d7
-        and.w   #$100,d7
-        move.w  d7,2(sp)
-        and.w   #$ff,d6
+        subq.l  #2,sp              ; CON0 base
         sub.w   d0,d2
         sub.w   d1,d3
         mulu    d4,d1
@@ -1052,43 +1047,18 @@ gfx_solidline_dma:
         move.w  d3,d0
         lsl.w   #2,d0
         sub.w   d1,d0
-        btst    #0,2(sp)
-        beq.s   .sl_store_error
-        or.w    #2,d4              ; one dot per row
-        btst    #4,d4
-        beq.s   .sl_cross_y
-        add.w   d3,d0
-        add.w   d3,d0
-        sub.w   d1,d0              ; 6m - 4M
-        btst    #0,d7
-        bne.s   .sl_store_error
-        subq.w  #2,d0              ; positive x: half ties round toward larger x
-        bra.s   .sl_store_error
-.sl_cross_y:
-        btst    #0,d7
-        beq.s   .sl_store_error
-        subq.w  #2,d0              ; negative x: half ties still round toward larger x
-.sl_store_error:
         move.w  d0,d1
         ext.l   d1                 ; d1 = BLTAPT (error), d4 = CON1, d2 = BLTSIZE, d7 = CON0 base
         bpl.s   .sl_sign
         or.w    #$40,d4
 .sl_sign:
-        btst    #0,2(sp)
-        bne.s   .sl_length
         addq.w  #1,d2
-.sl_length:
         lsl.w   #6,d2
         or.w    #2,d2
         move.w  (sp),d7
         moveq   #0,d3              ; d3 = 0: first plane, the blitter is already idle
 .sl_plane:                         ; the plane's CON0 is computed before waiting for the previous plane's blit
         move.w  d7,d0
-        btst    #0,2(sp)
-        beq.s   .sl_solid
-        or.w    #$5a,d0
-        bra.s   .sl_pen
-.sl_solid:
         or.w    #$fa,d0
         btst    #0,d5
         bne.s   .sl_pen
@@ -1109,8 +1079,7 @@ gfx_solidline_dma:
         moveq   #1,d3
         subq.w  #1,d6
         bne.s   .sl_plane
-.sl_done:
-        lea     4(sp),sp
+        addq.l  #2,sp
         rts
 
 ; rc_blit(d0=x0, d1=y0, d2=x1, RC_ROWS=height-1): solid rectangle, Z clear on success. Preserves all registers.

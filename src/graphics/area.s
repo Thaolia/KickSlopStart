@@ -27,7 +27,6 @@
                 xdef    gfx_BltPattern
                 xref    gfx_tryblitter
                 xref    gfx_waitidle
-                xref    gfx_solidline_dma
                 xref    gfx_DisownBlitter
 
 AREAOUTLINE     EQU $0008
@@ -474,8 +473,6 @@ mk_bit:
 ; start to the end by Draw's unified Bresenham (same pixels as the 1.3 edges, direction included).
 ; Preserves d2-d7/a1-a6.
 mk_line:
-        tst.w   MK_BLITOWN(a5)
-        bne     .ml_dma
         bsr     mk_fastline
         bne     .ml_done
         movem.l d2-d7,-(sp)
@@ -523,22 +520,6 @@ mk_line:
         addq.l  #6,sp
         movem.l (sp)+,d2-d7
 .ml_done:
-        rts
-.ml_dma:
-        movem.l d0-d7/a0-a3,-(sp)
-        sub.w   MK_X0(a5),d0
-        sub.w   MK_X0(a5),d2
-        sub.w   MK_Y0(a5),d1
-        sub.w   MK_Y0(a5),d3
-        moveq   #0,d4
-        move.w  MK_L(a5),d4
-        moveq   #1,d5
-        sub.w   MK_OP(a5),d5
-        moveq   #1,d6
-        move.l  MK_BUF(a5),a0
-        suba.l  a1,a1
-        jsr     gfx_solidline_dma
-        movem.l (sp)+,d0-d7/a0-a3
         rts
 
 ; Contained mask edges need one address calculation, then byte/row steps, rather than mk_bit per pixel.
@@ -1281,6 +1262,8 @@ ae_edge_leave:
 ; one point per line [top, bottom[; ellipses -> bounds of each line. Pass 3: all edges in full,
 ; ellipses by their outline. Preserves d2-d7/a2-a6.
 ae_walk:
+        tst.w   MK_BLITOWN(a5)
+        bne     ae_dmawalk
         movem.l d2-d7/a2-a4,-(sp)
         move.l  ai_VctrTbl(a2),a3
         move.l  ai_FlagTbl(a2),a4
@@ -1337,13 +1320,175 @@ ae_walk:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
+; ae_dmawalk: ae_walk while AreaEnd owns the blitter, so the list holds polygons only (ae_edge_enter). Each edge is
+; one line blit on the one-plane mask: pass 1 XORs one rounded point per row of [top, bottom[, pass 3 sets or
+; clears the whole edge from its start. Everything stays in registers: the stack and the frame sit in memory the
+; line DMA competes for, and a polygon has dozens of edges.
+ae_dmawalk:
+        movem.l d2-d7/a2-a6,-(sp)
+        cmp.w   #1,d6
+        beq.s   .dw_xor
+        move.w  #$0bfa,d6           ; A, C, D: D = A | C
+        tst.w   MK_OP(a5)
+        beq.s   .dw_go
+        move.w  #$0b0a,d6           ; D = !A & C
+        bra.s   .dw_go
+.dw_xor:
+        move.w  #$0b5a,d6           ; D = A ^ C
+.dw_go:
+        move.l  ai_VctrTbl(a2),a3
+        move.l  ai_FlagTbl(a2),a4
+        move.w  MK_L(a5),d7
+        swap    d7                  ; d7 = bytes per row : entries left
+        move.w  ai_Count(a2),d7
+        move.l  MK_BUF(a5),a1
+        jsr     gfx_waitidle        ; a0 = custom chips
+        moveq   #-1,d0
+        move.l  d0,BLT_AFWM(a0)
+        swap    d7
+        move.w  d7,BLT_CMOD(a0)
+        move.w  d7,BLT_DMOD(a0)
+        swap    d7
+        moveq   #0,d4               ; current point, relative to the mask
+        moveq   #0,d5
+.dw_lp:
+        subq.w  #1,d7
+        bmi.s   .dw_ret
+        move.b  (a4)+,d0
+        movem.w (a3)+,d2-d3
+        sub.w   MK_X0(a5),d2
+        sub.w   MK_Y0(a5),d3
+        btst    #AF_DRAWN,d0
+        beq.s   .dw_move
+        cmp.b   #$5a,d6
+        bne.s   .dw_full
+        cmp.w   d5,d3
+        beq.s   .dw_move            ; horizontal: no crossing
+        blt.s   .dw_up
+.dw_full:
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  d2,d4
+        move.w  d3,d5
+        bsr.s   dw_line
+        bra.s   .dw_move
+.dw_up:
+        move.w  d2,d0               ; crossings run from the top end
+        move.w  d3,d1
+        bsr.s   dw_line
+.dw_move:
+        move.w  d2,d4
+        move.w  d3,d5
+        bra.s   .dw_lp
+.dw_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; dw_line(d0/d1 = start, d4/d5 = end, mask-relative; d6 = CON0 without shift, $5A = crossing mode; d7 high = bytes
+; per row; a0 = custom chips, a1 = mask): one line blit. Clobbers d0/d1/d4/d5/a2/a6.
+dw_line:
+        sub.w   d0,d4               ; dx
+        sub.w   d1,d5               ; dy
+        swap    d7
+        mulu    d7,d1
+        swap    d7
+        move.l  a1,a6
+        adda.l  d1,a6
+        move.w  d0,d1
+        lsr.w   #4,d1
+        add.w   d1,d1
+        adda.w  d1,a6               ; word holding the start point
+        and.w   #15,d0
+        ror.w   #4,d0
+        or.w    d6,d0
+        move.w  d0,a2               ; CON0
+        moveq   #0,d1               ; bit 0: dx < 0, bit 1: dy < 0
+        tst.w   d4
+        bpl.s   .dl_dx
+        neg.w   d4
+        addq.w  #1,d1
+.dl_dx:
+        tst.w   d5
+        bpl.s   .dl_dy
+        neg.w   d5
+        addq.w  #2,d1
+.dl_dy:
+        cmp.w   d5,d4
+        ble.s   .dl_ymajor
+        move.w  d5,d0               ; x major: d4 = major, d5 = minor
+        lsl.w   #2,d0
+        sub.w   d4,d0
+        sub.w   d4,d0               ; error 4 minor - 2 major
+        cmp.b   #$5a,d6
+        bne.s   .dl_xoct
+        add.w   d5,d0
+        add.w   d5,d0
+        sub.w   d4,d0
+        sub.w   d4,d0               ; one point per row: 6 minor - 4 major
+        btst    #0,d1
+        bne.s   .dl_xoct
+        subq.w  #2,d0               ; positive x: half ties round toward larger x
+.dl_xoct:
+        move.b  .dl_xtab(pc,d1.w),d1
+        bra.s   .dl_sign
+.dl_xtab:
+        dc.b    $11,$15,$19,$1d
+.dl_ytab:
+        dc.b    $01,$09,$05,$0d
+.dl_ymajor:
+        exg     d4,d5
+        move.w  d5,d0
+        lsl.w   #2,d0
+        sub.w   d4,d0
+        sub.w   d4,d0
+        cmp.b   #$5a,d6
+        bne.s   .dl_yoct
+        btst    #0,d1
+        beq.s   .dl_yoct
+        subq.w  #2,d0               ; negative x: half ties still round toward larger x
+.dl_yoct:
+        move.b  .dl_ytab(pc,d1.w),d1
+.dl_sign:
+        tst.w   d0
+        bpl.s   .dl_pos
+        or.w    #$40,d1
+.dl_pos:
+        ext.l   d0
+        lsl.w   #2,d5               ; 4 minor
+        cmp.b   #$5a,d6
+        bne.s   .dl_wait
+        or.w    #2,d1               ; SING
+.dl_wait:
+        btst    #6,BLT_DMACONR(a0)  ; A1000 requires a dummy read before testing BBUSY
+.dl_busy:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .dl_busy
+        move.w  a2,BLT_CON0(a0)
+        move.w  d1,BLT_CON1(a0)
+        move.w  #$8000,BLT_ADAT(a0)
+        move.w  #$ffff,BLT_BDAT(a0)
+        move.w  d5,BLT_BMOD(a0)
+        move.l  d0,BLT_APT(a0)
+        move.l  a6,BLT_CPT(a0)
+        move.l  a6,BLT_DPT(a0)
+        move.w  d4,d0
+        lsl.w   #2,d0
+        sub.w   d0,d5
+        move.w  d5,BLT_AMOD(a0)     ; 4 minor - 4 major
+        lsl.w   #6,d4
+        btst    #1,d1
+        bne.s   .dl_size
+        add.w   #64,d4              ; full edges include their end point
+.dl_size:
+        or.w    #2,d4
+        move.w  d4,BLT_SIZE(a0)
+        rts
+
 ; ae_cross(d4/d5 = start, d2/d3 = end, a5): for each line y in [min y, max y[ of the edge, inversion of the point
 ; x = x(top) + round((y - y(top)) × dx / dy). Preserves d2-d7/a2-a6.
 ae_cross:
         tst.w   MK_CHECKED(a5)
         bne     ae_cross_checked
-        tst.w   MK_BLITOWN(a5)
-        bne     .ac_dma
         movem.l d2-d7/a1,-(sp)
         cmp.w   d3,d5
         ble.s   .ac_order
@@ -1395,28 +1540,6 @@ ae_cross:
 .ac_next:
         dbra    d2,.ac_row
         movem.l (sp)+,d2-d7/a1
-        rts
-.ac_dma:
-        movem.l d0-d7/a0-a3,-(sp)
-        move.w  d4,d0
-        move.w  d5,d1
-        cmp.w   d3,d1
-        ble.s   .ac_dma_order
-        exg     d0,d2
-        exg     d1,d3
-.ac_dma_order:
-        sub.w   MK_X0(a5),d0
-        sub.w   MK_X0(a5),d2
-        sub.w   MK_Y0(a5),d1
-        sub.w   MK_Y0(a5),d3
-        moveq   #0,d4
-        move.w  MK_L(a5),d4
-        moveq   #0,d5
-        move.w  #$101,d6
-        move.l  MK_BUF(a5),a0
-        suba.l  a1,a1
-        jsr     gfx_solidline_dma
-        movem.l (sp)+,d0-d7/a0-a3
         rts
 
 ; Legacy implicit origins may be outside the computed bounds; mk_bit must clip every crossing.

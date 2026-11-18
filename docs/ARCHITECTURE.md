@@ -176,8 +176,8 @@ normal ownership path, so a long preceding DMA cannot extend that scheduler guar
 leases and other tasks' ownership are preserved. Semaphore ownership, nesting and queue fields use named
 SignalSemaphore layout constants from `graphics.i`.
 
-AreaEnd can generate pure polygon crossing masks, fill them and complete their edges with the blitter. Crossing
-errors retain the CPU's rounding convention; descending exclusive fill of crossings shifted left one pixel
+AreaEnd can generate pure polygon crossing masks, fill them and complete their edges with the blitter (one line
+blit per edge, set up in registers by `ae_dmawalk`). Crossing errors retain the CPU's rounding convention; descending exclusive fill of crossings shifted left one pixel
 implements its left-inclusive/right-exclusive spans. Unpatterned masks are composited in one BltTemplate.
 The unpatterned compositor preserves the solid-rectangle mode operation: INVERSVID JAM1 and INVERSVID
 COMPLEMENT keep the destination; INVERSVID JAM2 uses the background pen; the other modes select normal
@@ -2514,6 +2514,14 @@ differs.
     is the constant 1 (A, C, D instead of B, C, D; JAM2 writes template 0s, so it keeps B with A as the edge mask).
     AreaEnd composites its word-aligned mask this way: `tests/fvperf_probe.sh` 50 filled polygons 1420 -> 1303 ms
     (real 1.3: 1008 ms), fingerprints unchanged; `tests/drawcheck.s` output identical.
+  - AreaEnd's edge passes on the blitter (`ae_dmawalk` / `dw_line`, `src/graphics/area.s`, 2026-11-18): while AreaEnd
+    owns the blitter the list holds polygons only, so pass 1 (one XOR point per row of [top, bottom[) and pass 3
+    (whole edges set or cleared from their start) walk it in registers and program one line blit per edge, the
+    mask's constant channels (edge masks, C/D modulo) written once per pass. They used to go through
+    `gfx_solidline_dma` with a twelve-register save per edge, on a stack and a frame in memory the line DMA competes
+    for; `gfx_solidline_dma` lost its crossing mode and only serves Draw. Same blits as before:
+    `tests/fvperf_probe.sh` 50 filled polygons 1303 -> 1029 ms (real 1.3: 1008 ms), fingerprint unchanged;
+    `tests/garea_probe.s` output and `tests/drawcheck.s` output identical.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a
