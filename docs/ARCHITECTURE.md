@@ -2501,7 +2501,7 @@ differs.
     screen, emulated time, plane fingerprints): 400 Draws 666 -> 553 ms, pixels identical; the real 1.3 takes 288 ms.
   - Draw on a layer (`gfx_Draw`, 2026-11-18): a BitMap of more than two planes skips `dr_directdraw` altogether;
     `dl_quick` then draws, in registers and without the drawing context, the line `dl_fast` would draw as one blit
-    when both ends lie in one visible ClipRect inside the layer and the BitMap, the layer lock is free or already
+    when both ends lie in one visible ClipRect that lies inside the layer and the BitMap, the layer lock is free or already
     held (a contended lock, a hidden ClipRect, a SuperBitMap or refreshing layer, COMPLEMENT and ONE_DOT go on to
     `dl_fast`, nothing changed). Same blit as `lb_core` and same RastPort update. `db_enter` acquires the blitter with
     `gfx_tryown`, which does not wait for it to be idle (every engine behind `db_enter` waits before programming a
@@ -2522,6 +2522,14 @@ differs.
     for; `gfx_solidline_dma` lost its crossing mode and only serves Draw. Same blits as before:
     `tests/fvperf_probe.sh` 50 filled polygons 1303 -> 1029 ms (real 1.3: 1008 ms), fingerprint unchanged;
     `tests/garea_probe.s` output and `tests/drawcheck.s` output identical.
+  - `dl_quick` with fewer memory accesses (2026-11-18): the layer lock and the blitter are taken under one Forbid and
+    given back under another (two Permit calls per line instead of four, no `gfx_tryown`/`gfx_DisownBlitter` call);
+    the ends are tested through their smaller and larger coordinates, so a ClipRect costs four comparisons, and it is
+    that visible ClipRect which must lie inside the layer and the BitMap (a line in a ClipRect that does not goes on
+    to `dl_fast`); the CHIP test of the planes keeps MaxLocMem in a register; the plane loop waits inline and builds
+    BLTCON0 in a register instead of the stack. On a 5-plane screen most of these accesses wait behind the previous
+    line's last plane. Same blits: `tests/fvperf_probe.sh` 400 Draws 399 -> 326 ms (real 1.3: 288 ms), moved outlines
+    395 -> 325 ms, fingerprints unchanged; `tests/drawcheck.s` and `tests/garea_probe.s` output identical.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

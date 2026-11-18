@@ -2689,8 +2689,9 @@ gfx_Draw:
 ; changed, the generic path takes the line. Once the context is set up, a line the single blit cannot take goes to
 ; the generic engine from here (dr_line with this context) instead of being handed back. Preserves all registers.
 ; dl_quick(a0 = layer, a1 = RastPort, d0/d1 = end, a6 = GfxBase): dl_fast's single blit for its most common case,
-; in registers, without the drawing context: both ends inside one visible ClipRect of the layer and inside the BitMap,
-; the layer lock free or already ours (a contended one is left to dl_fast, which waits for it), the blitter free.
+; in registers, without the drawing context: both ends inside one visible ClipRect of the layer that lies inside the
+; layer and the BitMap, the layer lock free or already ours (a contended one is left to dl_fast, which waits for it),
+; the blitter free or ours.
 ; Same blit as lb_core (first pixel's pattern bit RP_PATCNT, error 2m - M, M + 1 pixels, the RastPort's minterms)
 ; and the same RastPort update as dl_fast (cp, FRST_DOT cleared, pattern counter - 2M). -> Z clear when drawn;
 ; Z set: nothing was changed. Preserves all registers.
@@ -2708,28 +2709,46 @@ dl_quick:
         rts
 .dq_go:
         movem.l d0-d7/a0-a6,-(sp)
-        move.l  a0,a5                ; a5 = layer, a4 = RastPort, a3 = 1 when the lock was taken here
+        move.l  a0,a5                ; a5 = layer, a4 = RastPort, a3 = 1 when the layer lock was taken here
         move.l  a1,a4
         suba.l  a3,a3
-        move.l  4.w,a1
-        move.l  EB_THISTASK(a1),d6
-        cmp.l   LY_LOCK+GB_SS_OWNER(a5),d6
-        beq.s   .dq_held
-        addq.b  #1,EB_TDNEST(a1)     ; ObtainSemaphore's uncontended case inline, under Forbid
+        move.l  4.w,a6
+        move.l  EB_THISTASK(a6),d6
+        addq.b  #1,EB_TDNEST(a6)     ; one Forbid for both locks: the layer's (free or ours), then the blitter
+        cmp.l   LY_LOCK+GB_SS_OWNER(a5),d6   ; (gfx_tryown's: free or ours), both uncontended cases inline
+        beq.s   .dq_lk
         cmp.w   #-1,LY_LOCK+GB_SS_QUEUECOUNT(a5)
         bne.s   .dq_busy
         clr.w   LY_LOCK+GB_SS_QUEUECOUNT(a5)
         move.l  d6,LY_LOCK+GB_SS_OWNER(a5)
         move.w  #1,LY_LOCK+GB_SS_NESTCOUNT(a5)
         addq.w  #1,a3
-.dq_busy:
-        exg     a1,a6
+.dq_lk:
+        move.l  14*4(sp),a0          ; the caller's GfxBase
+        lea     gb_BlitSem(a0),a1
+        cmp.w   #-1,GB_SS_QUEUECOUNT(a1)
+        beq.s   .dq_take
+        cmp.l   GB_SS_OWNER(a1),d6
+        bne.s   .dq_bbusy
+.dq_take:
+        addq.w  #1,GB_SS_QUEUECOUNT(a1)
+        addq.w  #1,GB_SS_NESTCOUNT(a1)
+        move.l  d6,GB_SS_OWNER(a1)
+        addq.w  #1,gb_BlitLock(a0)   ; BlitLock counts this holder, the release takes it off again
+        move.w  #$8240,DMACON
         jsr     LVO_PERMIT(a6)
-        exg     a1,a6
-        cmpa.w  #0,a3
-        beq     .dq_out
+        bra.s   .dq_held
+.dq_bbusy:
+        cmpa.w  #0,a3                ; blitter taken by another task: give back the layer lock just taken
+        beq.s   .dq_busy
+        clr.w   LY_LOCK+GB_SS_NESTCOUNT(a5)
+        move.w  #-1,LY_LOCK+GB_SS_QUEUECOUNT(a5)
+        clr.l   LY_LOCK+GB_SS_OWNER(a5)
+.dq_busy:
+        jsr     LVO_PERMIT(a6)
+        bra     .dq_out
 .dq_held:
-        move.w  lr_MinX(a5),d4       ; absolute ends: d2/d3 start, d0/d1 end (offset = bounds - scroll)
+        move.w  lr_MinX(a5),d4      ; absolute ends: d2/d3 start, d0/d1 end (offset = bounds - scroll)
         sub.w   LY_SCROLLX(a5),d4
         move.w  lr_MinY(a5),d5
         sub.w   LY_SCROLLY(a5),d5
@@ -2737,89 +2756,59 @@ dl_quick:
         add.w   d4,d2
         move.w  rp_cp_y(a4),d3
         add.w   d5,d3
-        move.l  (sp),d0
         add.w   d4,d0
-        move.l  4(sp),d1
         add.w   d5,d1
-        move.w  d0,d4                ; M within the blit's range
-        sub.w   d2,d4
-        bpl.s   .dq_ax
-        neg.w   d4
-.dq_ax:
+        move.w  d2,d4                ; d4/d6 = smaller/larger x, d5/d7 = smaller/larger y
+        move.w  d0,d6
+        cmp.w   d4,d6
+        bge.s   .dq_xo
+        move.w  d0,d4
+        move.w  d2,d6
+.dq_xo:
+        move.w  d3,d5
+        move.w  d1,d7
+        cmp.w   d5,d7
+        bge.s   .dq_yo
         move.w  d1,d5
-        sub.w   d3,d5
-        bpl.s   .dq_ay
-        neg.w   d5
-.dq_ay:
-        cmp.w   d5,d4
-        bhs.s   .dq_am
-        move.w  d5,d4
-.dq_am:
-        cmp.w   #4,d4
-        blo     .dq_unlock
-        cmp.w   #1023,d4
-        bhi     .dq_unlock
-        move.l  rp_BitMap(a4),a2     ; both ends inside the BitMap and the layer
-        tst.w   d2
-        bmi     .dq_unlock
-        tst.w   d0
-        bmi     .dq_unlock
-        tst.w   d3
-        bmi     .dq_unlock
-        tst.w   d1
-        bmi     .dq_unlock
-        move.w  bm_BytesPerRow(a2),d5
-        lsl.w   #3,d5
-        cmp.w   d5,d2
-        bhs     .dq_unlock
-        cmp.w   d5,d0
-        bhs     .dq_unlock
-        cmp.w   bm_Rows(a2),d3
-        bhs     .dq_unlock
-        cmp.w   bm_Rows(a2),d1
-        bhs     .dq_unlock
-        cmp.w   lr_MinX(a5),d2
-        blt     .dq_unlock
-        cmp.w   lr_MinX(a5),d0
-        blt     .dq_unlock
-        cmp.w   lr_MaxX(a5),d2
-        bgt     .dq_unlock
-        cmp.w   lr_MaxX(a5),d0
-        bgt     .dq_unlock
-        cmp.w   lr_MinY(a5),d3
-        blt     .dq_unlock
-        cmp.w   lr_MinY(a5),d1
-        blt     .dq_unlock
-        cmp.w   lr_MaxY(a5),d3
-        bgt     .dq_unlock
-        cmp.w   lr_MaxY(a5),d1
-        bgt     .dq_unlock
-        move.l  LY_CLIPRECT(a5),d6   ; the ClipRect holding both ends must be a visible one
+        move.w  d3,d7
+.dq_yo:
+        move.l  LY_CLIPRECT(a5),a0   ; the ClipRect holding both ends must be a visible one
 .dq_cr:
+        cmpa.w  #0,a0
         beq     .dq_unlock
-        move.l  d6,a0
-        cmp.w   CR_MINX(a0),d2
+        cmp.w   CR_MINX(a0),d4
         blt.s   .dq_nx
-        cmp.w   CR_MAXX(a0),d2
+        cmp.w   CR_MAXX(a0),d6
         bgt.s   .dq_nx
-        cmp.w   CR_MINX(a0),d0
+        cmp.w   CR_MINY(a0),d5
         blt.s   .dq_nx
-        cmp.w   CR_MAXX(a0),d0
-        bgt.s   .dq_nx
-        cmp.w   CR_MINY(a0),d3
-        blt.s   .dq_nx
-        cmp.w   CR_MAXY(a0),d3
-        bgt.s   .dq_nx
-        cmp.w   CR_MINY(a0),d1
-        blt.s   .dq_nx
-        cmp.w   CR_MAXY(a0),d1
+        cmp.w   CR_MAXY(a0),d7
         ble.s   .dq_found
 .dq_nx:
-        move.l  CR_NEXT(a0),d6
+        move.l  CR_NEXT(a0),a0
         bra.s   .dq_cr
 .dq_found:
         tst.l   CR_LOBS(a0)
         bne     .dq_unlock
+        movem.w CR_MINX(a0),d4-d7    ; that ClipRect inside the layer and the BitMap, so both ends are
+        tst.w   d4
+        bmi     .dq_unlock
+        tst.w   d5
+        bmi     .dq_unlock
+        cmp.w   lr_MinX(a5),d4
+        blt     .dq_unlock
+        cmp.w   lr_MinY(a5),d5
+        blt     .dq_unlock
+        cmp.w   lr_MaxX(a5),d6
+        bgt     .dq_unlock
+        cmp.w   lr_MaxY(a5),d7
+        bgt     .dq_unlock
+        move.l  rp_BitMap(a4),a2
+        lsr.w   #3,d6
+        cmp.w   bm_BytesPerRow(a2),d6
+        bhs     .dq_unlock
+        cmp.w   bm_Rows(a2),d7
+        bhs     .dq_unlock
         btst    #0,bm_BytesPerRow+1(a2)   ; db_enter's checks: even stride, every enabled plane in CHIP RAM
         bne     .dq_unlock
         moveq   #0,d6
@@ -2827,24 +2816,20 @@ dl_quick:
         cmp.w   #8,d6
         bhi     .dq_unlock
         move.b  rp_Mask(a4),d5
-        lea     bm_Planes(a2),a0
         move.l  4.w,a1
+        move.l  EB_MAXLOCMEM(a1),d7
+        lea     bm_Planes(a2),a0
         bra.s   .dq_pt
 .dq_pv:
         move.l  (a0)+,d4
-        btst    #0,d5
-        beq.s   .dq_pn
+        lsr.b   #1,d5
+        bcc.s   .dq_pt
         btst    #0,d4
         bne     .dq_unlock
-        cmp.l   EB_MAXLOCMEM(a1),d4
+        cmp.l   d7,d4
         bhs     .dq_unlock
-.dq_pn:
-        lsr.b   #1,d5
 .dq_pt:
         dbra    d6,.dq_pv
-        move.l  14*4(sp),a6          ; the caller's GfxBase
-        bsr     gfx_tryown
-        beq     .dq_unlock
         ; the blit (lb_core's set-up with the ClipRect's origin at 0)
         move.w  d0,d4                ; d4 = dx, d5 = dy (signed), d6 = BLTCON1
         sub.w   d2,d4
@@ -2884,6 +2869,10 @@ dl_quick:
         bpl.s   .dq_oct
         or.w    #4,d6
 .dq_oct:
+        cmp.w   #4,d0                ; M within the blit's range
+        blo     .dq_unlock
+        cmp.w   #1023,d0
+        bhi     .dq_unlock
         move.w  d0,d4                ; d4 = M
         add.w   d1,d1
         add.w   d1,d1                ; d1 = 4m (BLTBMOD)
@@ -2893,36 +2882,39 @@ dl_quick:
         bpl.s   .dq_sg
         or.w    #$40,d6              ; SIGN
 .dq_sg:
-        move.w  d4,d0
-        addq.w  #1,d0
-        lsl.w   #6,d0
-        or.w    #2,d0
-        move.w  d0,-(sp)             ; BLTSIZE
+        ext.l   d5
+        move.w  d1,d7
+        sub.w   d4,d7
+        sub.w   d4,d7
+        sub.w   d4,d7
+        sub.w   d4,d7                ; d7 = 4m - 4M (BLTAMOD)
+        addq.w  #1,d4
+        lsl.w   #6,d4
+        or.w    #2,d4                ; d4 = BLTSIZE
         moveq   #0,d0
         move.w  bm_BytesPerRow(a2),d0
         mulu    d3,d0
-        moveq   #0,d7
-        move.w  d2,d7
-        lsr.w   #4,d7
-        add.w   d7,d7
-        add.l   d7,d0                ; byte offset of the first pixel's word
+        moveq   #0,d3
+        move.w  d2,d3
+        lsr.w   #4,d3
+        add.w   d3,d3
+        add.l   d3,d0                ; byte offset of the first pixel's word
         move.w  d2,d3
         and.w   #15,d3
         ror.w   #4,d3
-        or.w    #$0b00,d3            ; BLTCON0 base: A shift, A C D
+        or.w    #$0b00,d3            ; BLTCON0: A shift, A C D; its low byte takes each plane's minterm
         lea     CUSTOM,a0
-        bsr     db_wait
+        btst    #6,BLT_DMACONR(a0)   ; the previous line's last plane may still be drawing (dummy read first)
+.dq_w0:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .dq_w0
         move.l  #$ffffffff,BLT_AFWM(a0)
         move.w  #$8000,BLT_ADAT(a0)
         move.w  bm_BytesPerRow(a2),BLT_CMOD(a0)
         move.w  bm_BytesPerRow(a2),BLT_DMOD(a0)
         move.w  d1,BLT_BMOD(a0)
-        sub.w   d4,d1
-        sub.w   d4,d1
-        sub.w   d4,d1
-        sub.w   d4,d1                ; 4m - 4M
-        move.w  d1,BLT_AMOD(a0)
-        ext.l   d5
+        move.w  d7,BLT_AMOD(a0)
+        movea.w rp_LinePtrn(a4),a6   ; a6 = BLTBDAT
         moveq   #0,d2
         move.b  bm_Depth(a2),d2
         move.b  rp_Mask(a4),d7
@@ -2931,54 +2923,68 @@ dl_quick:
         bra.s   .dq_bt
 .dq_bp:
         move.l  (a2)+,a1
-        btst    #0,d7
-        beq.s   .dq_bn
+        lsr.b   #1,d7
+        bcc.s   .dq_bn
         adda.l  d0,a1
-        move.w  d3,-(sp)
-        move.b  RP_MINT(a4,d1.w),1(sp)
-        bsr     db_wait
-        move.w  (sp)+,BLT_CON0(a0)
+        move.b  RP_MINT(a4,d1.w),d3
+        btst    #6,BLT_DMACONR(a0)
+.dq_wp:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .dq_wp
+        move.w  d3,BLT_CON0(a0)
         move.w  d6,BLT_CON1(a0)
-        move.w  rp_LinePtrn(a4),BLT_BDAT(a0)
+        move.w  a6,BLT_BDAT(a0)
         move.l  d5,BLT_APT(a0)
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)
-        move.w  (sp),BLT_SIZE(a0)
+        move.w  d4,BLT_SIZE(a0)
 .dq_bn:
-        lsr.b   #1,d7
         addq.w  #1,d1
 .dq_bt:
         dbra    d2,.dq_bp
-        addq.l  #2,sp
-        jsr     gfx_DisownBlitter    ; the last plane may still be drawing, as after lb_core
         move.w  2(sp),rp_cp_x(a4)    ; the caller's end, layer coordinates
         move.w  6(sp),rp_cp_y(a4)
         bclr    #0,rp_Flags+1(a4)    ; FRST_DOT cleared, pattern counter - M, once more for the layer
+        lsr.w   #6,d4
+        subq.w  #1,d4
         sub.b   d4,RP_PATCNT(a4)
         sub.b   d4,RP_PATCNT(a4)
-        moveq   #1,d6                ; drawn
+        moveq   #1,d6                ; drawn; the last plane may still be drawing, as after lb_core
         bra.s   .dq_rel
 .dq_unlock:
         moveq   #0,d6
 .dq_rel:
-        cmpa.w  #0,a3
-        beq.s   .dq_end
-        move.l  4.w,a6               ; ReleaseSemaphore inline when held once and nobody waits (dr_end)
-        lea     LY_LOCK(a5),a0
-        addq.b  #1,EB_TDNEST(a6)
+        move.l  4.w,a6               ; one Forbid to give back both: the blitter (DisownBlitter's inline case),
+        addq.b  #1,EB_TDNEST(a6)     ; then the layer lock when taken here (dr_end's)
+        move.l  14*4(sp),a0
+        subq.w  #1,gb_BlitLock(a0)
+        lea     gb_BlitSem(a0),a0
         cmp.w   #1,GB_SS_NESTCOUNT(a0)
-        bne.s   .dq_slow
+        bne.s   .dq_bslow
         tst.w   GB_SS_QUEUECOUNT(a0)
-        bne.s   .dq_slow
+        bne.s   .dq_bslow
+        clr.w   GB_SS_NESTCOUNT(a0)
+        move.w  #-1,GB_SS_QUEUECOUNT(a0)
+        clr.l   GB_SS_OWNER(a0)
+        bra.s   .dq_lrel
+.dq_bslow:
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.dq_lrel:
+        cmpa.w  #0,a3
+        beq.s   .dq_perm
+        lea     LY_LOCK(a5),a0
+        cmp.w   #1,GB_SS_NESTCOUNT(a0)
+        bne.s   .dq_lslow
+        tst.w   GB_SS_QUEUECOUNT(a0)
+        bne.s   .dq_lslow
         clr.w   GB_SS_NESTCOUNT(a0)
         move.w  #-1,GB_SS_QUEUECOUNT(a0)
         clr.l   GB_SS_OWNER(a0)
         bra.s   .dq_perm
-.dq_slow:
+.dq_lslow:
         jsr     LVO_RELEASESEMAPHORE(a6)
 .dq_perm:
         jsr     LVO_PERMIT(a6)
-.dq_end:
         tst.w   d6
         bra.s   .dq_ret
 .dq_out:
