@@ -2477,8 +2477,7 @@ differs.
   - Since 2026-11-17, `bt_blit` also takes templates cut on the left by a ClipRect and templates whose xSrc is 16
     or more: B starts at the word holding the template bit under the first kept column, and the shift is the
     destination phase minus that bit's phase (still CPU when negative). Fantavision's window-clipped
-    full-screen templates used the CPU loop before. `it_ptrapply` returns at once when the default pointer is
-    already on sprite 0 for no window (Fantavision calls ClearPointer about 46 times per frame while playing).
+    full-screen templates used the CPU loop before.
   - `br_blit` (BltBitMapRastPort, since 2026-11-12): a source whose phase in its word does not exceed the
     destination's goes to the blitter too (B shift = destination phase − source phase, source pointer at its first
     word); the bits shifted in from the previous word fall under the first-word mask. Clock's resize copies took

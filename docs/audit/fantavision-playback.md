@@ -7,6 +7,11 @@ base `8bbb195`. Source files changed: `src/graphics/draw.s` (`bt_blit`, +14/−6
 **Clean-room verdict: PASS.** No match reaches the notable threshold, no code/table match of 4 tokens or more falls
 in the changed bytes, and the AROS longest passages are unchanged.
 
+**Follow-up (2026-11-18).** After review, the `it_ptrapply` change was dropped: it hid the pointer after the
+Workbench 1.3.3 boot until the mouse moved. `src/intuition/pointer.s` is back to the base byte for byte, so the
+remaining source change is `bt_blit` alone. `draw.o` is the object measured below, unchanged; the binary figures
+of §1 therefore cover it (no rerun). §2 gives the AROS figures for the final diff as well.
+
 ## 1. Binary similarity (separate analysis agent)
 
 | role | prod ROM sha1 | linked size |
@@ -45,6 +50,9 @@ under `python3 -I`, so only the `mots` stream was measured, against the threshol
 | norm, 12 | 2,089 / 2,430 / 2,185 → identical | 24 / 28 / 28, identical |
 | struct, 12 | 10,159 / 13,613 / 11,189 → 10,206 / 13,676 / 11,232 | 30 / 31 / 28, identical |
 | k = 20 and 30, all levels | identical | identical |
+
+Final diff (`draw.s` only): query 35,100 tokens (exact); exact and norm k=12 identical to the base; struct k=12
+10,184 / 13,643 / 11,201; longest passages 19 / 19 / 19, 24 / 28 / 28 and 30 / 31 / 28, identical to the base.
 
 Only the structural k=12 coverage moves, by about the same amount against unrelated AROS code as against the
 comparable code (branch/test idioms).

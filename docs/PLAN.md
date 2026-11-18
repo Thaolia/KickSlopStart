@@ -18,9 +18,11 @@ five-plane OR workloads. Independent official-ROM observations confirm the repea
 registered split-view/freehand captures match in both drawing directions, including held-button updates.
 
 Fantavision playback update (2026-11-17): BltTemplate takes the blitter for templates clipped on the left and
-for xSrc ≥ 16 (the B start moves to the word under the first kept column), and ClearPointer does nothing when the
-default pointer is already shown. Profiled on the production ROM during movie playback: the pointer reloads cost
-about 20% of the CPU and the CPU template loop about 21%. `tests/drawcheck.s` fingerprints are unchanged.
+for xSrc ≥ 16 (the B start moves to the word under the first kept column). Profiled on the production ROM during
+movie playback, the CPU template loop took about 21% of the CPU. Skipping ClearPointer when the default pointer
+looked already shown was dropped: its test does not prove the sprite is placed in the current View (Workbench
+1.3.3 boot showed no pointer until the mouse moved), and Fantavision plays the same frames without it.
+`tests/drawcheck.s` fingerprints are unchanged.
 
 Exec interrupt latency update (2026-11-15, issue #43): the level 1-6 autovectors save only D0/D1/A0/A1/A5/A6, the
 1.3 frame, and build the full scheduler frame only when the exit reschedules. Dispatch uses constant `IntVects` offsets
