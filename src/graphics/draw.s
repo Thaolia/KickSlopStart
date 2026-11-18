@@ -3953,16 +3953,32 @@ bt_blit:
         bne.s   .tb_regs
         move.w  #$070a,d0
 .tb_regs:
+        move.w  TB_FWM(a4),BLT_AFWM(a0)
+        move.w  TB_LWM(a4),BLT_ALWM(a0)
+        move.w  TB_DMOD(a4),BLT_CMOD(a0)
+        move.w  TB_DMOD(a4),BLT_DMOD(a0)
+        tst.w   TB_SHIFT(a4)         ; no shift and a template 0 that keeps the destination (JAM1, COMPLEMENT: the
+        bne.s   .tb_bsrc             ; minterm's A!BC = 1, A!B!C = 0, and it is symmetric in A and B): the
+        move.b  d0,d4                ; template goes through A, whose edge masks then fall in place (a masked
+        and.b   #$30,d4              ; column reads as a template 0), and B is the constant 1: A, C, D instead of
+        cmp.b   #$20,d4              ; B, C, D. JAM2 writes template 0s, so it keeps B
+        bne.s   .tb_bsrc
+        and.w   #$00ff,d0
+        or.w    #$0b00,d0
+        move.w  d0,BLT_CON0(a0)
+        clr.w   BLT_CON1(a0)
+        move.w  #$ffff,BLT_BDAT(a0)
+        move.w  TB_SMOD(a4),BLT_AMOD(a0)
+        move.l  TB_SRC(a4),BLT_APT(a0)
+        bra.s   .tb_dst
+.tb_bsrc:
         move.w  d0,BLT_CON0(a0)
         move.w  TB_SHIFT(a4),BLT_CON1(a0)
         clr.w   BLT_BDAT(a0)
         move.w  #$ffff,BLT_ADAT(a0)
-        move.w  TB_FWM(a4),BLT_AFWM(a0)
-        move.w  TB_LWM(a4),BLT_ALWM(a0)
         move.w  TB_SMOD(a4),BLT_BMOD(a0)
-        move.w  TB_DMOD(a4),BLT_CMOD(a0)
-        move.w  TB_DMOD(a4),BLT_DMOD(a0)
         move.l  TB_SRC(a4),BLT_BPT(a0)
+.tb_dst:
         adda.l  TB_DOFF(a4),a1
         move.l  a1,BLT_CPT(a0)
         move.l  a1,BLT_DPT(a0)

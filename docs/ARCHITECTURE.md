@@ -2509,6 +2509,11 @@ differs.
     (area, 2-plane direct path) still waits. `tests/fvperf_probe.sh`: 400 Draws 553 -> 399 ms (real 1.3: 288 ms),
     test M (moved outlines, pens 1..20, dashed LinePtrn) gives the real 1.3's fingerprint on all five planes;
     `tests/drawcheck.s` output identical.
+  - BltTemplate's blitter path (`bt_blit`): with no shift and a minterm where a template 0 keeps the destination
+    (JAM1, COMPLEMENT), the template goes through A, whose edge masks then fall on the destination columns, and B
+    is the constant 1 (A, C, D instead of B, C, D; JAM2 writes template 0s, so it keeps B with A as the edge mask).
+    AreaEnd composites its word-aligned mask this way: `tests/fvperf_probe.sh` 50 filled polygons 1420 -> 1303 ms
+    (real 1.3: 1008 ms), fingerprints unchanged; `tests/drawcheck.s` output identical.
   - RegionRectangle pool (`rp_alloc` / `rp_free` / `gfx_rpflush`, `src/graphics/regions.s`): the 16-byte blocks of
     region nodes and Region headers freed by graphics are kept (at most 128, 2 KB; `GFX_RPOOL`/`GFX_RPOOLN` in low
     RAM) and handed out again before exec is asked, under Forbid; each one is a genuine AllocMem(16) block, so a

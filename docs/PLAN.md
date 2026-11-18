@@ -21,7 +21,7 @@ Fantavision playback (2026-11-18): one loop of the Dinosaurs movie takes 58 s on
 v0.2.66 (wall clock, one Amiberry session alone). A PC profile put 21% of the time in waits for `br_blit` blits,
 nearly all full-screen background copies with full edge masks; they now run as A -> D without the C fetch (-13%).
 Still open: the BltTemplate part of PR #46 and the area-fill path. `tests/fvperf_probe.sh` (emulated time) against
-the real 1.3: 400 Draws 399 ms (288), 50 filled polygons 1425 ms (1008), 20 full-window copies 271 ms (420),
+the real 1.3: 400 Draws 399 ms (288), 50 filled polygons 1303 ms (1008), 20 full-window copies 271 ms (420),
 50 RectFills 138 ms (113); the plane fingerprints match. Not waiting for the last plane at the end of `br_blit`
 gave no measurable gain (tried, reverted).
 
