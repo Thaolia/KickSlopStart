@@ -10,10 +10,13 @@ for the measured evidence. It is released under the MIT License.
 - **Emulators:** select the `.rom` file as the Kickstart ROM in FS-UAE (`kickstart_file`) or WinUAE, with an A500
   configuration (68000, OCS, 512 KiB chip RAM; 512 KiB slow RAM recommended). It boots Workbench 1.3.3 and a number
   of games and tools; see the README for what works.
-- **Soft-kick disk:** the `.adf` loads KickSlopStart into slow RAM from an A500 that keeps its Kickstart 1.3
-  (512 KiB slow RAM at `$C00000` required), then waits on its insert-disk screen for the disk to boot. A reset comes
-  back to KickSlopStart; switching off returns to the Kickstart in ROM.
-- **Real hardware:** the soft-kick disk boots on a real A500 (minimum 512 KiB chip + 512 KiB slow RAM). The `.rom`
+- **Soft-kick disk:** boot the `.adf` from the Kickstart already in the machine. It loads KickSlopStart into slow RAM
+  at `$C00000` when there is some, otherwise into chip RAM above 512 KiB (at least 1 MiB of chip RAM: A500 with a
+  1 MiB Agnus, A1200; 256 KiB of chip RAM are taken), then waits on its insert-disk screen for the disk to boot. A
+  reset comes back to KickSlopStart; switching off returns to the Kickstart in ROM. Tested under emulation from
+  Kickstart 1.3 and 3.1 hosts, 68000 and 68020; 68040/060 are not supported, and on an A1200 only floppies work
+  (no IDE or PCMCIA under a 1.3 OS).
+- **Real hardware:** the soft-kick disk boots on a real A500 (512 KiB chip + 512 KiB slow RAM). The `.rom`
   in an EPROM is not tested yet: a 256 KiB image is what a Kickstart 1.3 socket expects; EPROM adapters may need the
   image doubled or byte-swapped, depending on the chip.
 
