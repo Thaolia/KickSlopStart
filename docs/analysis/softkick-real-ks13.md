@@ -187,3 +187,80 @@ the custom chips keep what the host left), registers read through IPC while gdb 
   count per second while the drive is idle, the CIA-B ICR read at the first `AbleICR`, and for SysInfo, after a dead
   MEMORY click, the window list, the SysInfo process's `tc_SigWait`/`tc_SigRecvd` and its IDCMP port (as read above
   through the debugger), plus `PTR_X`/`PTR_Y` against the gadget box, to tell a missed aim from a lost event.
+
+## 2026-11-21: soft-kick into chip RAM (disk build with the chip-RAM fallback), real Kickstart 1.3
+
+Subject: the soft-kick ADF whose boot code, when no slow RAM covers `$C00000`-`$C3FFFF` and ExecBase->MaxLocMem is at
+least 1 MB, tries AllocAbs of 256 KB at (MaxLocMem - 256 KB) rounded down to 64 KB, then 64 KB lower each time down
+to `$80000`, and relocates our image into the first block it gets (reset entry = image start + `$D2`, put in
+ColdCapture). Companion page for a 3.x host: `softkick-chip-ks3x.md`.
+
+### Setup
+
+- Headless Amiberry v8.4.2 through `amiberry-session --analysis`, `--model A500` preset, 68000, cycle-exact (forced
+  for this ROM). Host ROM: the Commodore Kickstart 1.3 (34.5).
+- DF0: a session copy of the ADF under test (md5 `e7882e57…` for the original, never written).
+- A1 used `chipset=ecs_agnus` (an 8372A Agnus, needed by a real A500 to address 1 MB of chip RAM); A2 and A3 used the
+  preset's OCS chipset.
+- Memory read with IPC `READ_MEM` (ExecBase = long at 4; ColdCapture `+$2A`, SysStkUpper `+$36`, SysStkLower `+$3A`,
+  MaxLocMem `+$3E`, MemList `+$142`); free lists walked through `mh_First`/`mc_Next`. Entries into our image proved
+  with an IPC logging fetch watch on the reset entry, which survives resets; "from the ROM" below means that the
+  fetching instruction's PC lay inside the Kickstart ROM range, "from chip RAM" that it lay in chip RAM (the disk's
+  boot code). Every screen mentioned was looked at (IPC screenshots).
+
+### A1: chip 1024 KB, slow 0 KB
+
+- **MaxLocMem reported by 1.3 itself**: `$100000` (1 MB), read in the ROM's own ExecBase (`$676`) while the ROM was
+  still initialising (white screen, about 8 s after a memory-clearing reset), i.e. before the bootblock ran. The same
+  ExecBase gave SysStkUpper = `$100000` and SysStkLower = `$FE800`: **1.3 puts its 6 KB supervisor stack at the very
+  top of chip RAM** when chip RAM is 1 MB. Its chip MemHeader at that time: `mh_Lower` `$8E8`, **`mh_Upper` `$FE800`**
+  (the stack is outside the header), free = `$F4378` in two chunks (16 bytes at `$1C08`, then `$A498` up to
+  `$FE800`).
+- Consequence, as observed: the first candidate block (`$C0000`-`$FFFFF`) overlaps that stack and is not taken; the
+  image lands **one 64 KB step lower**: ColdCapture = **`$B00D2`** (image at `$B0000`-`$EFFFF`). Reproduced on two
+  boots (first start and after `RESET HARD`).
+- Our image then runs (serial `EXEC coldstart: overlay off, stack live (RAM)`, `MEM SLOW KB=0000`, its ExecBase at
+  `$1276`, ColdCapture `$B00D2`). Our image's own ExecBase reports MaxLocMem = `$100000` too (its own sizing), with
+  its supervisor stack low (`$2500`-`$3500`). Its chip MemHeader runs `$3500`-`$100000` and the free list has a hole
+  exactly over the image: one chunk ends at `$B0000`, the next starts at `$F0000` (64 KB above the image stays free).
+- Disk still in DF0: our insert-disk (cat) screen, about 20-30 s after the start. **Pass.**
+- IPC `RESET`: 1 fetch-watch hit on `$B00D2`, from the ROM; white screen, then the cat screen again (seen at 26 s);
+  ColdCapture still `$B00D2`. **Pass.**
+- IPC `RESET SOFT`: 1 hit from the ROM; dark purple at 1 s, white at 4 and 10 s, cat screen at 25 s; ColdCapture
+  `$B00D2`, ExecBase `$1276`. **Pass.**
+- `RESET HARD` (memory cleared): full 1.3 cold start, normal disk boot, image reloaded at `$B0000` again (cat
+  screen). Expected fallback.
+- Disk swap to a copy of the Workbench 1.3.3 disk (IPC `EJECT_FLOPPY 0`, `INSERTFLOPPY`): serial
+  `M6Y STRAP BOOTED OK`, `E2 SHELL READY`; startup-sequence in the AmigaSlopDOS window at 30-105 s; **Workbench
+  desktop** (title bar "Workbench release. 619072 free memory", RAM DISK and Workbench1.3 icons) on the 150 s
+  screenshot. ColdCapture still `$B00D2` afterwards. **Pass.**
+
+### A2: chip 512 KB, slow 512 KB (non-regression)
+
+- Image loaded at `$C00000`: ColdCapture = **`$C000D2`**, serial `MEM SLOW KB=0200`, cat screen at 40 s. Our
+  ExecBase read `$C40276` here (above the image in slow RAM; the 2026-11-10 runs saw `$C00276` at entry and `$1276`
+  in the first test of this page, so this value depends on the build and the moment of the read; not investigated).
+- IPC `RESET`: 1 hit on `$C000D2` from the ROM, cat screen again at 25 s, ColdCapture `$C000D2`. **Pass.**
+
+### A3: chip 512 KB, slow 0 KB
+
+- MaxLocMem (ROM ExecBase) = `$80000`, below 1 MB: no chip-RAM attempt. ColdCapture 0, ROM ExecBase `$676`,
+  serial log empty (our image never ran).
+- Screen at 40 s: the standard Commodore `AmigaDOS` CLI (Copyright 1987, Release 1.3, prompt `1>`). The DOS device
+  list (walked from dos.library's RootNode) holds a volume node named **`KickSlopStart`**. **Pass** (normal boot of
+  the disk, as designed).
+
+### Summary
+
+| Test | Result |
+|---|---|
+| A1 1 MB chip: loads into chip RAM | pass, at `$B0000` (top block refused: 1.3's supervisor stack at `$FE800`-`$FFFFF`) |
+| A1 cat screen with the disk in | pass |
+| A1 IPC `RESET` / `RESET SOFT` through ColdCapture | pass / pass (hit from the ROM each time) |
+| A1 Workbench 1.3.3 afterwards | pass |
+| A2 slow RAM non-regression | pass (`$C000D2`) |
+| A3 no suitable memory | pass (Commodore CLI, volume `KickSlopStart`) |
+
+Point for the implementation side: with 1 MB of chip RAM the top 64 KB step is always lost on 1.3 because the ROM's
+supervisor stack sits at the top; the image starts at `$B0000` and `$F0000`-`$FFFFF` stays free in our image's pool.
+Not a failure.

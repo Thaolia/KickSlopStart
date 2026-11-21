@@ -127,17 +127,24 @@ de la release, avec les commits depuis la release précédente.
 
 ## Disquette de soft-kick (sans changer de ROM)
 
-**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM** (un A500 avec son extension A501 dans la trappe). Sans slow
-RAM, le `.adf` ne peut pas lancer KickSlopStart, qui s'y installe. Testée sur un vrai A500.
+**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM, ou 1 Mio de chip RAM.** La disquette installe KickSlopStart
+(256 Kio) dans la slow RAM en `$C00000` quand il y en a (un A500 avec son extension A501 dans la trappe ; testée sur
+un vrai A500). Sinon, elle le reloge dans la chip RAM au-dessus de 512 Kio, aussi haut qu'un bloc libre le permet :
+un A500 avec un Agnus 1 Mio, ou un A1200 à la manière de Relokick (testée avec un 68020 ; 68030 non testé, 68040/060
+non pris en charge). La fast RAM d'une carte d'extension ou d'une carte accélératrice ne peut pas l'accueillir :
+cette RAM n'est pas encore configurée quand un reset revient sur l'image.
 
 Chaque release fournit aussi `KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
-[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Bootez-la sur un
-Amiga 500 qui garde son Kickstart 1.3 et dispose de 512 Kio de slow RAM en `$C00000` (extension A501 de la trappe) :
-son bootblock charge KickSlopStart dans les 256 premiers Kio de cette RAM et le démarre ; le reste de la slow RAM reste
-disponible. KickSlopStart affiche alors son écran d'insertion : retirez la disquette de soft-kick, insérez celle que
-vous voulez, et il la boote. Un reset (Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart en
-ROM appelle au reset ; éteindre la machine ramène au Kickstart en ROM. Sans slow RAM, la disquette boote normalement
-sur le Kickstart en ROM. Pour la construire : `make adf` (`build/KickSlopStart.adf`).
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Bootez-la sur
+le Kickstart de la machine (1.3, ou 2.x/3.x) : son bootblock charge KickSlopStart et le démarre. En slow RAM il prend
+les 256 premiers Kio et le reste reste disponible ; en chip RAM il prend 256 Kio de la chip utilisable par les
+programmes (avec 1 Mio de chip, il reste environ 600 Kio libres au Workbench). KickSlopStart affiche alors son écran
+d'insertion : retirez la disquette de soft-kick, insérez celle que vous voulez, et il la boote. Un reset
+(Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart en ROM appelle au reset ;
+éteindre la machine ramène au Kickstart en ROM. Sans assez de slow RAM ni 1 Mio de chip, la disquette boote
+normalement sur le Kickstart en ROM. Sur A1200, seuls les lecteurs de disquette fonctionnent : KickSlopStart, comme
+la 1.3, ne connaît ni son port IDE ni le PCMCIA. Testée en émulation avec une vraie 1.3 (1 Mio de chip) et un
+Kickstart 3.1 (68020, 2 Mio de chip). Pour la construire : `make adf` (`build/KickSlopStart.adf`).
 
 ## Signaler un problème
 
@@ -194,7 +201,7 @@ Les instructions d'installation sont dans [`docs/HARDWARE.md`](docs/HARDWARE.md)
 make             # build/kick13.rom       ROM de développement (avec le harnais d'auto-test)
 make kick-prod   # build/kick13-prod.rom  ROM de production (-DPROD=1, sans harnais de test ni copie de la console sur le port série)
 make verify      # vérifie la taille (256 Kio) et que romtool donne is_kick = ok
-make adf         # build/KickSlopStart.adf disquette de soft-kick (image liée en $C00000, -DRAMKICK=1)
+make adf         # build/KickSlopStart.adf disquette de soft-kick (image liée en $C00000 + table de relocation, -DRAMKICK=1)
 make kick-a1200  # build/kick13-a1200.rom image de 512 Kio pour le support ROM d'un A1200/A4000 (la ROM de production deux fois)
 ```
 
@@ -225,7 +232,7 @@ src/graphics/    graphics.library, layers.library, écran de démarrage
 src/intuition/   intuition.library
 src/dos/         dos.library, handlers, CLI/shell, Workbench
 src/rom/         assemblage de l'image (remplissage, pied, somme de contrôle) et la hello-ROM M0
-src/softkick/    disquette de soft-kick : bootblock chargeur et construction de l'ADF
+src/softkick/    disquette de soft-kick : bootblock chargeur, construction de la table de relocation et de l'ADF
 docs/            plan, architecture, matériel et outils, règles de salle blanche
 docs/analysis/   spécifications écrites par la piste analyse
 tests/           harnais d'émulation et programmes de test

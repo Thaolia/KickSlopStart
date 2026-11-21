@@ -71,12 +71,24 @@ kick-a1200: kick-prod
 	cat build/kick13-prod.rom build/kick13-prod.rom > build/kick13-a1200.rom
 
 # kick-ram: production image linked at $C00000 (-DRAMKICK=1, see src/exec/exec.i), loaded into slow RAM by the
-# soft-kick disk. adf: that disk, build/KickSlopStart.adf (bootblock src/softkick/bootblock.s + the image).
+# soft-kick disk. The same objects linked again at RAM2BASE give, through src/softkick/mkreloc.py, the relocation
+# table (build/kick13-ram.rel) the disk applies when it loads the image in chip RAM instead.
+# adf: that disk, build/KickSlopStart.adf (bootblock src/softkick/bootblock.s + the image + the table).
+RAM2BASE := 0x100000
+RAM_OBJ  := $(patsubst $(BUILD)/%,build/ram/%,$(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ))
 kick-ram:
 	$(MAKE) BUILD=build/ram VASMDEF="-DPROD=1 -DRAMKICK=1" LDSCRIPT=$(EXEC_DIR)/kick-ram.ld MKROMBASE=0xC00000 \
 	  KICK_ROM=build/kick13-ram.bin kick
+	sed 's/org = 0xc00000/org = $(RAM2BASE)/' $(EXEC_DIR)/kick-ram.ld > build/ram/kick-ram2.ld
+	grep -q 'org = $(RAM2BASE)' build/ram/kick-ram2.ld
+	$(VLINK) -b rawbin1 -T build/ram/kick-ram2.ld -o build/ram/kick2.bin $(RAM_OBJ)
+	$(PYTHON) $(MKROM) --in build/ram/kick2.bin --out build/kick13-ram2.bin --size 256 --base $(RAM2BASE) \
+	  --id "KickSlopStart $(KSS_VERSION)"
+	$(PYTHON) src/softkick/mkreloc.py --image build/kick13-ram.bin --base 0xC00000 \
+	  --image2 build/kick13-ram2.bin --base2 $(RAM2BASE) --out build/kick13-ram.rel
 adf: kick-ram $(BUILD)/bootblock.bin
-	$(PYTHON) src/softkick/mkadf.py --boot $(BUILD)/bootblock.bin --image build/kick13-ram.bin --out $(BUILD)/KickSlopStart.adf
+	$(PYTHON) src/softkick/mkadf.py --boot $(BUILD)/bootblock.bin --image build/kick13-ram.bin \
+	  --reloc build/kick13-ram.rel --out $(BUILD)/KickSlopStart.adf
 $(BUILD)/bootblock.bin: src/softkick/bootblock.s | $(BUILD)
 	$(VASM) -Fbin -m68000 -o $@ $<
 

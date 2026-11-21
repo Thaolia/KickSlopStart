@@ -21,6 +21,9 @@ __pycache__/
 # Proprietary Kickstart ROM — NEVER commit or distribute.
 # Each user provides their own copy in assets/ (see README).
 /assets/kick34005.A500
+/assets/kick*
+# Third-party soft-kick loaders (Relokick, MKick, SKick): local reference copies, not ours to distribute
+/assets/softkick_tools/
 /assets/*.rom
 /assets/*.bin
 # Test ADFs — regenerable (tests/mk_boot_adf.sh, xdftool); no binaries in the repository.

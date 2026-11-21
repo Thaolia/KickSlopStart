@@ -559,6 +559,13 @@ init_memory:                         ; a6 = SysBase (jump table already built)
 .im_size:
         cmp.l   #CHIP_LIMIT,d1
         beq.s   .im_sized
+        if      RAMKICK
+        cmp.l   #ROM_BASE,d1         ; the image, when the soft-kick disk put it in chip RAM (64 KB aligned, above
+        bne.s   .im_wr               ; MAXCHIP): present, and not to be written
+        add.l   #$40000,d1
+        bra.s   .im_size
+.im_wr:
+        endif
         move.l  d1,a1
         move.l  #CHIP_PATTERN,(a1)
         tst.l   ($0).w
@@ -589,6 +596,22 @@ init_memory:                         ; a6 = SysBase (jump table already built)
         clr.l   MC_NEXT(a1)
         move.l  d1,MC_BYTES(a1)
         move.l  a1,MH_FIRST(a0)
+        if      RAMKICK
+        move.l  #ROM_BASE,d0         ; image in chip RAM: its 256 KB stay out of the free list, which becomes the
+        cmp.l   EB_MAXLOCMEM(a6),d0  ; chunk below it and the chunk above it (none when it ends the chip)
+        bhs.s   .im_list
+        sub.l   #$40000,MH_FREE(a0)
+        sub.l   a1,d0
+        move.l  d0,MC_BYTES(a1)
+        move.l  EB_MAXLOCMEM(a6),d0
+        sub.l   #ROM_BASE+$40000,d0
+        beq.s   .im_list
+        move.l  #ROM_BASE+$40000,MC_NEXT(a1)
+        move.l  MC_NEXT(a1),a1
+        clr.l   MC_NEXT(a1)
+        move.l  d0,MC_BYTES(a1)
+.im_list:
+        endif
         lea     EB_MEMLIST(a6),a0    ; AddTail(MemList, MemHeader)
         lea     MH_CHIP,a1
         jsr     LVO_ADDTAIL(a6)

@@ -75,11 +75,16 @@ DIAG_FAKE       EQU 0
 SERPER_RAW      EQU 372          ; RawIOInit value (custom-chips-v34 §4.3): 9509 Bd PAL, 9597 Bd NTSC, 8 bits
 ; RAMKICK=1 (make kick-ram): image linked at $C00000, loaded into slow RAM by the soft-kick disk (src/softkick/).
 ; The first SLOW_RSV bytes of slow RAM hold the image and stay out of the free memory. Default 0 = ROM image.
+; In that image ROMBASE is kick_base, a symbol of the linker script (src/exec/kick-ram.ld), not a number: the
+; assembler cannot then fold or shorten an instruction for one particular base, so linking the same objects at
+; another base moves nothing but addresses, and src/softkick/mkreloc.py turns the difference into the relocation
+; table the disk applies when it loads the image in chip RAM instead.
         ifnd    RAMKICK
 RAMKICK  EQU 0
         endif
         if      RAMKICK
-ROMBASE  EQU $C00000
+                xref    kick_base
+ROMBASE  EQU kick_base
 SLOW_RSV EQU $40000
         else
 ROMBASE  EQU $FC0000

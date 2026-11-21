@@ -1055,7 +1055,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     Default pointer filled in dark purple (deliberate difference; a different arrow from the original, measured).
     Soft-kick disk (`make adf`, published with each release and on the `rom` branch): loads an image linked at
     $C00000 into slow RAM from a real Kickstart 1.3; coldstart honours ColdCapture and exec computes ChkSum, so a
-    reset comes back to the image.
+    reset comes back to the image. Without slow RAM, from 1 MB of chip RAM up (A500 with a 1 MB Agnus, A1200 as a
+    Relokick-style use), the disk relocates the image into chip RAM above 512 KB, in the highest free 64 KB-aligned
+    block (relocation table from two links of the same objects, src/softkick/mkreloc.py); the image keeps its
+    256 KB out of the chip free list (2026-11-21). Zorro/accelerator fast RAM is not usable: it is unconfigured
+    after a reset, when ColdCapture runs. Not covered: 68040/060, accelerator MapROM.
     Chip RAM sized up to 2 MB as on 1.3 (was a fixed 512 KB): Caesar loads with 2 MB chip and no fast RAM.
     SCREENBEHIND honoured by OpenScreen: SimCity's title screen stays hidden while it is drawn.
     gameport.device units 0/1 with every GPD_* command (joysticks on port 2); exec raw serial as in 1.3.

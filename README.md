@@ -122,17 +122,23 @@ commits since the previous release.
 
 ## Soft-kick disk (no ROM swap)
 
-**Minimum: 512 KiB chip RAM + 512 KiB slow RAM** (an A500 with its A501 trapdoor expansion). The `.adf` cannot run
-KickSlopStart without the slow RAM, since it lives there. Tested on a real A500.
+**Minimum: 512 KiB chip RAM + 512 KiB slow RAM, or 1 MiB of chip RAM.** The disk puts KickSlopStart (256 KiB) in slow
+RAM at `$C00000` when there is some (an A500 with its A501 trapdoor expansion; tested on a real A500). Otherwise it
+relocates it into chip RAM above 512 KiB, as high as a free block allows: an A500 with a 1 MiB Agnus, or an A1200 as
+a Relokick-style use (tested with a 68020; 68030 untested, 68040/060 not supported). Fast RAM on an expansion or
+accelerator board cannot hold it: that RAM is not configured yet when a reset comes back to the image.
 
 Each release also comes with `KickSlopStart-<version>.adf`, and the `rom` branch carries the latest one as
-[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on an
-Amiga 500 that keeps its own Kickstart 1.3 and has 512 KiB of slow RAM at `$C00000` (A501 trapdoor expansion): its
-bootblock loads KickSlopStart into the first 256 KiB of that RAM and starts it, and the remaining slow RAM stays
-available. KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want,
-and it boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
-in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. Without slow RAM, the disk boots
-normally on the Kickstart in ROM. Build it with `make adf` (`build/KickSlopStart.adf`).
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on the
+Kickstart in the machine (1.3, or 2.x/3.x): its bootblock loads KickSlopStart and starts it. In slow RAM it takes
+the first 256 KiB and the rest stays available; in chip RAM it takes 256 KiB of the chip memory programs can use
+(with 1 MiB of chip RAM, about 600 KiB are left free at the Workbench). KickSlopStart then shows its insert-disk
+screen: take the soft-kick disk out and insert the disk you want, and it boots it. A reset (Ctrl+Amiga+Amiga) comes
+back to KickSlopStart, through the ColdCapture vector that the Kickstart in ROM calls at reset; switching the machine
+off returns to the Kickstart in ROM. With neither enough slow RAM nor 1 MiB of chip RAM, the disk boots normally on
+the Kickstart in ROM. Only the floppy drives work on an A1200: KickSlopStart, like 1.3, knows neither its IDE port
+nor PCMCIA. Tested under emulation with a real 1.3 (1 MiB chip) and a 3.1 Kickstart (68020, 2 MiB chip). Build it
+with `make adf` (`build/KickSlopStart.adf`).
 
 ## Reporting a problem
 
@@ -186,7 +192,7 @@ Installation instructions are in [`docs/HARDWARE.md`](docs/HARDWARE.md).
 make             # build/kick13.rom       development ROM (includes the self-test harness)
 make kick-prod   # build/kick13-prod.rom  production ROM (-DPROD=1, no test harness, no console copy on serial)
 make verify      # checks the size (256 KiB) and that romtool reports is_kick = ok
-make adf         # build/KickSlopStart.adf soft-kick disk (image linked at $C00000, -DRAMKICK=1)
+make adf         # build/KickSlopStart.adf soft-kick disk (image linked at $C00000 + relocation table, -DRAMKICK=1)
 make kick-a1200  # build/kick13-a1200.rom 512 KiB image for an A1200/A4000 ROM socket (the production ROM twice)
 ```
 
@@ -217,7 +223,7 @@ src/graphics/    graphics.library, layers.library, boot screen
 src/intuition/   intuition.library
 src/dos/         dos.library, handlers, CLI/shell, Workbench
 src/rom/         ROM packer (padding, footer, checksum) and the M0 hello ROM
-src/softkick/    soft-kick disk: loader bootblock and ADF builder
+src/softkick/    soft-kick disk: loader bootblock, relocation table and ADF builders
 docs/            plan, architecture, hardware/toolchain, clean-room rules
 docs/analysis/   specs written by the analysis track
 tests/           emulator harnesses and test programs

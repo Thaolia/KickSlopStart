@@ -4,8 +4,9 @@
 Layout (public AmigaDOS formats: bootblock, OFS root and bitmap blocks):
   - blocks 0-1: "DOS\\0", bootblock checksum, root pointer 880, boot code at +12 (src/softkick/bootblock.s);
   - blocks 2..513: the 256K image built by `make kick-ram` (linked at $C00000);
-  - an empty OFS filesystem named "KickSlopStart" whose bitmap marks the image blocks as used, so that the disk
-    stays readable and writing to it never overwrites the image.
+  - blocks 514..521: its relocation table (src/softkick/mkreloc.py), used when the image goes to chip RAM;
+  - an empty OFS filesystem named "KickSlopStart" whose bitmap marks the image and table blocks as used, so that
+    the disk stays readable and writing to it never overwrites them.
 Dates are fixed so that the same inputs always give the same ADF.
 """
 import argparse
@@ -19,6 +20,8 @@ BOOT_CODE = 12
 IMG_FIRST = 2
 IMG_SIZE = 0x40000
 IMG_BASE = 0xC00000
+RELOC_FIRST = IMG_FIRST + IMG_SIZE // BLOCK
+RELOC_BLOCKS = 8             # REL_SIZE in src/softkick/bootblock.s
 ROOT = 880
 BITMAP = 881
 VOLUME = b"KickSlopStart"
@@ -51,6 +54,16 @@ def check_image(img: bytes) -> None:
         sys.exit("erreur : somme Kickstart de l'image invalide")
 
 
+def check_reloc(rel: bytes) -> None:
+    if len(rel) < 4:
+        sys.exit("erreur : table de relocation vide")
+    n = int.from_bytes(rel[0:4], "big")
+    if len(rel) != 4 + 2 * n:
+        sys.exit(f"erreur : table de relocation de {len(rel)} o pour {n} entrées")
+    if len(rel) > RELOC_BLOCKS * BLOCK:
+        sys.exit(f"erreur : table de relocation de {len(rel)} o (max {RELOC_BLOCKS * BLOCK}, RELOC_BLOCKS)")
+
+
 def bootblock(code: bytes) -> bytes:
     if BOOT_CODE + len(code) > BOOT_LEN:
         sys.exit(f"erreur : code de boot de {len(code)} o (max {BOOT_LEN - BOOT_CODE})")
@@ -79,7 +92,7 @@ def root_block() -> bytes:
 
 
 def bitmap_block() -> bytes:
-    used = set(range(IMG_FIRST, IMG_FIRST + IMG_SIZE // BLOCK)) | {ROOT, BITMAP}
+    used = set(range(IMG_FIRST, RELOC_FIRST + RELOC_BLOCKS)) | {ROOT, BITMAP}
     longs = [0] * 128
     for blk in range(2, BLOCKS):                   # bit set = free; blocks 0-1 are not in the map
         if blk not in used:
@@ -94,6 +107,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Construit la disquette de soft-kick KickSlopStart.")
     ap.add_argument("--boot", required=True, help="code de boot (vasm -Fbin de src/softkick/bootblock.s)")
     ap.add_argument("--image", required=True, help="image RAM de make kick-ram")
+    ap.add_argument("--reloc", required=True, help="table de relocation de src/softkick/mkreloc.py")
     ap.add_argument("--out", required=True, help="ADF de sortie")
     args = ap.parse_args()
 
@@ -102,15 +116,20 @@ def main() -> None:
     with open(args.image, "rb") as f:
         img = f.read()
     check_image(img)
+    with open(args.reloc, "rb") as f:
+        rel = f.read()
+    check_reloc(rel)
 
     adf = bytearray(BLOCKS * BLOCK)
     adf[0:BOOT_LEN] = bootblock(code)
     adf[IMG_FIRST * BLOCK:IMG_FIRST * BLOCK + IMG_SIZE] = img
+    adf[RELOC_FIRST * BLOCK:RELOC_FIRST * BLOCK + len(rel)] = rel
     adf[ROOT * BLOCK:(ROOT + 1) * BLOCK] = root_block()
     adf[BITMAP * BLOCK:(BITMAP + 1) * BLOCK] = bitmap_block()
     with open(args.out, "wb") as f:
         f.write(adf)
-    print(f"ADF : {len(adf)} o | code de boot {len(code)} o | image blocs {IMG_FIRST}..{IMG_FIRST + IMG_SIZE // BLOCK - 1}")
+    print(f"ADF : {len(adf)} o | code de boot {len(code)} o | image blocs {IMG_FIRST}..{RELOC_FIRST - 1} | "
+          f"relocations blocs {RELOC_FIRST}..{RELOC_FIRST + RELOC_BLOCKS - 1} ({len(rel)} o)")
 
 
 if __name__ == "__main__":

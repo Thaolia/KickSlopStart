@@ -16,6 +16,9 @@
                 xdef    diag_run
                 xref    font8x8
                 xref    kss_idstr
+                if      RAMKICK
+                xref    alert_reboot     ; execmisc.s
+                endif
 
 DG_VPOSR        EQU CUSTOM+$004
 DG_DMACONR      EQU CUSTOM+$002
@@ -316,8 +319,12 @@ dg_halt:
         bne     .hl_wait
         bra     .hl_lp
 .hl_reset:
+        if      RAMKICK
+        jmp     alert_reboot         ; the soft-kick image may sit in chip RAM, where the overlay that RESET turns
+        else                         ; back on can hide it: reboot through the Kickstart in ROM (ColdCapture)
         lea     ROMBASE+$D0,a0       ; RESET, then coldstart
         jmp     (a0)
+        endif
 
 ; dg_chip -> d0 = 0 and d1 = chip RAM size; d0 = 1 and d1 = size below DG_MINCHIP; d0 = 2 and d2 = address, d3 =
 ; written, d4 = read for a data, address or cell fault. Every long it writes is put back. Clobbers d1-d7/a0-a2.
