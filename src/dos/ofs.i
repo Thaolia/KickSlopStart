@@ -27,7 +27,8 @@ GEO_WPROT       EQU 24            ; LONG: the disk was write-protected when moun
 GEO_DOSTYPE     EQU 28            ; LONG: last byte of the mounted disk's "DOS\n" (0-3), taken from its first reserved
                                   ; block at mount time: bit GEOB_FFS = data blocks without header, bit GEOB_INTL =
                                   ; international name hash and comparison. 0 (OFS) outside a file-handler.
-GEO_SIZE        EQU 32
+GEO_FAT         EQU 32            ; APTR: context of the mounted FAT volume (fat.s, fat.i) | 0: OFS/FFS
+GEO_SIZE        EQU 36
 GEOB_FFS        EQU 0
 GEOB_INTL       EQU 1
 

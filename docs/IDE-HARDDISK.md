@@ -8,6 +8,11 @@ and in the soft-kick image, so an A600 or A1200 soft-kicked from its own Kicksta
 
 - Partitions of the disk's Rigid Disk Block are mounted as DH0:, DH1: and so on, under the names given by the
   partitioning tool, with OFS or FFS (DOS\0 to DOS\3, international modes included), read and write.
+- A disk or CF card prepared on a PC (no RDB) is read too: the FAT12, FAT16 and FAT32 primary partitions of its MBR,
+  or the whole card when it was formatted without a partition table, are mounted as FAT0:, FAT1: and so on,
+  **read-only** (a write brings up the "is write protected" requester). Long file names are shown when they have
+  at most 30 characters (the AmigaDOS limit), otherwise the 8.3 name; both names open the file, in any case. A
+  partition that ends beyond 4 GB is not mounted, and neither are extended partitions or exFAT.
 - They are mounted only: the machine always boots from a floppy, even when a partition is marked bootable, because an
   A600's boot partition usually holds a 2.x/3.x Workbench that cannot run on a 1.3 system.
 - Not supported: WHDLoad (it needs Kickstart 2.0, which is also true of the real 1.3), PFS3, SFS and other
@@ -20,4 +25,5 @@ and in the soft-kick image, so an A600 or A1200 soft-kicked from its own Kicksta
 - Tested under emulation (Amiberry, A600 and A1200 profiles) with our ROM as host and with a 3.1 Kickstart as
   soft-kick host, on partitions from 8 MB to 3.9 GB; not tried yet on real hardware, feedback is welcome.
 
-The same filesystem also reads and writes FFS floppies (formatted under 2.x/3.x), on any machine.
+The same filesystem also reads and writes FFS floppies (formatted under 2.x/3.x), on any machine, and reads a UAE
+hardfile that holds a FAT filesystem. PC floppies (720 KB) are not read: their tracks have another format.

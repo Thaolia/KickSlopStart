@@ -29,7 +29,8 @@ screenshots or serial output as evidence.
 - **Intuition**: screens, windows with 1.3-style frames, gadgets (boolean, proportional), menus, requesters,
   AutoRequest, Preferences.
 - **AmigaDOS**: dos.library with a BCPL runtime, an OFS filesystem handler (read and write), LoadSeg, the CLI and
-  shell, RAM:, PIPE:, AUX:, NEWCON:, a disk validator, and booting from a UAE hard disk (DH0:).
+  shell, RAM:, PIPE:, AUX:, NEWCON:, a disk validator, booting from a UAE hard disk (DH0:), and FAT12/16/32 volumes
+  read-only.
 - **Workbench 1.3.3** boots to its desktop: disk and drawer icons, Shell, menus, Info, Duplicate/DiskCopy, Clean Up
   and Preferences all work.
 - **Software tested**: SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (playable), Caesar, SimCity 1.2, The Secret of Monkey
@@ -155,8 +156,9 @@ chip memory programs can use: about 600 KiB stay free at the Workbench with 1 Mi
 - 68030 untested; 68040/060 are not supported (their caches and MMU are not handled), nor accelerator MapROM.
 - Fast RAM on an expansion or accelerator board cannot hold the image: that RAM is not configured yet (autoconfig)
   when a reset comes back to it.
-- The built-in IDE hard disk of an A600/A1200 is mounted ([docs/IDE-HARDDISK.md](docs/IDE-HARDDISK.md)); PCMCIA is
-  not supported. AGA machines run in OCS mode, as under a real 1.3.
+- The built-in IDE hard disk of an A600/A1200 is mounted ([docs/IDE-HARDDISK.md](docs/IDE-HARDDISK.md)), RDB
+  partitions read and write, PC-formatted FAT12/16/32 cards read-only; PCMCIA is not supported. AGA machines run in
+  OCS mode, as under a real 1.3.
 
 ### Relokick, MKick, SKick
 

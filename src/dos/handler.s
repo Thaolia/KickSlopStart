@@ -52,6 +52,10 @@
                 xref    vr_req               ; dos_lib.s: three-line system requester (Retry / Cancel)
                 xref    ow_flush
                 xref    timer_now            ; system time (exec/timer.s)
+                xref    ofs_isfat            ; ofs.s: a FAT volume is mounted (fat.s serves it, read-only)
+                xref    fat_mount
+                xref    fat_unmount
+                xref    fat_diskinfo
                 xref    timer_setnow
 
 ACTION_MORE_CACHE EQU 18             ; AddBuffers: adds buffers to the filesystem
@@ -783,7 +787,13 @@ dos_handler:
                 beq.s   .di_none
                 move.l  d1,a1
                 move.l  a0,-(sp)
+                jsr     ofs_isfat
+                bne.s   .di_fat
                 jsr     ow_diskinfo
+                bra.s   .di_got
+.di_fat:
+                jsr     fat_diskinfo
+.di_got:
                 move.l  (sp)+,a0
                 bsr     hnd_ctx
                 move.l  d0,a1
@@ -1258,6 +1268,7 @@ hnd_check:
 hnd_mount:
                 movem.l d2/a2-a4,-(sp)
                 move.l  a2,a4                         ; a4 = handler port
+                jsr     fat_unmount                   ; the previous disk's FAT context, if it had one
                 moveq   #CMD_CLEAR,d0                 ; tracks someone else left modified (a DiskCopy cut short)
                 bsr     hnd_tdcmd                     ; are not the new disk's
                 st      HC_MOUNTED(a3)
@@ -1274,7 +1285,7 @@ hnd_mount:
                 move.l  d2,d0                         ; to "DOS\3" (OFS, FFS, their international modes); the disk
                 clr.b   d0                            ; decides, de_DosType is not looked at
                 cmp.l   #DT_DOS,d0
-                bne     .mo_type
+                bne     .mo_fat
                 moveq   #0,d0
                 move.b  d2,d0
                 cmp.b   #HND_MAXDOSTYPE,d0
@@ -1325,6 +1336,18 @@ hnd_mount:
                 cmp.l   #DT_DOS,d2
                 bne.s   .mo_chg
                 jsr     ow_mount                      ; bitmap of the old disk forgotten, this one's loaded or rebuilt
+                bra.s   .mo_chg
+.mo_fat:                                              ; not "DOS": a FAT boot sector mounts a read-only volume
+                jsr     fat_mount                     ; (name and date where hnd_findvol reads them)
+                tst.l   d0
+                beq     .mo_type
+                move.l  #DT_DOS,d2
+                bsr     hnd_findvol
+                move.l  d0,HC_VOLUME(a3)
+                move.l  d2,HC_DTYPE(a3)
+                moveq   #1,d0
+                move.l  d0,HC_GEO+GEO_WPROT(a3)
+                st      HC_WPROT(a3)
 .mo_chg:                                              ; (validation, requesters on failure) before DISKINSERTED;
                 moveq   #TD_CHANGENUM,d0              ; the change count after it: changes seen by trackdisk while
                 bsr     hnd_tdcmd                     ; a requester was up do not validate the same disk again
@@ -1769,6 +1792,8 @@ hnd_gtab:
 ; (spec rom-filesystem §2.3): 213 no valid bitmap, then 214 write-protected disk. Clobbers d1/a0/a1.
 hnd_modok:
                 move.l  DP_TYPE(a4),d0
+                jsr     ofs_isfat
+                bne.s   .mk_fat
                 lea     hnd_modtab(pc),a0
 .mk_lp:
                 move.w  (a0)+,d1
@@ -1789,6 +1814,17 @@ hnd_modok:
                 moveq   #0,d0
 .mk_ret:
                 rts
+.mk_fat:                                             ; FAT volumes are read-only: every write refused at once
+                lea     hnd_fatwtab(pc),a0
+.mk_flp:
+                move.w  (a0)+,d1
+                beq.s   .mk_ok
+                cmp.w   d1,d0
+                bne.s   .mk_flp
+                move.l  #ERROR_DISK_WRITE_PROTECTED,d0
+                rts
+hnd_fatwtab:
+                dc.w    ACTION_FINDUPDATE,ACTION_WRITE
 hnd_modtab:
                 dc.w    ACTION_FINDOUTPUT,ACTION_DELETE_OBJECT,ACTION_RENAME_OBJECT,ACTION_CREATE_DIR
                 dc.w    ACTION_SET_PROTECT,ACTION_SET_COMMENT,ACTION_SET_DATE,ACTION_RENAME_DISK,0

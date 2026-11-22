@@ -32,7 +32,14 @@
                 xdef    ofs_mul488
                 xdef    ofs_geo              ; geometry of the caller's partition
                 xdef    ofs_blk_valid        ; key inside the partition
+                xdef    ofs_isfat            ; the handler serves a FAT volume (handler.s)
                 xref    exec_CopyMem         ; exec/io.s: a0/a1 come back past the copied bytes
+                xref    fat_name_to_block    ; fat.s: the same six entries for a FAT volume
+                xref    fat_fill_fib
+                xref    fat_dir_next
+                xref    fat_stream_open
+                xref    fat_stream_read
+                xref    fat_stream_seek
 
 ; Device and geometry: in a file-handler process, the device, unit and partition of its context (ofs.i, HC_GEO);
 ; elsewhere (boot probes) trackdisk unit 0 with the DD geometry. Requests go through DoIO, so devices that queue
@@ -279,6 +286,14 @@ ofs_geo:
 .ge_def:
                 lea     ofs_geodef(pc),a0
                 rts
+; ofs_isfat(a6) -> Z = 0 when the calling file-handler has a FAT volume mounted (fat.s serves its reads).
+; Preserves everything else.
+ofs_isfat:
+                move.l  a0,-(sp)
+                bsr.s   ofs_geo
+                tst.l   GEO_FAT(a0)
+                movea.l (sp)+,a0
+                rts
 ; ofs_dev(a6) -> d0 = device of the calling file-handler (0 if it could not open it), otherwise trackdisk.device;
 ; Z = 1 if none. Clobbers d1/a0/a1.
 ofs_dev:
@@ -473,6 +488,10 @@ ofs_fib_bstr:
 ; '/'-separated components; an EMPTY component (leading "/" or "//") goes up to the PARENT; a final '/' after a name
 ; is neutral. The final component may be a file OR a directory. Reuses ofs_split / ofs_dir_lookup / ofs_read_block.
 ofs_name_to_block:
+                bsr     ofs_isfat
+                beq.s   .n2b_ofs
+                jmp     fat_name_to_block
+.n2b_ofs:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  d0,d4                        ; d4 = current directory
                 bne.s   .n2b_start
@@ -583,6 +602,10 @@ ofs_name_to_block:
 ; ofs_fill_fib(d0=header block, a1=fib, a6=SysBase) -> d0 = 1 OK / 0 failed. Reads the block then fills the FIB
 ; (ofs_fib_fill). Internal trackdisk/ioreq setup. Resetting the enumeration cursor is up to the caller.
 ofs_fill_fib:
+                bsr     ofs_isfat
+                beq.s   .fib_ofs
+                jmp     fat_fill_fib
+.fib_ofs:
                 movem.l d2-d7/a2-a5,-(sp)
                 moveq   #0,d7                         ; default result
                 move.l  d0,d4                         ; d4 = block
@@ -620,6 +643,10 @@ ofs_fill_fib:
 ; entry found. Internal trackdisk/ioreq setup. Preserves d1-d7/a2-a5. RED OFS_NO_DIRNEXT: returns found=0 straight
 ; away (ExNext never finds anything).
 ofs_dir_next:
+                bsr     ofs_isfat
+                beq.s   .dn_ofs
+                jmp     fat_dir_next
+.dn_ofs:
                 movem.l d1-d7/a2-a5,-(sp)
                 move.l  d0,d4                         ; d4 = dirblock
                 move.l  a1,a5                         ; a5 = fib
@@ -722,6 +749,10 @@ ofs_dir_next:
 ; state must have its table buffer (SS_ASIZE = SS_ALLOCFFS): the header goes there as table group 0. Allocates NOTHING
 ; (the state, ioreq + block buffer included, is allocated by the caller = the handler).
 ofs_stream_open:
+                bsr     ofs_isfat
+                beq.s   .so_ofs
+                jmp     fat_stream_open
+.so_ofs:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                        ; a5 = state
                 bsr     ofs_name_to_block            ; (a0=path, d0=start) -> d0 = block | 0, d1 = error
@@ -787,6 +818,10 @@ ofs_stream_open:
 ; Preserves d2-d7/a2-a5 (dest reassigned to a4); one 512-byte buffer (plus the table buffer on FFS), NEVER a
 ; whole-file buffer.
 ofs_stream_read:
+                bsr     ofs_isfat
+                beq.s   .sr_ofs
+                jmp     fat_stream_read
+.sr_ofs:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                         ; a5 = state
                 move.l  a2,a4                         ; a4 = dest (advances)
@@ -938,6 +973,10 @@ ofs_stream_read:
 ; the forward walk happening on the next Read. FFS: the position alone (reads find their block from it). Clamping to
 ; [0, SS_SIZE] is up to the caller (handler). Clobbers a0/a1.
 ofs_stream_seek:
+                bsr     ofs_isfat
+                beq.s   .ss_ofs
+                jmp     fat_stream_seek
+.ss_ofs:
                 movem.l d2-d4/a2-a3/a5,-(sp)
                 move.l  a1,a5
                 move.l  d0,SS_POS(a5)
@@ -1080,4 +1119,4 @@ ofs_td_name:
                 dc.b    "trackdisk.device",0
                 even
 ofs_geodef:                                   ; DD floppy: root, blocks, reserved, offset, no reply port
-                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0,0,0
+                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0,0,0,0

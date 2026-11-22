@@ -46,8 +46,9 @@ DOS_DIR   := src/dos
 # loadseg.o: LoadSeg (D2) — loads a hunk executable from OFS + relocation; includes exec.i + ofs.i.
 # process.o: Process + CreateProc + dos_sendpkt (D3); includes exec.i + dospkt.i.
 # handler.o: DF0: file-handler process (D3b); includes exec.i + ofs.i + dospkt.i.
+# fat.o: FAT12/16/32 read-only volumes of the ROM file-handler; includes exec.i + disk.i + ofs.i + fat.i + dospkt.i.
 # conhandler.o: serial console handler process (E1); shell.o: interactive shell (E2). includes exec.i + dospkt.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/ofswrite.o $(BUILD)/loadseg.o $(BUILD)/bcpl.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/conwin.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o $(BUILD)/feeder.o $(BUILD)/workbench.o
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/ofswrite.o $(BUILD)/loadseg.o $(BUILD)/bcpl.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/conwin.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o $(BUILD)/feeder.o $(BUILD)/workbench.o $(BUILD)/fat.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (M0 smoke test) ---

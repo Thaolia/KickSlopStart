@@ -9,10 +9,14 @@
 ; dostype and without PBFF_NOMOUNT goes through MakeDosNode + AddDosNode (expansion.library): dos.library mounts the
 ; nodes of eb_MountList at its init, served by the ROM filesystem. Partitions are never booted from (an A600's boot
 ; partition usually holds a 2.x/3.x system): the boot stays on the floppy.
+; A unit without an RDB is a PC disk: its FAT primary partitions (MBR), or the whole disk when block 0 is itself a FAT
+; boot sector (cards formatted without a partition table), become FAT0:, FAT1:... The ROM filesystem recognises FAT
+; by the content of the partition's first block and serves it read-only (src/dos/fat.s).
 ; IMPLEMENTATION track ("clean"): ATA/ATAPI public drafts (task file, IDENTIFY, READ/WRITE SECTORS); Gayle register
 ; map from Linux drivers/ata/pata_gayle.c and arch/m68k/amiga/platform.c (hardware facts); Gayle ID sequence from
 ; Amiberry src/gayle.cpp (hardware fact); NDK devices/hardblocks.h, devices/trackdisk.h, dos/filehandler.h,
-; AutoDocs expansion.library. NO ROM reading. Plan: docs/ide-a600-plan.md.
+; AutoDocs expansion.library; MBR partition table and FAT boot sector: Microsoft fatgen103 and the public MBR layout.
+; NO ROM reading. Plan: docs/ide-a600-plan.md.
 
                 include "exec.i"
                 include "disk.i"
@@ -56,7 +60,8 @@ SU_TOTAL        EQU 48               ; long: sectors
 SU_SIZE         EQU 52
 SD_SEM          EQU LIB_SIZE         ; struct SignalSemaphore (46)
 SD_UNITS        EQU LIB_SIZE+48
-SD_SIZE         EQU SD_UNITS+2*SU_SIZE
+SD_NFAT         EQU SD_UNITS+2*SU_SIZE ; byte: FAT volumes named so far (FAT0:, FAT1:...)
+SD_SIZE         EQU SD_NFAT+2
 
 IOERR_BADLEN    EQU -4
 IOERR_BADADDR   EQU -5
@@ -79,6 +84,8 @@ MAX_PARTS       EQU 32               ; bound of the PART walk (a corrupt list mu
 DE_MAXLONGS     EQU 20
 DE_DOSTYPE      EQU 16               ; index in the DosEnvec
 IDE_MAXDOSTYPE  EQU 3                ; DOS\0-DOS\3: OFS, FFS and their international modes (ROM filesystem)
+MBR_TABLE       EQU 446              ; four 16-byte primary partition entries, then the $55AA signature
+IDE_4GB         EQU $800000          ; sectors addressable with a 32-bit byte io_Offset
 
         EVEN
 ide_romtag:
@@ -99,6 +106,10 @@ ide_msg_unit:
         dc.b    "IDE UNIT ",0
 ide_msg_mount:
         dc.b    "IDE MOUNT ",0
+ide_msg_big:
+        dc.b    "IDE FAT BEYOND 4 GB",13,10,0
+ide_fattypes:                        ; MBR types of FAT partitions: FAT12, FAT16 (<32 MB, >=32 MB, LBA), FAT32 (CHS, LBA)
+        dc.b    $01,$04,$06,$0E,$0B,$0C,0
 ide_msg_nl:
         dc.b    13,10,0
         EVEN
@@ -132,6 +143,7 @@ ide_init:
         move.w  #1,LIB_REVISION(a5)
         lea     SD_SEM(a5),a0
         jsr     LVO_INITSEM(a6)
+        clr.b   SD_NFAT(a5)
         move.b  #0,GAYLE_INTEN       ; the previous system may have left Gayle interrupts on: no server for them here
         bsr     ide_probe
         move.l  a5,a1
@@ -607,8 +619,9 @@ ide_rw:
 MT_BLOCK        EQU 0                ; 512-byte block buffer
 MT_NAME         EQU 512              ; C name of the partition (32)
 MT_PARM         EQU MT_NAME+32       ; parmPacket: dos name, exec name, unit, flags, environment
-MT_CNT          EQU MT_PARM+16+4*DE_MAXLONGS ; PART blocks left to walk
-MT_SIZE         EQU MT_CNT+4
+MT_CNT          EQU MT_PARM+16+4*DE_MAXLONGS ; PART blocks left to walk; MBR entry looked at
+MT_DEV          EQU MT_CNT+4         ; APTR: the device base (FAT volume counter)
+MT_SIZE         EQU MT_DEV+4
 ide_mount:
         tst.b   SU_PRESENT(a4)
         beq     .mt_ret
@@ -619,6 +632,7 @@ ide_mount:
         tst.l   d0
         beq     .mt_nomem
         move.l  d0,a5                ; a5 = frame
+        move.l  (sp),MT_DEV(a5)
         lea     ide_expname(pc),a1
         moveq   #33,d0
         jsr     LVO_OPENLIBRARY(a6)
@@ -637,7 +651,7 @@ ide_mount:
         addq.l  #1,d5
         cmp.l   #RDB_SCAN,d5
         blo.s   .mt_find
-        bra     .mt_done
+        bra     .mt_mbr
 .mt_found:
         move.l  RDB_PARTLIST(a5),d5
         move.l  #MAX_PARTS,MT_CNT(a5)
@@ -665,6 +679,108 @@ ide_mount:
 .mt_nomem:
         move.l  (sp)+,a5
 .mt_ret:
+        rts
+
+; No RDB: block 0 is a FAT boot sector (jump, 512-byte sectors: the whole disk is one volume) or an MBR whose FAT
+; primary partitions are mounted.
+.mt_mbr:
+        moveq   #0,d5
+        bsr     .mt_read
+        bne     .mt_done
+        lea     MT_BLOCK(a5),a0
+        cmp.b   #$55,510(a0)
+        bne     .mt_done
+        cmp.b   #$AA,511(a0)
+        bne     .mt_done
+        cmp.b   #$EB,(a0)
+        beq.s   .mt_bs
+        cmp.b   #$E9,(a0)
+        bne.s   .mt_tab
+.mt_bs:
+        tst.b   11(a0)
+        bne.s   .mt_tab
+        cmp.b   #2,12(a0)
+        bne.s   .mt_tab
+        moveq   #0,d3
+        move.l  SU_TOTAL(a4),d4
+        bsr     .mt_fat
+        bra     .mt_done
+.mt_tab:
+        clr.l   MT_CNT(a5)
+.mt_ent:
+        move.l  MT_CNT(a5),d0
+        lsl.l   #4,d0
+        lea     MT_BLOCK+MBR_TABLE(a5),a1
+        add.l   d0,a1                ; a1 = entry
+        moveq   #$7F,d0
+        and.b   (a1),d0
+        bne.s   .mt_enx              ; status other than 0 / $80 (active)
+        lea     ide_fattypes(pc),a0
+.mt_ty:
+        move.b  (a0)+,d0
+        beq.s   .mt_enx
+        cmp.b   4(a1),d0
+        bne.s   .mt_ty
+        lea     8(a1),a0
+        bsr     ide_le32
+        move.l  d0,d3                ; d3 = first sector
+        lea     12(a1),a0
+        bsr     ide_le32
+        move.l  d0,d4                ; d4 = sectors
+        bsr     .mt_fat
+.mt_enx:
+        addq.l  #1,MT_CNT(a5)
+        cmp.l   #4,MT_CNT(a5)
+        blo.s   .mt_ent
+        bra     .mt_done
+
+; .mt_fat(d3 = first sector, d4 = sectors): a FAT volume -> DeviceNode "FATn" (1 surface, 1 block per track: a
+; cylinder is a sector, LowCyl/HighCyl its first and last sectors). Refused past the disk or past 4 GB. Clobbers
+; d0-d2/a0-a2.
+.mt_fat:
+        tst.l   d4
+        beq     .mf_ret
+        move.l  d3,d0
+        add.l   d4,d0
+        bcs     .mf_ret
+        cmp.l   SU_TOTAL(a4),d0
+        bhi     .mf_ret
+        cmp.l   #IDE_4GB,d0
+        bhi     .mf_big
+        move.l  MT_DEV(a5),a0
+        moveq   #'0',d0
+        add.b   SD_NFAT(a0),d0
+        addq.b  #1,SD_NFAT(a0)
+        lea     MT_NAME(a5),a1
+        move.b  #'F',(a1)+
+        move.b  #'A',(a1)+
+        move.b  #'T',(a1)+
+        move.b  d0,(a1)+
+        clr.b   (a1)
+        lea     MT_PARM(a5),a2
+        lea     MT_NAME(a5),a0
+        move.l  a0,(a2)+
+        lea     ide_name(pc),a0
+        move.l  a0,(a2)+
+        moveq   #0,d1
+        move.b  SU_NUM(a4),d1
+        move.l  d1,(a2)+
+        clr.l   (a2)+
+        lea     ide_fatenv(pc),a0
+        moveq   #DE_DOSTYPE,d1
+.mf_env:
+        move.l  (a0)+,(a2)+
+        dbra    d1,.mf_env
+        move.l  d3,MT_PARM+16+9*4(a5)   ; de_LowCyl
+        move.l  d3,d0
+        add.l   d4,d0
+        subq.l  #1,d0
+        move.l  d0,MT_PARM+16+10*4(a5)  ; de_HighCyl
+        bra     .mt_add
+.mf_big:
+        lea     ide_msg_big(pc),a0
+        jsr     ser_puts
+.mf_ret:
         rts
 
 ; .mt_read(d5 = block) -> Z set when read into the frame's block buffer. Clobbers d0-d4/d6-d7/a0/a2.
@@ -739,6 +855,8 @@ ide_mount:
 .mo_env:
         move.l  (a0)+,(a2)+
         dbra    d1,.mo_env
+; .mt_add: the parmPacket in the frame (MT_PARM, name MT_NAME) -> MakeDosNode + AddDosNode, then the serial note.
+.mt_add:
         movem.l a1/a6,-(sp)
         lea     MT_PARM(a5),a0
         move.l  a3,a6
@@ -761,5 +879,23 @@ ide_mount:
         jsr     ser_puts
 .mo_ret:
         rts
+
+; ide_le32(a0 = address) -> d0 = little-endian long there (MBR fields). Preserves the rest.
+ide_le32:
+        move.b  3(a0),d0
+        lsl.l   #8,d0
+        move.b  2(a0),d0
+        lsl.l   #8,d0
+        move.b  1(a0),d0
+        lsl.l   #8,d0
+        move.b  (a0),d0
+        rts
+
+; DosEnvec of a FAT volume (dos/filehandler.h): table size 16, 128-long blocks, 1 surface, 1 sector per block,
+; 1 block per track, 2 reserved, LowCyl/HighCyl filled in, 5 buffers, any memory, $1FE00 per transfer, mask, boot
+; priority 0, "DOS\0" (the content decides: fat.s).
+        EVEN
+ide_fatenv:
+        dc.l    DE_DOSTYPE,128,0,1,1,1,2,0,0,0,0,5,0,$1FE00,$FFFFFFFE,0,$444F5300
 
 ide_end:

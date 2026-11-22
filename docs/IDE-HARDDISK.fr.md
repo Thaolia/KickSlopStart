@@ -9,6 +9,12 @@ Kickstart lit son disque dur ou sa carte CF.
 
 - Les partitions du Rigid Disk Block du disque sont montées en DH0:, DH1:, etc., sous les noms donnés par l'outil de
   partitionnement, en OFS ou en FFS (DOS\0 à DOS\3, modes internationaux compris), en lecture et en écriture.
+- Un disque ou une carte CF préparé sur PC (sans RDB) est lu aussi : les partitions primaires FAT12, FAT16 et FAT32
+  de son MBR, ou la carte entière quand elle a été formatée sans table de partitions, sont montées en FAT0:, FAT1:,
+  etc., **en lecture seule** (une écriture fait apparaître la requête « is write protected »). Les noms longs sont
+  affichés quand ils font au plus 30 caractères (la limite d'AmigaDOS), sinon le nom 8.3 ; les deux noms ouvrent le
+  fichier, quelle que soit la casse. Une partition qui finit au-delà de 4 Go n'est pas montée, pas plus que les
+  partitions étendues ou l'exFAT.
 - Elles sont seulement montées : la machine démarre toujours sur une disquette, même si une partition est marquée
   bootable, parce que la partition de boot d'un A600 contient en général un Workbench 2.x/3.x qui ne peut pas tourner
   sur un système 1.3.
@@ -25,4 +31,5 @@ Kickstart lit son disque dur ou sa carte CF.
   bienvenus.
 
 Le même système de fichiers lit et écrit aussi les disquettes FFS (formatées sous 2.x/3.x), sur n'importe quelle
-machine.
+machine, et lit un hardfile UAE qui contient un système de fichiers FAT. Les disquettes PC (720 Ko) ne sont pas lues :
+leurs pistes ont un autre format.

@@ -1071,6 +1071,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     booted from (the boot stays on the floppy), and the ROM filesystem reads and writes DOS\0-DOS\3 (FFS and the
     international modes) on floppies and partitions, with a bounded bitmap cache (memory no longer grows with the
     partition). AddDosNode no longer opens dos.library at cold start. User doc: docs/IDE-HARDDISK.md.
+    FAT volumes, read-only (2026-11-22, user decision: no writing, no PC floppies): the ROM filesystem recognises
+    a FAT12/16/32 boot sector in a partition's first block (src/dos/fat.s, fatgen103), with VFAT long names (shown
+    up to 30 characters, otherwise the 8.3 name) and every write refused with 214. The IDE driver mounts the FAT
+    primary partitions of an MBR, or a whole card without a partition table, as FAT0:, FAT1:...; UAE hardfiles with
+    a FAT filesystem work as well. Test: tests/fatfs_probe.sh (uae, ide, super), images made with dosfstools/mtools.
     Chip RAM sized up to 2 MB as on 1.3 (was a fixed 512 KB): Caesar loads with 2 MB chip and no fast RAM.
     SCREENBEHIND honoured by OpenScreen: SimCity's title screen stays hidden while it is drawn.
     gameport.device units 0/1 with every GPD_* command (joysticks on port 2); exec raw serial as in 1.3.

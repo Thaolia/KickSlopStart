@@ -1,5 +1,41 @@
 # Architecture
 
+## FAT volumes, read-only, in the ROM filesystem (2026-11-22)
+
+Source: Microsoft's public FAT specification (fatgen103). Kickstart 1.3 has no FAT filesystem, so there was nothing to
+observe on the ROM side. `ben-stockett/libfat` (MIT) was only read as a secondary reference (FAT32 BPB fields, ExtFlags);
+none of its code was taken.
+
+- Detection by content: `hnd_mount` (`src/dos/handler.s`) gives every partition whose first block is not "DOS\n" to
+  `fat_mount` (`src/dos/fat.s`). A boot sector with a jump, the $55AA signature, 512-byte sectors and a consistent
+  BPB mounts a FAT12/16/32 volume (type from the cluster count, as fatgen103 says). The context (`src/dos/fat.i`,
+  about 1.5 KB with two one-sector caches) hangs from `HC_GEO+GEO_FAT`. `fat_unmount` frees it at the next mount and
+  gives back `GEO_ROOT`.
+- The six read entries of `ofs.s` (name to key, Examine, ExNext, open, read, seek) branch to `fat_*` when
+  `ofs_isfat` says so. The handler keeps the rest: packets, gate, locks, volume node (`fat_mount` puts the name and
+  date where `hnd_findvol` reads them), disk change. `hnd_modok` refuses every modification on a FAT volume with
+  214, so DOS shows the usual "is write protected" requester. INFO comes from `fat_diskinfo`: sectors of the data
+  area; used ones from FSInfo on FAT32, or from a count of the FAT when it is at most 256 KB.
+- Keys: sector * 16 + index of an object's first directory entry (its first long-name entry when its long name is
+  valid); the root is key 1. Examine and ExNext re-read the object from the key, so they stay stateless.
+- Parent: the cluster holding the entry belongs to the parent's chain. The first cluster of that chain is the one
+  whose "." entry names itself; otherwise the code walks back through the FAT, which is slow on a big volume and only
+  happens for an object in the second or later cluster of a directory. The parent's key then comes from scanning the
+  grandparent ("..").
+- Names: VFAT long names checked by ordinal and checksum, UCS-2 to Latin-1 ('?' outside it). A long name is shown
+  when it has at most 30 characters, otherwise the 8.3 name (with the NT lower-case flags). A lookup matches either
+  name, ignoring case in Latin-1.
+- Reads: sector by sector through the file state's buffer, or whole sectors of one cluster straight into the
+  caller's buffer when it is word-aligned (one device request). Cluster chains are bounded by the cluster count and
+  the directory walks by 65,536 entries. Dates: FAT local date and time to DateStamp. The read-only attribute shows
+  as write and delete protection.
+- `src/exec/ide.s`: on a unit without an RDB, block 0 is either a FAT boot sector (the whole disk becomes one volume)
+  or an MBR whose primary FAT partitions (types $01, $04, $06, $0E, $0B, $0C) become `FAT0:`, `FAT1:`... The names
+  differ from the RDB's DHn: so that a PC card on unit 1 cannot hide a partition of unit 0. Each partition gets a
+  DosEnvec with one sector per cylinder (LowCyl/HighCyl = its first/last sector). Partitions ending beyond 4 GB are
+  refused.
+- Cost: about 4.1 KB of ROM (dev ROM 33,460 bytes free, production ROM 35,020).
+
 ## A600/A1200 IDE and FFS in the ROM filesystem (2026-11-22)
 
 User-facing description and limits: [IDE-HARDDISK.md](IDE-HARDDISK.md); plan: [ide-a600-plan.md](ide-a600-plan.md).

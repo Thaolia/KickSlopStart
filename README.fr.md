@@ -31,8 +31,8 @@ mode A500 au cycle près), avec captures d'écran ou sortie série à l'appui.
 - **Intuition** : écrans, fenêtres au cadre de la 1.3, gadgets (booléens, proportionnels), menus, requesters,
   AutoRequest, Preferences.
 - **AmigaDOS** : dos.library avec un runtime BCPL, un handler de système de fichiers OFS (lecture et écriture),
-  LoadSeg, le CLI et le shell, RAM:, PIPE:, AUX:, NEWCON:, un validateur de disque, et le démarrage sur disque dur
-  UAE (DH0:).
+  LoadSeg, le CLI et le shell, RAM:, PIPE:, AUX:, NEWCON:, un validateur de disque, le démarrage sur disque dur
+  UAE (DH0:), et les volumes FAT12/16/32 en lecture seule.
 - **Workbench 1.3.3** démarre jusqu'au bureau : icônes de disque et de tiroirs, Shell, menus, Info, Duplicate/DiskCopy,
   Clean Up et Preferences fonctionnent.
 - **Logiciels testés** : SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (jouable), Caesar, SimCity 1.2, The Secret of
@@ -162,8 +162,9 @@ chip, environ 1,6 Mio avec 2 Mio.
   des cartes accélératrices.
 - La fast RAM d'une carte d'extension ou accélératrice ne peut pas accueillir l'image : cette RAM n'est pas encore
   configurée (autoconfig) quand un reset revient dessus.
-- Le disque dur IDE interne d'un A600/A1200 est monté ([docs/IDE-HARDDISK.fr.md](docs/IDE-HARDDISK.fr.md)) ; le
-  PCMCIA n'est pas pris en charge. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
+- Le disque dur IDE interne d'un A600/A1200 est monté ([docs/IDE-HARDDISK.fr.md](docs/IDE-HARDDISK.fr.md)) : les
+  partitions RDB en lecture et en écriture, les cartes FAT12/16/32 formatées sur PC en lecture seule ; le PCMCIA
+  n'est pas pris en charge. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
 
 ### Relokick, MKick, SKick
 
