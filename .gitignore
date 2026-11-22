@@ -7,13 +7,14 @@ __pycache__/
 
 # Orchestration scratch (superpowers ledgers) and local assistant configuration
 /.superpowers/
-# .claude/: only the scoped rules and the amiberry and vamigaweb skills are shared
+# .claude/: only the scoped rules and the amiberry, vamigaweb and release skills are shared
 /.claude/*
 !/.claude/rules/
 !/.claude/skills/
 /.claude/skills/*
 !/.claude/skills/amiberry/
 !/.claude/skills/vamigaweb/
+!/.claude/skills/release/
 /.claude/skills/vamigaweb/node_modules/
 # Personal assistant preferences
 /CLAUDE.local.md

@@ -111,6 +111,8 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - Slow is not stuck: check DMACONR (blitter busy), give it time, compare with HEAD and with the real ROM (through
   the analysis agent) before reporting a regression. Measure performance on `make kick-prod` only.
 - Before building on an error path, check that its source sets a real error code (an IoErr of 0 proves nothing).
+- Before assuming a library you added unblocks a program, check the version it asks OpenLibrary for: a request for
+  v37 on our V34 gets 0 and the program moves on.
 
 ### Concurrent sessions and emulators
 
@@ -130,6 +132,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
   your own hunks: another session may have written into the same file between `git status` and `git add`.
 - Add skill scripts with `git add --chmod=+x` (`core.filemode=false`). Never force-add a ROM or an ADF.
 - Create and push a release tag only when the user explicitly asks for that release; otherwise they run it with `!`.
+  When they ask, follow the `/release` skill (`.claude/skills/release/SKILL.md`).
 
 ## Coding Standards
 
@@ -176,6 +179,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - The Lemmings capture is taken 90 s after the click; if it shows the AmigaSlopDOS window, measure the delay before
   calling it a regression. Late markers (E3) can need 75-110 s of headless boot.
 - Keep an independent baseline proof next to a new one: never refactor a test onto the code it is meant to check.
+- When a game or tool is the test, also run it from its real disk image, not only from a synthetic ADF.
 - Performance claims: measured on `make kick-prod`, compared with HEAD on the same harness.
 - Record the result (command + output) in the `.superpowers/sdd/` ledger.
 
