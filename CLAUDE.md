@@ -161,7 +161,8 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - `make` → dev ROM `build/kick13.rom` · `make kick-prod` → production ROM (no runtime test harness, `-DPROD=1`) ·
   `make kick-ram` → image linked at `$C00000` · `make adf` → soft-kick disk ·
   `make hello` → smoke ROM · `make verify` (size, `is_kick`, checksum).
-- Pre-push regression: `.claude/skills/amiberry/scripts/prepush-check [rom]` (3 parallel Amiberry sessions).
+- Pre-push regression: `.claude/skills/amiberry/scripts/prepush-check [rom]` (3 parallel Amiberry sessions;
+  `PP_IDE=1` adds the IDE RDB run, ~15 min).
 - Targeted runs: `/amiberry` skill (headless sessions, serial log, gdb, screenshots, scripted input);
   `/vamigaweb` skill for what vAmigaWeb users see (live site in headless Chromium, RetroShell debugger);
   `tests/boot_test.sh` (FS-UAE boot) for the older harnesses.
@@ -174,8 +175,9 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - Behaviour milestone: proven by a boot under emulation with a **serial marker AND a screenshot you have looked
   at**, never "assumed". A harness "OK", an `ls` of the capture or identical colour counts prove nothing.
 - Before a push: `prepush-check` passes; count `FAIL` (not only `FAILED`) in its logs and look at the Lemmings
-  menu capture. Then run targeted Amiberry sessions on the ADFs the change touches. The WinUAE ADF suite is no
-  longer run (user decision, 2026-11-02), unless the user asks for it explicitly (then use the dev ROM).
+  menu capture. Run it with `PP_IDE=1` when the change touches IDE, `scsi.device` or the filesystem. Then run
+  targeted Amiberry sessions on the ADFs the change touches. The WinUAE ADF suite is no longer run (user decision,
+  2026-11-02), unless the user asks for it explicitly (then use the dev ROM).
 - The Lemmings capture is taken 90 s after the click; if it shows the AmigaSlopDOS window, measure the delay before
   calling it a regression. Late markers (E3) can need 75-110 s of headless boot.
 - Keep an independent baseline proof next to a new one: never refactor a test onto the code it is meant to check.

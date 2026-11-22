@@ -37,10 +37,10 @@ that the published files are the ones it validated.
    Gate: every command exits 0, the three romtool checks are ok, and
    `strings build/kick13-prod.rom | grep -F "KickSlopStart <tag>"` finds the ID (proof the image was rebuilt for
    this tag). Record `sha256sum build/kick13-prod.rom build/KickSlopStart.adf`.
-3. Regression, dev ROM — `.claude/skills/amiberry/scripts/prepush-check` (set `PP_PREFIX` if another session runs
-   it).
+3. Regression, dev ROM — `PP_IDE=1 .claude/skills/amiberry/scripts/prepush-check` (about 15 min with the IDE run;
+   set `PP_PREFIX` if another session runs it).
    Gate: exit 0, no `FAIL` line in its logs (count `FAIL`, not only `FAILED`), and you have looked at the
-   Lemmings menu screenshot.
+   Lemmings menu screenshot; the `ppide` line says `ide_rdb_probe OK`.
 4. Regression, released ROM — `prepush-check` cannot judge `build/kick13-prod.rom`: the production ROM does not copy
    console output to the serial port, so its markers never arrive. Invoke `/amiberry` instead: boot the Workbench
    1.3.3 boot disk on `build/kick13-prod.rom`, wait until a screenshot shows the Workbench disk icon (do not

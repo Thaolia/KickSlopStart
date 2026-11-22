@@ -22,10 +22,12 @@ $A stop s1
 `$A` alone prints the usage. Command reference for the GDB monitor and IPC: [reference.md](reference.md).
 Since 2026-11-02 validation runs here: `scripts/prepush-check` before a push, then targeted sessions on the ADFs a
 change touches (the WinUAE ADF suite is no longer run). `prepush-check` names its sessions `pp512`, `pp0`, `pplem`
-and starts by stopping and deleting them: when another Claude session may run it too, give yours a prefix of its own
-(`PP_PREFIX=cx prepush-check …` -> `cx512`, `cx0`, `cxlem`), or each run stops the other's ("session pplem is not
-running", a total near 50 s; such a run is neither a pass nor a regression). Under heavy load (many sessions at
-once) a boot marker such as `MATHFFP OK` can also be missed once: a rerun on the same ROM md5 settles it.
+(plus `ppide` with `PP_IDE=1`: `tests/ide_rdb_probe.sh` on the A600 profile, about 15 min on the dev ROM, for
+changes to IDE or the filesystem and for releases; log `build/amiberry/sessions/ppide.result`) and starts by
+stopping and deleting them: when another Claude session may run it too, give yours a prefix of its own
+(`PP_PREFIX=cx prepush-check …` -> `cx512`, `cx0`, `cxlem`, `cxide`), or each run stops the other's ("session pplem
+is not running", a total near 50 s; such a run is neither a pass nor a regression). Under heavy load (many
+sessions at once) a boot marker such as `MATHFFP OK` can also be missed once: a rerun on the same ROM md5 settles it.
 The Lemmings run follows the screen, not fixed delays (since 2026-11-17): it waits for the FAIRLIGHT intro, clicks
 (again while the intro stays), then waits up to 5 minutes for the game menu, detected by its colour count in an IPC
 capture; "game menu not reached" fails the run. The game takes about a minute to load after the click.

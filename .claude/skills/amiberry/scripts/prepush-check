@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Pre-push validation of the dev ROM, three Amiberry sessions in parallel (replaces the FS-UAE runs):
+# Pre-push validation of the dev ROM, three Amiberry sessions in parallel (four with PP_IDE=1; replaces the FS-UAE
+# runs):
 #   pp512 / pp0 : assets/boot_c.adf with 512 KB / 0 KB of slow RAM -> "E3 CMD RAN OK", no FAIL line, marker list
 #   pplem       : assets/lemmings_flt.adf (slow 512) -> waits for the FAIRLIGHT intro, left-clicks (again while the
 #                 intro stays), waits up to 5 min for the game menu, screenshot to look at
+#   ppide       : only with PP_IDE=1 (changes to IDE or the filesystem, releases): tests/ide_rdb_probe.sh on the A600
+#                 profile (RDB partitions DOS\0-DOS\3 read and written, host checks), about 15 min on the dev ROM
+#                 (6 on the production ROM), so it is not part of every push
 # Usage (repository root): .claude/skills/amiberry/scripts/prepush-check [rom]   (default build/kick13.rom)
-# Exit 0 when both serial runs pass and the Lemmings menu is detected; still look at the Lemmings screenshot.
-# PP_PREFIX (default "pp") names the sessions <prefix>512, <prefix>0, <prefix>lem: two runs at the same time (two
-# Claude sessions) need different prefixes, or each stops the other's sessions.
+# Exit 0 when both serial runs pass, the Lemmings menu is detected and, with PP_IDE=1, ide_rdb_probe exits 0; still
+# look at the Lemmings screenshot.
+# PP_PREFIX (default "pp") names the sessions <prefix>512, <prefix>0, <prefix>lem, <prefix>ide: two runs at the same
+# time (two Claude sessions) need different prefixes, or each stops the other's sessions.
 set -u
 cd "$(dirname "$0")/../../../.." || exit 2
 A=.claude/skills/amiberry/scripts/amiberry-session
 ROM="${1:-build/kick13.rom}"
 SESS=build/amiberry/sessions
 P="${PP_PREFIX:-pp}"
-S512="${P}512" S0="${P}0" SLEM="${P}lem"
+S512="${P}512" S0="${P}0" SLEM="${P}lem" SIDE="${P}ide"
 MARKERS=("RAWDOFMT OK" "DOS LOCK EXAMINE OK" "M6U TRACKDISK READ OK" "D1 OFS READ OK" "D2LOADSEG OK"
   "CONSOLE WRITE OK" "REQUESTER DRAWN OK" "F1BOOTOK" "E3 CMD RAN OK" "M7A TIMER OK" "M7E IPL OK" "MATHFFP OK"
   "DISKRES OK" "POTGO OK" "KBDDEV OK" "AUDIO ALLOC OK" "AUDIO PLAY OK" "SEM OK" "SEM WAIT OK" "REGIONS OK"
@@ -21,12 +26,18 @@ MARKERS=("RAWDOFMT OK" "DOS LOCK EXAMINE OK" "M6U TRACKDISK READ OK" "D1 OFS REA
 
 t0=$(date +%s)
 md5sum "$ROM"
-$A stop "$S512" "$S0" "$SLEM" >/dev/null 2>&1
-rm -rf "${SESS:?}/$S512" "${SESS:?}/$S0" "${SESS:?}/$SLEM"
-$A start --name "$S512" --rom "$ROM" --adf assets/boot_c.adf --slow 512 >/dev/null &
-$A start --name "$S0" --rom "$ROM" --adf assets/boot_c.adf --slow 0 >/dev/null &
-$A start --name "$SLEM" --rom "$ROM" --adf assets/lemmings_flt.adf --slow 512 >/dev/null &
-wait
+$A stop "$S512" "$S0" "$SLEM" "$SIDE" >/dev/null 2>&1
+rm -rf "${SESS:?}/$S512" "${SESS:?}/$S0" "${SESS:?}/$SLEM" "${SESS:?}/$SIDE"
+ide_pid=
+if [ "${PP_IDE:-0}" = 1 ]; then
+  tests/ide_rdb_probe.sh "$ROM" "$SIDE" a600 1500 > "$SESS/$SIDE.result" 2>&1 &
+  ide_pid=$!
+fi
+starts=()
+$A start --name "$S512" --rom "$ROM" --adf assets/boot_c.adf --slow 512 >/dev/null & starts+=($!)
+$A start --name "$S0" --rom "$ROM" --adf assets/boot_c.adf --slow 0 >/dev/null & starts+=($!)
+$A start --name "$SLEM" --rom "$ROM" --adf assets/lemmings_flt.adf --slow 512 >/dev/null & starts+=($!)
+wait "${starts[@]}"                             # not the ide_rdb_probe job, which runs to the end
 
 # Screen state from an IPC capture: "intro" (FAIRLIGHT, dark blue #000033 background), "shell" (AmigaSlopDOS window
 # shown while the game loads, #AA99CC), "menu" (the game's 32-colour title picture: 28 distinct colours in an IPC
@@ -88,5 +99,15 @@ done
 wait "$lem_pid" || rc=1
 cat "$SESS/$SLEM.result"
 $A stop "$SLEM" >/dev/null
+if [ -z "$ide_pid" ]; then
+  echo "$SIDE: skipped (PP_IDE=1 runs tests/ide_rdb_probe.sh)"
+elif wait "$ide_pid"; then
+  echo "$SIDE: ide_rdb_probe OK ($(grep -c ': identical' "$SESS/$SIDE.result") files identical), log $SESS/$SIDE.result"
+else
+  echo "$SIDE: ide_rdb_probe FAILED, log $SESS/$SIDE.result"
+  grep -E 'FAIL:|DIFFERS|still present|entries, 79|OFS CHECK FAIL|xdfscan: [^o]|RDB CHANGED|ran \(|no IDERDB END' \
+    "$SESS/$SIDE.result" | head -10
+  rc=1
+fi
 echo "total: $(( $(date +%s) - t0 )) s"
 exit $rc
