@@ -15,7 +15,9 @@ for the measured evidence. It is released under the MIT License.
   1 MiB Agnus, A1200; 256 KiB of chip RAM are taken), then waits on its insert-disk screen for the disk to boot. A
   reset comes back to KickSlopStart; switching off returns to the Kickstart in ROM. Tested under emulation from
   Kickstart 1.3, 2.05 (A600), 3.0 (A1200) and 3.1 hosts, 68000 and 68020, cycle-exact or not; 68040/060 are not
-  supported, and on an A600/A1200 only floppies work (no IDE or PCMCIA under a 1.3 OS).
+  supported. On an A600/A1200 the built-in IDE hard disk or CF card is mounted (RDB partitions read and write,
+  FAT12/16/32 read-only), the machine still boots from a floppy; PCMCIA is not supported. See
+  [IDE-HARDDISK.md](https://github.com/Thaolia/KickSlopStart/blob/main/docs/IDE-HARDDISK.md).
 - **Real hardware:** the soft-kick disk boots on a real A500 (512 KiB chip + 512 KiB slow RAM). The `.rom`
   in an EPROM is not tested yet: a 256 KiB image is what a Kickstart 1.3 socket expects; EPROM adapters may need the
   image doubled or byte-swapped, depending on the chip.
