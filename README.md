@@ -122,23 +122,47 @@ commits since the previous release.
 
 ## Soft-kick disk (no ROM swap)
 
-**Minimum: 512 KiB chip RAM + 512 KiB slow RAM, or 1 MiB of chip RAM.** The disk puts KickSlopStart (256 KiB) in slow
-RAM at `$C00000` when there is some (an A500 with its A501 trapdoor expansion; tested on a real A500). Otherwise it
-relocates it into chip RAM above 512 KiB, as high as a free block allows: an A500 with a 1 MiB Agnus, or an A1200 as
-a Relokick-style use (tested with a 68020; 68030 untested, 68040/060 not supported). Fast RAM on an expansion or
-accelerator board cannot hold it: that RAM is not configured yet when a reset comes back to the image.
+**Minimum: 512 KiB chip RAM + 512 KiB slow RAM, or 1 MiB of chip RAM.** The soft-kick disk starts KickSlopStart on a
+machine that keeps its own Kickstart in ROM (1.3, or 2.x/3.x). Each release comes with `KickSlopStart-<version>.adf`,
+and the `rom` branch carries the latest one as
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Build it with
+`make adf` (`build/KickSlopStart.adf`).
 
-Each release also comes with `KickSlopStart-<version>.adf`, and the `rom` branch carries the latest one as
-[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on the
-Kickstart in the machine (1.3, or 2.x/3.x): its bootblock loads KickSlopStart and starts it. In slow RAM it takes
-the first 256 KiB and the rest stays available; in chip RAM it takes 256 KiB of the chip memory programs can use
-(with 1 MiB of chip RAM, about 600 KiB are left free at the Workbench). KickSlopStart then shows its insert-disk
-screen: take the soft-kick disk out and insert the disk you want, and it boots it. A reset (Ctrl+Amiga+Amiga) comes
-back to KickSlopStart, through the ColdCapture vector that the Kickstart in ROM calls at reset; switching the machine
-off returns to the Kickstart in ROM. With neither enough slow RAM nor 1 MiB of chip RAM, the disk boots normally on
-the Kickstart in ROM. Only the floppy drives work on an A1200: KickSlopStart, like 1.3, knows neither its IDE port
-nor PCMCIA. Tested under emulation with a real 1.3 (1 MiB chip) and a 3.1 Kickstart (68020, 2 MiB chip). Build it
-with `make adf` (`build/KickSlopStart.adf`).
+### Using it
+
+Boot the disk on the Kickstart in the machine: its bootblock loads KickSlopStart (256 KiB) and starts it.
+KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want, and it
+boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
+in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. With neither enough slow RAM nor
+1 MiB of chip RAM, the disk boots normally on the Kickstart in ROM.
+
+### A500 with slow RAM
+
+When slow RAM covers `$C00000` (an A500 with its A501 trapdoor expansion), the disk puts KickSlopStart there. It
+takes the first 256 KiB of the slow RAM and the rest stays available; chip RAM is untouched. Tested on a real A500.
+
+### A1200, or an A500 with 1 MiB of chip RAM (Relokick-style use)
+
+Without slow RAM, the disk relocates KickSlopStart into chip RAM above 512 KiB, as high as a free 64 KiB-aligned
+block allows (a 2.x/3.x Kickstart keeps its supervisor stack at the very top, so the image usually lands 64 KiB
+lower). This covers an A500 with a 1 MiB Agnus and an A1200, which never has slow RAM. The image takes 256 KiB of the
+chip memory programs can use: about 600 KiB stay free at the Workbench with 1 MiB of chip RAM, about 1.6 MiB with
+2 MiB.
+
+- Tested under emulation with a real Kickstart 1.3 (1 MiB chip, 68000) and a 3.1 Kickstart (68020, 2 MiB chip, AGA);
+  not tried yet on a real A1200, feedback is welcome.
+- 68030 untested; 68040/060 are not supported (their caches and MMU are not handled), nor accelerator MapROM.
+- Fast RAM on an expansion or accelerator board cannot hold the image: that RAM is not configured yet (autoconfig)
+  when a reset comes back to it.
+- Only the floppy drives work on an A1200: KickSlopStart, like 1.3, knows neither its IDE port nor PCMCIA. AGA
+  machines run in OCS mode, as under a real 1.3.
+
+### Relokick, MKick, SKick
+
+These soft-kick tools cannot start KickSlopStart: they are made to load Commodore Kickstart files together with patch
+or relocation data built for each exact Commodore ROM (SKick checks the ROM's checksum against its own tables, MKick
+does not start a 1.3 Kickstart, Relokick ships its own patched 1.3). Use the soft-kick disk instead; it carries its
+own relocation table, built from our sources (`src/softkick/mkreloc.py`).
 
 ## Reporting a problem
 

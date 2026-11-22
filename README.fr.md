@@ -127,24 +127,50 @@ de la release, avec les commits depuis la release précédente.
 
 ## Disquette de soft-kick (sans changer de ROM)
 
-**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM, ou 1 Mio de chip RAM.** La disquette installe KickSlopStart
-(256 Kio) dans la slow RAM en `$C00000` quand il y en a (un A500 avec son extension A501 dans la trappe ; testée sur
-un vrai A500). Sinon, elle le reloge dans la chip RAM au-dessus de 512 Kio, aussi haut qu'un bloc libre le permet :
-un A500 avec un Agnus 1 Mio, ou un A1200 à la manière de Relokick (testée avec un 68020 ; 68030 non testé, 68040/060
-non pris en charge). La fast RAM d'une carte d'extension ou d'une carte accélératrice ne peut pas l'accueillir :
-cette RAM n'est pas encore configurée quand un reset revient sur l'image.
+**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM, ou 1 Mio de chip RAM.** La disquette de soft-kick démarre
+KickSlopStart sur une machine qui garde son propre Kickstart en ROM (1.3, ou 2.x/3.x). Chaque release fournit
+`KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Pour la
+construire : `make adf` (`build/KickSlopStart.adf`).
 
-Chaque release fournit aussi `KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
-[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Bootez-la sur
-le Kickstart de la machine (1.3, ou 2.x/3.x) : son bootblock charge KickSlopStart et le démarre. En slow RAM il prend
-les 256 premiers Kio et le reste reste disponible ; en chip RAM il prend 256 Kio de la chip utilisable par les
-programmes (avec 1 Mio de chip, il reste environ 600 Kio libres au Workbench). KickSlopStart affiche alors son écran
-d'insertion : retirez la disquette de soft-kick, insérez celle que vous voulez, et il la boote. Un reset
-(Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart en ROM appelle au reset ;
-éteindre la machine ramène au Kickstart en ROM. Sans assez de slow RAM ni 1 Mio de chip, la disquette boote
-normalement sur le Kickstart en ROM. Sur A1200, seuls les lecteurs de disquette fonctionnent : KickSlopStart, comme
-la 1.3, ne connaît ni son port IDE ni le PCMCIA. Testée en émulation avec une vraie 1.3 (1 Mio de chip) et un
-Kickstart 3.1 (68020, 2 Mio de chip). Pour la construire : `make adf` (`build/KickSlopStart.adf`).
+### Utilisation
+
+Bootez la disquette sur le Kickstart de la machine : son bootblock charge KickSlopStart (256 Kio) et le démarre.
+KickSlopStart affiche alors son écran d'insertion : retirez la disquette de soft-kick, insérez celle que vous voulez,
+et il la boote. Un reset (Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart
+en ROM appelle au reset ; éteindre la machine ramène au Kickstart en ROM. Sans assez de slow RAM ni 1 Mio de chip, la
+disquette boote normalement sur le Kickstart en ROM.
+
+### A500 avec slow RAM
+
+Quand la slow RAM couvre `$C00000` (un A500 avec son extension A501 dans la trappe), la disquette y installe
+KickSlopStart. Il prend les 256 premiers Kio de la slow RAM et le reste reste disponible ; la chip RAM n'est pas
+touchée. Testée sur un vrai A500.
+
+### A1200, ou A500 avec 1 Mio de chip RAM (à la manière de Relokick)
+
+Sans slow RAM, la disquette reloge KickSlopStart dans la chip RAM au-dessus de 512 Kio, aussi haut qu'un bloc libre
+aligné sur 64 Kio le permet (un Kickstart 2.x/3.x garde sa pile superviseur tout en haut, donc l'image se place en
+général 64 Kio plus bas). Ça couvre un A500 avec un Agnus 1 Mio et un A1200, qui n'a jamais de slow RAM. L'image
+prend 256 Kio de la chip utilisable par les programmes : il reste environ 600 Kio libres au Workbench avec 1 Mio de
+chip, environ 1,6 Mio avec 2 Mio.
+
+- Testée en émulation avec un vrai Kickstart 1.3 (1 Mio de chip, 68000) et un Kickstart 3.1 (68020, 2 Mio de chip,
+  AGA) ; pas encore essayée sur un vrai A1200, les retours sont bienvenus.
+- 68030 non testé ; 68040/060 non pris en charge (leurs caches et leur MMU ne sont pas gérés), pas plus que le MapROM
+  des cartes accélératrices.
+- La fast RAM d'une carte d'extension ou accélératrice ne peut pas accueillir l'image : cette RAM n'est pas encore
+  configurée (autoconfig) quand un reset revient dessus.
+- Sur A1200, seuls les lecteurs de disquette fonctionnent : KickSlopStart, comme la 1.3, ne connaît ni son port IDE
+  ni le PCMCIA. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
+
+### Relokick, MKick, SKick
+
+Ces outils de soft-kick ne peuvent pas démarrer KickSlopStart : ils sont faits pour charger des fichiers Kickstart de
+Commodore avec des données de patch ou de relocation construites pour chaque ROM Commodore exacte (SKick compare la
+somme de contrôle de la ROM à ses propres tables, MKick ne démarre pas de Kickstart 1.3, Relokick fournit sa propre
+1.3 patchée). Utilisez plutôt la disquette de soft-kick : elle porte sa propre table de relocation, construite depuis
+nos sources (`src/softkick/mkreloc.py`).
 
 ## Signaler un problème
 
