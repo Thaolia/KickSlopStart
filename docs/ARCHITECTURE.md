@@ -1,5 +1,29 @@
 # Architecture
 
+## A600/A1200 IDE and FFS in the ROM filesystem (2026-11-22)
+
+User-facing description and limits: [IDE-HARDDISK.md](IDE-HARDDISK.md); plan: [ide-a600-plan.md](ide-a600-plan.md).
+
+- `src/exec/ide.s`: `scsi.device` 34, COLDSTART resident pri 10, not AUTOINIT. It adds the device only when the Gayle
+  ID sequence at `$DE1000` reads `$D0`/`$D1`, so an A500 is unchanged. Software reset, IDENTIFY on units 0 and 1
+  (words byte-swapped: ATA is little-endian, sector data arrive in disk order), PIO transfers polled in the caller's
+  context under a signal semaphore, nIEN set and Gayle interrupts masked, LBA28 or CHS. io_Offset in bytes (4 GB).
+- At its init it reads each unit's RDB (blocks 0-15) and gives every DOS\0-DOS\3 partition without PBFF_NOMOUNT to
+  MakeDosNode + AddDosNode with priority -128: mounted, never booted from (strap's DF0: BootNode, pri 5, stays the
+  boot device). Buffers are allocated, not on the boot stack.
+- `AddDosNode` (`src/exec/expansion.s`) checks for dos.library with FindName under Forbid: OpenLibrary at cold start
+  made the ramlib layer initialise dos's ROM resident, whose init starts the boot from inside InitCode.
+- ROM filesystem: the type comes from the first long of the partition's first reserved block (`GEO_DOSTYPE`,
+  bits FFS and INTL). FFS data blocks are raw and found through the header table and its extension blocks; the
+  international modes use a Latin-1 upper case in the hash and name comparison. OFS reads still follow the data
+  chain. id_DiskType stays `DOS\0` for all four types. The validator already worked from the tables.
+- Bitmap memory is bounded: the write context keeps the key of each bitmap block (4 bytes per block) and a cache of
+  at most 8 bitmap blocks (`OW_BMCACHE`, LRU, dirty flags), plus a free-block count computed in the checksum pass at
+  mount and kept up to date. Evicted dirty blocks are written only after the root says "not valid" (`ow_dirty`), and
+  the write-back writes the dirty ones before the root goes valid again, so the bm_flag protocol is unchanged. The
+  validator clears then marks through the cache (slow on big partitions, bounded memory). Measured on a 1 MB-chip
+  A600 profile: 836,112 bytes free with a 1.2 GB disk (535,056 when the whole bitmap was in memory).
+
 ## Tall narrow bitmap copies (2026-11-16)
 
 The rectangle blitter keeps the 64-word source-copy threshold for ordinary shapes. Copies at most two

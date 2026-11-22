@@ -1,4 +1,4 @@
-; src/dos/handler.s - ROM file-handler process (D3b), one per floppy drive (DF0:, DF1:) or per OFS partition of a
+; src/dos/handler.s - ROM file-handler process (D3b), one per floppy drive (DF0:, DF1:) or per DOS\0-\3 partition of a
 ; block device (a DeviceNode with no handler of its own, started by dos on first use). Body of a Process (created
 ; by proc_create) that loops
 ; WaitPort/GetMsg on its pr_MsgPort and serves DOS packets: ACTION_FINDINPUT/READ/SEEK/END + LOCATE_OBJECT/
@@ -63,6 +63,7 @@ IE_SIZE         EQU 22               ; struct InputEvent
 DT_DOS          EQU $444F5300        ; "DOS\0"
 DT_NDOS         EQU $4E444F53        ; "NDOS": DOS boot block but invalid root block
 DT_BAD          EQU $42414400        ; "BAD\0": block 0 unreadable
+HND_MAXDOSTYPE  EQU 3                ; DOS\0-DOS\3 are served: OFS, FFS, OFS and FFS international
 
 ; handler context (allocated at its startup, pointer in tc_UserData; HC_TDIO and HC_OWCTX: ofs.i)
 HC_VOLUME       EQU HC_GEO+GEO_SIZE  ; BPTR: volume node of the disk mounted in this drive or partition | 0
@@ -214,12 +215,22 @@ dos_handler:
                 bra     .reply
 
 .findinput:
-                move.l  #SS_ALLOC,d0                 ; streaming state (fields + ioreq + 512-byte block buffer)
+                move.l  #SS_ALLOC,d2                 ; streaming state (fields + ioreq + 512-byte block buffer),
+                bsr     hnd_ctx                      ; and the table buffer on an FFS volume
+                beq.s   .fi_size
+                move.l  d0,a0
+                btst    #GEOB_FFS,HC_GEO+GEO_DOSTYPE+3(a0)
+                beq.s   .fi_size
+                move.l  #SS_ALLOCFFS,d2
+.fi_size:
+                move.l  d2,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .fi_fail
                 move.l  d0,d6                        ; d6 = state (preserved by ofs_stream_open)
+                move.l  d0,a0
+                move.l  d2,SS_ASIZE(a0)
                 ; convert the BSTR name (ARG3) into a C string on the stack for ofs_stream_open
                 lea     -112(sp),sp
                 move.l  DP_ARG3(a4),d0
@@ -266,7 +277,7 @@ dos_handler:
                 move.l  d1,DP_RES2(a4)                ; 205 not found (d3f depends on it), 212 not a file
 .fi_free:
                 move.l  d6,a1
-                move.l  #SS_ALLOC,d0
+                move.l  SS_ASIZE(a1),d0
                 jsr     LVO_FREEMEM(a6)
 .fi_fail:
                 move.l  #DOSFALSE,DP_RES1(a4)
@@ -532,8 +543,8 @@ dos_handler:
                 move.l  SS_LOCK(a1),a0
                 bsr     hnd_droplock
                 move.l  (sp)+,a1
-                move.l  #SS_ALLOC,d0
-                jsr     LVO_FREEMEM(a6)               ; free the state (ioreq + block buffer included)
+                move.l  SS_ASIZE(a1),d0
+                jsr     LVO_FREEMEM(a6)               ; free the state (ioreq + block buffers included)
 .reply:                                              ; returnpkt: to dp_Port (mn_ReplyPort may
                 move.l  DP_PORT(a4),a0                ; not be filled in: DiskCopy), which receives
                 move.l  a2,DP_PORT(a4)                ; the handler port in return
@@ -1259,9 +1270,16 @@ hnd_mount:
                 move.l  #DT_BAD,d2
                 tst.l   d0
                 beq     .mo_type
-                move.l  HC_TDIO+IOREQ_SZ(a3),d2       ; first long of block 0: "DOS\0" only (OFS)
-                cmp.l   #DT_DOS,d2
+                move.l  HC_TDIO+IOREQ_SZ(a3),d2       ; first long of the partition's first reserved block: "DOS\0"
+                move.l  d2,d0                         ; to "DOS\3" (OFS, FFS, their international modes); the disk
+                clr.b   d0                            ; decides, de_DosType is not looked at
+                cmp.l   #DT_DOS,d0
                 bne     .mo_type
+                moveq   #0,d0
+                move.b  d2,d0
+                cmp.b   #HND_MAXDOSTYPE,d0
+                bhi     .mo_type                      ; dircache and long names: not a DOS disk here
+                move.l  d0,HC_GEO+GEO_DOSTYPE(a3)
                 move.l  #DT_NDOS,d2
                 tst.b   HC_BADBS(a3)
                 bne     .mo_type
@@ -1294,8 +1312,8 @@ hnd_mount:
                 beq     .mo_type
                 cmp.b   #30,d0
                 bhi     .mo_type
-                move.l  #DT_DOS,d2
-                bsr     hnd_findvol                   ; d0 = BPTR of the node (reactivated or created) | 0
+                move.l  #DT_DOS,d2                    ; id_DiskType stays "DOS\0" for the four types (1.3 programs
+                bsr     hnd_findvol                   ; know ID_DOS_DISK only); d0 = volume node | 0
                 move.l  d0,HC_VOLUME(a3)
                 bsr     hnd_bootclock
 .mo_type:

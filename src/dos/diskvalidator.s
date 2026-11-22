@@ -22,6 +22,8 @@
                 xref    ow_rd                ; ofswrite.s
                 xref    ow_keyok
                 xref    ow_bmbit
+                xref    ow_bmgetx
+                xref    ow_bmdirty
                 xref    vr_req               ; dos_lib.s: three-line system requester (Retry / Cancel)
 
 ; dv_validate(a6 = SysBase) -> d0 = 1 (valid disk) | 0 (invalid / no disk). Clobbers scratch + d2-d7/a2-a4 (saved).
@@ -128,12 +130,14 @@ dv_td_name:
                 even
 
 ; ------------------------------------------------------------------------------------------------------------------
-; dv_rebuild(a5 = write context with its bitmap table and keys (ow_bmalloc), root block in OW_B1, a6) -> d0 = 1 / 0:
+; dv_rebuild(a5 = write context with its bitmap keys and cache (ow_bmalloc), root block in OW_B1, a6) -> d0 = 1 / 0:
 ; validation of a volume whose root says "bitmap not valid" (spec rom-filesystem §2.3, dos-lvo-partial §1.4): the
 ; bitmap is rebuilt from the directory tree: every block free, then the root, the bitmap blocks and their extension
 ; blocks, and for each object reachable from the root its header, and for a file its extension blocks and the data
-; blocks their tables list (OFS data blocks are not read: their keys are in the tables). A key outside the
-; partition, a header with a bad checksum, type, key or parent, or a key met twice stops the walk with the requester
+; blocks their tables list (OFS data blocks are not read: their keys are in the tables). The bitmap blocks go through
+; the cache: when they do not all fit in it, those it replaces are written to the disk (the root there already says
+; "not valid") and read back when marked again; the free count is the partition less the blocks marked. A key outside
+; the partition, a header with a bad checksum, type, key or parent, or a key met twice stops the walk with the requester
 ; "Error validating disk" / <volume> / "Key <n> out of range" (or "checksum error", "already used"), then
 ; "Disk structure corrupt" / "Use DISKDOCTOR to correct it"; Retry on either walks again, Cancel fails (the caller
 ; leaves the volume not validated: 213). The walk keeps no stack: it goes back up through the parent keys and finds
@@ -156,32 +160,45 @@ dv_rebuild:
 
 ; dv_walk(a5, a6) -> d0 = 1 rebuilt | 0 with d1 = key, d2 = DV_* kind. Clobbers d3-d7/a2-a4.
 dv_walk:
-        move.l  OW_BMTAB(a5),a2      ; every bit free, every bitmap block to be written
-        move.l  OW_BMN(a5),d3
-        bra.s   .wk_fnx
+        bsr     ofs_geo              ; every bit free, every bitmap block to be written
+        move.l  GEO_NBLK(a0),d0
+        sub.l   GEO_RES(a0),d0
+        move.l  d0,OW_BMFREE(a5)
+        moveq   #0,d3                ; d3 = bitmap block
 .wk_fill:
-        st      BME_DIRTY(a2)
-        lea     BME_DATA+4(a2),a0
+        cmp.l   OW_BMN(a5),d3
+        bhs.s   .wk_fdone
+        move.l  d3,d0
+        moveq   #1,d1
+        jsr     ow_bmgetx            ; a1 = its cache entry, contents to be set here
+        beq.s   .wk_fio
+        jsr     ow_bmdirty
+        lea     BME_DATA+4(a1),a0
         moveq   #127-1,d1
 .wk_fl:
         move.l  #-1,(a0)+
         dbra    d1,.wk_fl
-        lea     BME_SIZE(a2),a2
-.wk_fnx:
-        dbra    d3,.wk_fill
+        addq.l  #1,d3
+        bra.s   .wk_fill
+.wk_fio:                             ; the entry replaced could not be written back
+        move.l  OW_BMKEYS(a5),a0
+        lsl.l   #2,d3
+        move.l  0(a0,d3.l),d1
+        moveq   #DV_CKSUM,d2
+        bra     .wk_fail
+.wk_fdone:
         bsr     ofs_geo
         move.l  GEO_ROOT(a0),d4      ; d4 = current directory
         move.l  d4,d0
         bsr     dv_mark
         beq     .wk_bad
-        move.l  OW_BMTAB(a5),a2      ; the bitmap blocks
+        move.l  OW_BMKEYS(a5),a2     ; the bitmap blocks
         move.l  OW_BMN(a5),d3
         bra.s   .wk_bnx
 .wk_bm:
-        move.l  BME_KEY(a2),d0
+        move.l  (a2)+,d0
         bsr     dv_mark
         beq     .wk_bad
-        lea     BME_SIZE(a2),a2
 .wk_bnx:
         dbra    d3,.wk_bm
         move.l  OW_BMN(a5),d3        ; their extension blocks: one per 127 keys beyond the root's 25
@@ -307,24 +324,34 @@ dv_walk:
         rts
 
 ; dv_mark(d0 = key, a5) -> Z = 0 if the key was free and inside the partition, now marked used; Z = 1 with d1 = key,
-; d2 = DV_RANGE / DV_TWICE otherwise. Clobbers d0/a0/a1.
+; d2 = DV_RANGE / DV_TWICE / DV_CKSUM (its bitmap block could not be brought into the cache) otherwise. Clobbers
+; d0/a0/a1.
 dv_mark:
         move.l  d0,d1
         movem.l d1,-(sp)
         jsr     ow_keyok
         movem.l (sp)+,d1             ; (movem keeps the flags)
         beq.s   .mk_range
-        move.l  d1,d0
         move.l  d1,-(sp)
-        jsr     ow_bmbit             ; a0 = long, d1 = bit
+        move.l  d1,d0
+        jsr     ow_bmbit             ; a0 = long, d1 = bit, a1 = cache entry
+        beq.s   .mk_io
         move.l  (a0),d0
         bclr    d1,d0
-        movem.l (sp)+,d1             ; Z of bclr: the bit was already clear (used)
-        beq.s   .mk_twice
+        beq.s   .mk_twice            ; the bit was already clear (used)
         move.l  d0,(a0)
+        jsr     ow_bmdirty
+        subq.l  #1,OW_BMFREE(a5)
+        move.l  (sp)+,d1
         moveq   #1,d0
         rts
+.mk_io:
+        move.l  (sp)+,d1
+        moveq   #DV_CKSUM,d2
+        moveq   #0,d0
+        rts
 .mk_twice:
+        move.l  (sp)+,d1
         moveq   #DV_TWICE,d2
         moveq   #0,d0
         rts

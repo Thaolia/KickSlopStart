@@ -155,8 +155,8 @@ chip memory programs can use: about 600 KiB stay free at the Workbench with 1 Mi
 - 68030 untested; 68040/060 are not supported (their caches and MMU are not handled), nor accelerator MapROM.
 - Fast RAM on an expansion or accelerator board cannot hold the image: that RAM is not configured yet (autoconfig)
   when a reset comes back to it.
-- Only the floppy drives work on an A1200: KickSlopStart, like 1.3, knows neither its IDE port nor PCMCIA. AGA
-  machines run in OCS mode, as under a real 1.3.
+- The built-in IDE hard disk of an A600/A1200 is mounted ([docs/IDE-HARDDISK.md](docs/IDE-HARDDISK.md)); PCMCIA is
+  not supported. AGA machines run in OCS mode, as under a real 1.3.
 
 ### Relokick, MKick, SKick
 

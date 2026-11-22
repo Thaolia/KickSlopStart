@@ -43,15 +43,15 @@
                 xdef    ow_rd                ; for the validator
                 xdef    ow_keyok
                 xdef    ow_bmbit
+                xdef    ow_bmgetx
+                xdef    ow_bmdirty
                 xref    dos_now              ; dos_lib.s: system time as a DateStamp
                 xref    hnd_busy             ; handler.s: lock conflict check (spec rom-filesystem §3.1)
 
-OFS_T_LIST      EQU 16               ; extension block
 OFSB_KEY        EQU 4                ; key (the block itself)
 OFSB_HIGHSEQ    EQU 8                ; header: blocks in its table; data: sequence number
 OFSB_EXT        EQU 504              ; next extension block
 OFS_TABN        EQU 72               ; table entries of a header / of an extension
-OFSB_TABEND     EQU OFSB_HASHTAB+(OFS_TABN-1)*4  ; last entry = first data block
 WS_MAGICV       EQU $57524954        ; "WRIT": write state (the read state starts with the trackdisk base)
 ID_VALIDATED    EQU 82
 ID_VALIDATING   EQU 81
@@ -60,8 +60,9 @@ OFSB_VDAYS      EQU 472              ; root: date of the last modification of th
 ; write context (one per file-handler, allocated on first need; pointer in HC_OWCTX of its context): OW_* in ofs.i.
 
 ; write state of an open file (FINDOUTPUT, FINDUPDATE): a position anywhere in [0, size]. Every data block but the
-; last holds OFS_DMAX bytes, so block index = position / OFS_DMAX. Block tables: group 0 = the header's, group
-; g >= 1 = the g-th extension block; only the last group grows.
+; last holds WS_BSZ bytes (OFS_DMAX after the 24-byte OFS header, or the whole 512-byte block on FFS), so block index
+; = position / WS_BSZ. Block tables: group 0 = the header's, group g >= 1 = the g-th extension block; only the last
+; group grows.
 WS_MAGIC        EQU 0
 WS_SIZE         EQU 8                ; file size (highest position written)
 WS_NBLK         EQU 12               ; data blocks
@@ -76,7 +77,10 @@ WS_XGRP         EQU 48               ; group held in XBUF (0 = none)
 WS_DDIRTY       EQU 52               ; DBUF modified
 WS_XDIRTY       EQU 56               ; XBUF modified
 WS_MOD          EQU 60               ; file modified: header rewritten at close
-WS_HBUF         EQU 68               ; (WS_LOCK at 64: ofs.i)
+WS_FFS          EQU 68               ; (WS_LOCK at 64: ofs.i) the volume is FFS (DOS\1, DOS\3): raw data blocks
+WS_BSZ          EQU 72               ; data bytes per block: 488 / 512
+WS_DOFF         EQU 76               ; offset of the data in a block: 24 / 0
+WS_HBUF         EQU 80
 WS_XBUF         EQU WS_HBUF+OFS_BSIZE
 WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE
@@ -184,6 +188,16 @@ ow_wrraw:
 ow_wrfail:
         moveq   #0,d0
         rts
+; ow_wrdata(d0 = block, a0 = buffer) -> d0 = 1 / 0: an FFS data block, a change of the volume (ow_dirty) written as
+; it is: no header, no checksum.
+ow_wrdata:
+        movem.l d0/a0,-(sp)
+        bsr.s   ow_dirty
+        tst.l   d0
+        movem.l (sp)+,d0/a0
+        beq.s   ow_wrfail
+        moveq   #CMD_WRITE,d1
+        bra     ow_io
 ; ow_dirty(a5, a6) -> d0 = 1 / 0: first change since the last write-back: the root block is read into OW_RB and
 ; written with its bitmap flag at 0 and the disk date (longs 118-120) set to now (boot-clock-v34 §5), before
 ; anything else. A disk removed before the write-back is then revalidated at its next mount (§8.4).
@@ -274,42 +288,54 @@ ow_flushctx:
         moveq   #1,d0
 .fc_ret:
         rts
-; ow_bmwrite(a5) -> d0 = 1 ok / 0: the bitmap blocks modified since written (checksum at long 0).
+; ow_bmwrite(a5) -> d0 = 1 ok / 0: the cached bitmap blocks modified since written; then nothing of the bitmap is
+; pending for the next write-back (the modified/moved flags of ow_bmmove are cleared).
 ow_bmwrite:
         movem.l d2/a2,-(sp)
         moveq   #1,d0
         tst.l   OW_BMST(a5)
         ble.s   .sy_ret              ; no bitmap in memory: nothing of it to write
-        move.l  OW_BMTAB(a5),a2
-        move.l  OW_BMN(a5),d2
+        move.l  OW_BMSLOT(a5),a2
+        move.l  OW_BMNS(a5),d2
         bra.s   .sy_nx
 .sy_lp:
+        bsr.s   ow_bmout
+        tst.l   d0
+        beq.s   .sy_ret              ; not written (no floppy): still to write at the next write-back
+        lea     BME_SIZE(a2),a2
+.sy_nx:
+        dbra    d2,.sy_lp
+        bsr     ow_bmflclr
+        moveq   #1,d0
+.sy_ret:
+        movem.l (sp)+,d2/a2
+        rts
+; ow_bmout(a2 = cache entry, a5, a6) -> d0 = 1 / 0: the entry written to its key with its checksum (long 0) if it
+; is dirty. Preserves d2-d7/a2-a6.
+ow_bmout:
+        moveq   #1,d0
         tst.b   BME_DIRTY(a2)
-        beq.s   .sy_next
-        lea     BME_DATA(a2),a0      ; checksum at long 0
+        beq.s   .bo_ret
+        lea     BME_DATA(a2),a0
         clr.l   (a0)
         moveq   #0,d0
         moveq   #127,d1
-.sy_sum:
+.bo_sum:
         add.l   (a0)+,d0
-        dbra    d1,.sy_sum
+        dbra    d1,.bo_sum
         neg.l   d0
         move.l  d0,BME_DATA(a2)
-        move.l  BME_KEY(a2),d0
+        move.l  BME_IDX(a2),d0
+        lsl.l   #2,d0
+        move.l  OW_BMKEYS(a5),a0
+        move.l  0(a0,d0.l),d0
         lea     BME_DATA(a2),a0
         moveq   #CMD_WRITE,d1
         bsr     ow_io
         tst.l   d0
-        beq.s   .sy_ret              ; not written (no floppy): still to write at the next write-back
+        beq.s   .bo_ret
         sf      BME_DIRTY(a2)
-        sf      BME_MOVED(a2)
-.sy_next:
-        lea     BME_SIZE(a2),a2
-.sy_nx:
-        dbra    d2,.sy_lp
-        moveq   #1,d0
-.sy_ret:
-        movem.l (sp)+,d2/a2
+.bo_ret:
         rts
 ; ow_cksum(a0 = block): long 5 = -(sum of the other longs). Preserves a0 and d2-d7.
 ow_cksum:
@@ -326,52 +352,66 @@ ow_cksum:
 
 ; ow_bmfree(a5, a6): the bitmap in memory is forgotten (state "not read"). Preserves d2-d7/a2-a6.
 ow_bmfree:
-        move.l  OW_BMTAB(a5),d0
+        move.l  OW_BMKEYS(a5),d0
         beq.s   .bf_st
         move.l  d0,a1
         move.l  OW_BMN(a5),d0
-        mulu    #BME_SIZE,d0
+        lsl.l   #2,d0
+        move.l  OW_BMNS(a5),d1
+        mulu    #BME_SIZE,d1
+        add.l   d1,d0
         jsr     LVO_FREEMEM(a6)
-        clr.l   OW_BMTAB(a5)
+        clr.l   OW_BMKEYS(a5)
 .bf_st:
         clr.l   OW_BMST(a5)
         clr.l   OW_HINT(a5)
         clr.l   OW_DIRTY(a5)         ; a forgotten volume (ejected, inhibited) has nothing left to write back
+; ow_bmflclr(a5): no bitmap block modified since the last write-back. Clobbers d0/a0.
+ow_bmflclr:
+        lea     OW_BMFL(a5),a0
+        moveq   #28/4-1,d0
+.fc_clr:
+        clr.l   (a0)+
+        dbra    d0,.fc_clr
         rts
 
-; ow_bmload(a5) -> d0 = 1 ok / 0 (OW_ERR): the bitmap of the volume is read once and kept: one bitmap block per
-; OFS_BMBITS_N blocks of the partition, designated by bm_pages (25 in the root block) then by bitmap extension
-; blocks (root long 104: 127 keys, the next extension in the last long). A root flagged "bitmap not valid" (or a
-; bitmap block with a bad checksum) is validated: the bitmap is rebuilt from the directory tree (dv_rebuild) and,
-; unless the disk is write-protected (then it stays in memory, as on 1.3: writes get 214, not 213), written back
-; with the root flagged valid. A failed validation leaves the volume not validated: 213 until the next mount.
+; ow_bmload(a5) -> d0 = 1 ok / 0 (OW_ERR): the bitmap of the volume, one bitmap block per OFS_BMBITS_N blocks of the
+; partition, designated by bm_pages (25 in the root block) then by bitmap extension blocks (root long 104: 127 keys,
+; the next extension in the last long). Its keys stay in memory; its blocks are read once through the cache, which
+; checks their checksums and counts the free blocks, and are then read again when needed (OW_BMCACHE at most in
+; memory). A root flagged "bitmap not valid" (or a bitmap block with a bad checksum) is validated: the bitmap is
+; rebuilt from the directory tree (dv_rebuild) and, unless the disk is write-protected (then it stays in memory, as
+; on 1.3: writes get 214, not 213), written back with the root flagged valid. A failed validation leaves the volume
+; not validated: 213 until the next mount. Preserves d2-d7/a2-a6.
 ow_bmload:
         tst.l   OW_BMST(a5)
         bgt     .bl_ok
         bmi     .bl_nv
-        movem.l d2-d4/a2-a3,-(sp)
+        movem.l d2-d5/a2-a3,-(sp)
         bsr     ofs_geo
         move.l  GEO_ROOT(a0),d0
         lea     OW_B1(a5),a0
         bsr     ow_rd
         tst.l   d0
         beq     .bl_ret
-        bsr     ow_bmalloc           ; d0 = 1 / 0: table, keys from the root and its extensions
+        bsr     ow_bmalloc           ; d0 = 1 / 0: keys from the root and its extensions, empty cache
         tst.l   d0
         beq     .bl_bmerr
         moveq   #-1,d0
         cmp.l   OW_B1+OFSB_BMFLAG(a5),d0
         bne.s   .bl_rebuild          ; bitmap not validated
-        move.l  OW_BMTAB(a5),a2
-        move.l  OW_BMN(a5),d2
-        bra.s   .bl_rnx
+        bsr     ofs_geo
+        move.l  GEO_NBLK(a0),d4
+        sub.l   GEO_RES(a0),d4       ; d4 = blocks left to count
+        clr.l   OW_BMFREE(a5)
+        moveq   #0,d3                ; d3 = bitmap block
 .bl_rlp:
-        move.l  BME_KEY(a2),d0
-        lea     BME_DATA(a2),a0
-        bsr     ow_rd
-        tst.l   d0
+        cmp.l   OW_BMN(a5),d3
+        bhs     .bl_valid
+        move.l  d3,d0
+        bsr     ow_bmget
         beq.s   .bl_rebuild
-        lea     BME_DATA(a2),a0
+        lea     BME_DATA(a1),a0
         moveq   #0,d0
         moveq   #127,d1
 .bl_sum:
@@ -379,11 +419,46 @@ ow_bmload:
         dbra    d1,.bl_sum
         tst.l   d0
         bne.s   .bl_rebuild          ; bitmap block checksum
-        lea     BME_SIZE(a2),a2
-.bl_rnx:
-        dbra    d2,.bl_rlp
-        bra.s   .bl_valid
+        lea     BME_DATA+4(a1),a0
+        moveq   #127-1,d2            ; longs of this bitmap block
+.bl_long:
+        tst.l   d4
+        beq.s   .bl_next
+        moveq   #32,d5
+        cmp.l   d5,d4
+        bhs.s   .bl_n
+        move.l  d4,d5                ; d5 = bits of this long inside the partition
+.bl_n:
+        sub.l   d5,d4
+        move.l  (a0)+,d0
+        beq.s   .bl_lnx
+        cmp.l   #-1,d0
+        bne.s   .bl_bits
+        cmp.w   #32,d5
+        bne.s   .bl_bits
+        add.l   d5,OW_BMFREE(a5)
+        bra.s   .bl_lnx
+.bl_bits:
+        subq.w  #1,d5
+.bl_bit:
+        lsr.l   #1,d0
+        bcc.s   .bl_used
+        addq.l  #1,OW_BMFREE(a5)
+.bl_used:
+        dbra    d5,.bl_bit
+.bl_lnx:
+        dbra    d2,.bl_long
+.bl_next:
+        addq.l  #1,d3
+        bra.s   .bl_rlp
 .bl_rebuild:
+        bsr     ofs_geo
+        tst.l   GEO_WPROT(a0)
+        beq.s   .bl_rbgo
+        move.l  OW_BMN(a5),d0        ; a read-only disk is validated in memory only: its whole bitmap must fit
+        cmp.l   OW_BMNS(a5),d0
+        bhi.s   .bl_failed
+.bl_rbgo:
         jsr     dv_rebuild
         tst.l   d0
         beq.s   .bl_failed
@@ -395,11 +470,12 @@ ow_bmload:
         bsr     ow_writeback
         tst.l   d0
         beq.s   .bl_failed
+        clr.l   OW_DIRTY(a5)         ; set by the blocks the cache wrote back during the rebuild: all written now
 .bl_valid:
         move.l  #1,OW_BMST(a5)
         moveq   #1,d0
 .bl_ret:
-        movem.l (sp)+,d2-d4/a2-a3
+        movem.l (sp)+,d2-d5/a2-a3
         rts
 .bl_bmerr:                           ; no memory: tried again later; a bad bitmap key: not validated
         cmp.l   #ERROR_NO_FREE_STORE,OW_ERR(a5)
@@ -445,57 +521,63 @@ ow_writeback:
         move.l  (sp)+,a2
         rts
 
-; ow_bmmove(a2 = root block, a5, a6): as on 1.3 (rom-filesystem §8.3), each modified bitmap block among the 25 of
-; the root's table moves to a newly allocated block (upward search from the root, like a header), its old block is
-; freed and the root's entry follows. An allocation or a freeing that modifies another bitmap block moves that one
-; too (another pass). No free block: it stays where it is. Preserves d2-d7/a2-a6.
+; ow_bmmove(a2 = root block, a5, a6): as on 1.3 (rom-filesystem §8.3), each bitmap block of the root's table modified
+; since the last write-back moves to a newly allocated block (upward search from the root, like a header), its old
+; block is freed and the root's entry follows. An allocation or a freeing that modifies another bitmap block moves
+; that one too (another pass). No free block: it stays where it is. Preserves d2-d7/a2-a6.
 ow_bmmove:
-        movem.l d2-d4/a3,-(sp)
+        movem.l d2-d4,-(sp)
         move.l  OW_ERR(a5),-(sp)     ; a full disk here is not an error of the current packet
         tst.l   OW_BMST(a5)
         ble.s   .mv_ret
 .mv_pass:
         moveq   #0,d4                ; d4 = a block moved in this pass
-        move.l  OW_BMTAB(a5),a3
-        move.l  OW_BMN(a5),d2
-        moveq   #25,d0
-        cmp.l   d0,d2
-        bls.s   .mv_cnt
-        move.l  d0,d2                ; entries past the root's table (extension blocks) stay in place
-.mv_cnt:
-        moveq   #0,d3                ; d3 = offset of the root's entry
-        bra.s   .mv_nx
+        moveq   #0,d3                ; d3 = bitmap block
 .mv_lp:
-        tst.b   BME_DIRTY(a3)
-        beq.s   .mv_next
-        tst.b   BME_MOVED(a3)
-        bne.s   .mv_next
-        st      BME_MOVED(a3)
+        cmp.l   OW_BMN(a5),d3
+        bhs.s   .mv_end
+        moveq   #25,d0
+        cmp.l   d0,d3
+        bhs.s   .mv_end              ; blocks named by extension blocks stay in place
+        move.b  OW_BMFL(a5,d3.w),d0
+        subq.b  #1,d0
+        bne.s   .mv_next             ; not modified, or already moved
+        bset    #1,OW_BMFL(a5,d3.w)
         bsr     ow_alloc
-        tst.l   d0
+        move.l  d0,d2                ; d2 = its new block
         beq.s   .mv_next
+        move.l  d3,d0
+        bsr     ow_bmget             ; in the cache under its old key: it may have been written back there
+        bne.s   .mv_key
+        move.l  d2,d0
+        bsr     ow_free
+        bra.s   .mv_next
+.mv_key:
+        bsr     ow_bmdirty
+        move.l  d3,d0
+        lsl.l   #2,d0
         lea     OFSB_BMPAGES(a2),a0
-        move.l  d0,0(a0,d3.l)
-        move.l  BME_KEY(a3),d1
-        move.l  d0,BME_KEY(a3)
-        move.l  d1,d0
+        move.l  d2,0(a0,d0.l)
+        move.l  OW_BMKEYS(a5),a0
+        add.l   d0,a0
+        move.l  (a0),d0
+        move.l  d2,(a0)
         bsr     ow_free
         moveq   #1,d4
 .mv_next:
-        lea     BME_SIZE(a3),a3
-        addq.l  #4,d3
-.mv_nx:
-        dbra    d2,.mv_lp
+        addq.l  #1,d3
+        bra.s   .mv_lp
+.mv_end:
         tst.l   d4
         bne.s   .mv_pass
 .mv_ret:
         move.l  (sp)+,OW_ERR(a5)
-        movem.l (sp)+,d2-d4/a3
+        movem.l (sp)+,d2-d4
         rts
 
 ; ow_bmalloc(a5, root block in B1) -> d0 = 1 / 0 (OW_ERR: 103 no memory, 213 a key outside the partition): the
-; bitmap table (OW_BMN entries, cleared) and the key of each bitmap block. B2 holds the last extension read.
-; Clobbers d1-d4/a0-a3.
+; key of each bitmap block (OW_BMN) and an empty cache of min(OW_BMN, OW_BMCACHE) entries, in one allocation.
+; B2 holds the last extension read. Clobbers d1-d4/a0-a3.
 ow_bmalloc:
         bsr     ofs_geo
         move.l  GEO_NBLK(a0),d0
@@ -505,13 +587,34 @@ ow_bmalloc:
         and.l   #$FFFF,d0
         move.l  d0,OW_BMN(a5)
         move.l  d0,d2                ; d2 = bitmap blocks
-        mulu    #BME_SIZE,d0
+        moveq   #OW_BMCACHE,d1
+        cmp.l   d1,d0
+        bhs.s   .ba_ns
+        move.l  d0,d1
+.ba_ns:
+        move.l  d1,OW_BMNS(a5)
+        mulu    #BME_SIZE,d1
+        move.l  d0,d3
+        lsl.l   #2,d3                ; d3 = size of the keys
+        move.l  d3,d0
+        add.l   d1,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  #ERROR_NO_FREE_STORE,OW_ERR(a5)
-        move.l  d0,OW_BMTAB(a5)
+        move.l  d0,OW_BMKEYS(a5)
         beq.s   .ba_fail
-        move.l  d0,a2
+        move.l  d0,a2                ; a2 = next key entry
+        add.l   d3,d0
+        move.l  d0,OW_BMSLOT(a5)
+        move.l  d0,OW_BMLAST(a5)
+        move.l  d0,a0
+        move.l  OW_BMNS(a5),d0
+        subq.l  #1,d0
+.ba_empty:
+        move.l  #-1,BME_IDX(a0)
+        lea     BME_SIZE(a0),a0
+        dbra    d0,.ba_empty
+        bsr     ow_bmflclr
         lea     OW_B1+OFSB_BMPAGES(a5),a3   ; a3 = next key, d3 = keys left in this block
         moveq   #25,d3
         move.l  OW_B1+OFSB_BMEXT(a5),d4     ; d4 = next extension
@@ -533,10 +636,9 @@ ow_bmalloc:
 .ba_key:
         move.l  (a3)+,d0
         subq.l  #1,d3
-        move.l  d0,BME_KEY(a2)
+        move.l  d0,(a2)+
         bsr     ow_keyok
         beq.s   .ba_range
-        lea     BME_SIZE(a2),a2
 .ba_nx:
         dbra    d2,.ba_lp
         moveq   #1,d0
@@ -548,7 +650,7 @@ ow_bmalloc:
         bsr     ow_bmfree
         move.l  (sp)+,OW_ERR(a5)
 .ba_fail:
-        clr.l   OW_BMTAB(a5)
+        clr.l   OW_BMKEYS(a5)
         moveq   #0,d0
         rts
 ; ow_keyok(d0 = key, a6) -> Z = 0 if inside the partition ([reserved, blocks)). Clobbers d1/a0.
@@ -564,17 +666,95 @@ ow_keyok:
         tst.l   d1
         rts
 
-; ow_bmbit(d0 = block, a5) -> a1 = bitmap entry of the block, a0 = its bitmap long, d1 = bit number (bits LSB first,
-; bit set = free; index = block - reserved). Clobbers d0.
+; ow_bmget(d0 = bitmap block index, a5, a6) -> a1 = the cache entry holding it, read from its key when it was not
+; held | a1 = 0 and Z = 1 (OW_ERR) when it could not be read, or when the entry it replaces (the least recently used
+; one) could not be written back. ow_bmgetx with d1 = 1: the entry only, its contents left to the caller (validator).
+; Preserves d2-d7/a2-a6.
+ow_bmget:
+        moveq   #0,d1
+ow_bmgetx:
+        movem.l d2-d3/a2,-(sp)
+        move.l  d0,d2                ; d2 = index
+        move.l  d1,d3                ; d3 = not to be read
+        addq.l  #1,OW_BMTICK(a5)
+        move.l  OW_BMLAST(a5),a2
+        cmp.l   BME_IDX(a2),d2
+        beq.s   .bg_hit
+        move.l  OW_BMSLOT(a5),a1
+        move.l  a1,a2                ; a2 = least recently used entry so far
+        move.l  OW_BMNS(a5),d0
+        subq.l  #1,d0
+.bg_find:
+        cmp.l   BME_IDX(a1),d2
+        beq.s   .bg_found
+        move.l  BME_AGE(a1),d1
+        cmp.l   BME_AGE(a2),d1
+        bhs.s   .bg_old
+        move.l  a1,a2
+.bg_old:
+        lea     BME_SIZE(a1),a1
+        dbra    d0,.bg_find
+        tst.b   BME_DIRTY(a2)        ; a2 = the entry replaced
+        beq.s   .bg_clean
+        bsr     ow_dirty             ; a bitmap block is never written while the root on the disk says "valid"
+        tst.l   d0
+        beq.s   .bg_fail
+        bsr     ow_bmout
+        tst.l   d0
+        beq.s   .bg_fail
+.bg_clean:
+        moveq   #-1,d0
+        move.l  d0,BME_IDX(a2)
+        tst.l   d3
+        bne.s   .bg_set
+        move.l  d2,d0
+        lsl.l   #2,d0
+        move.l  OW_BMKEYS(a5),a0
+        move.l  0(a0,d0.l),d0
+        lea     BME_DATA(a2),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq.s   .bg_fail
+.bg_set:
+        move.l  d2,BME_IDX(a2)
+        bra.s   .bg_hit
+.bg_found:
+        move.l  a1,a2
+.bg_hit:
+        move.l  OW_BMTICK(a5),BME_AGE(a2)
+        move.l  a2,OW_BMLAST(a5)
+        move.l  a2,a1
+        movem.l (sp)+,d2-d3/a2
+        cmpa.w  #0,a1                ; Z = 0
+        rts
+.bg_fail:
+        movem.l (sp)+,d2-d3/a2
+        sub.l   a1,a1
+        moveq   #0,d0
+        rts
+; ow_bmdirty(a1 = cache entry, a5): the entry is to be written back, and moved at the next write-back if it is in the
+; root's table. Clobbers d1.
+ow_bmdirty:
+        st      BME_DIRTY(a1)
+        move.l  BME_IDX(a1),d1
+        cmp.l   #25,d1
+        bhs.s   .bd_ret
+        bset    #0,OW_BMFL(a5,d1.w)
+.bd_ret:
+        rts
+
+; ow_bmbit(d0 = block, a5, a6) -> a1 = cache entry of its bitmap block, a0 = its bitmap long, d1 = bit number (bits
+; LSB first, bit set = free; index = block - reserved); Z = 1 (a1 = 0, OW_ERR) if that bitmap block could not be
+; brought into the cache. Clobbers d0, preserves d2-d7/a2-a6.
 ow_bmbit:
         bsr     ofs_geo
         sub.l   GEO_RES(a0),d0
         divu    #OFS_BMBITS_N,d0     ; low word: bitmap block, high word: index in it
-        moveq   #0,d1
-        move.w  d0,d1
-        mulu    #BME_SIZE,d1
-        move.l  OW_BMTAB(a5),a1
-        add.l   d1,a1
+        move.l  d0,-(sp)
+        and.l   #$FFFF,d0
+        bsr     ow_bmget
+        movem.l (sp)+,d0             ; (movem keeps the Z of ow_bmget)
+        beq.s   .bb_ret
         clr.w   d0
         swap    d0
         move.l  d0,d1
@@ -583,14 +763,18 @@ ow_bmbit:
         add.w   d0,d0
         add.w   d0,d0
         lea     BME_DATA+4(a1,d0.w),a0
+        cmpa.w  #0,a1                ; Z = 0
+.bb_ret:
         rts
-; ow_scan(d2 = first block, d3 = end (excluded), a5) -> d0 = a free block taken from the bitmap | 0; d2 advanced.
-; A long with no free block is skipped as a whole. Clobbers d1/a0/a1.
+; ow_scan(d2 = first block, d3 = end (excluded), a5) -> d0 = a free block taken from the bitmap | 0; d2 advanced (left
+; below d3 when a bitmap block could not be brought into the cache: OW_ERR). A long with no free block is skipped as a
+; whole. Clobbers d1/a0/a1.
 ow_scan:
         cmp.l   d3,d2
         bhs.s   .sc_none
         move.l  d2,d0
         bsr.s   ow_bmbit
+        beq.s   .sc_none
         move.l  (a0),d0
         bne.s   .sc_bit
         moveq   #32,d0               ; no free block in this long: to the next long
@@ -601,11 +785,17 @@ ow_scan:
         btst    d1,d0
         bne.s   .sc_got
         addq.l  #1,d2
+        cmp.l   d3,d2
+        bhs.s   .sc_none
+        addq.w  #1,d1
+        cmp.w   #32,d1
+        blo.s   .sc_bit
         bra.s   ow_scan
 .sc_got:
         bclr    d1,d0
         move.l  d0,(a0)
-        st      BME_DIRTY(a1)
+        bsr.s   ow_bmdirty
+        subq.l  #1,OW_BMFREE(a5)
         move.l  d2,d0
         rts
 .sc_none:
@@ -613,13 +803,15 @@ ow_scan:
         rts
 ; ow_alloc(a5) -> d0 = free block taken from the bitmap (the first free one above the root, then from the start) |
 ; 0. The search above the root starts at OW_HINT (all in use below it), which keeps the cost of a nearly full region
-; once and not per block. The bitmap is (re)loaded first: a disk change or an inhibit forgets it while a file may
-; still be open for writing.
+; once and not per block; a full volume (free count 0) is not searched. The bitmap is (re)loaded first: a disk change
+; or an inhibit forgets it while a file may still be open for writing.
 ow_alloc:
         movem.l d2-d3,-(sp)
         bsr     ow_bmload
         tst.l   d0
         beq.s   .al_ret
+        tst.l   OW_BMFREE(a5)
+        beq.s   .al_full
         bsr     ofs_geo
         move.l  GEO_ROOT(a0),d2
         addq.l  #1,d2
@@ -635,18 +827,25 @@ ow_alloc:
         addq.l  #1,OW_HINT(a5)
         bra.s   .al_ret
 .al_low:
+        cmp.l   d3,d2
+        blo.s   .al_ret              ; stopped on a bitmap block that could not be read (OW_ERR)
         move.l  d3,OW_HINT(a5)       ; nothing free above the root
         bsr     ofs_geo              ; second pass: from the start to the root
         move.l  GEO_RES(a0),d2
         move.l  GEO_ROOT(a0),d3
-        bsr.s   ow_scan
+        bsr     ow_scan
         tst.l   d0
         bne.s   .al_ret
+        cmp.l   d3,d2
+        blo.s   .al_ret
+.al_full:
         move.l  #ERROR_DISK_FULL,OW_ERR(a5)
+        moveq   #0,d0
 .al_ret:
         movem.l (sp)+,d2-d3
         rts
-; ow_free(d0 = block, a5): the block becomes free again (blocks outside the partition, or no bitmap: ignored).
+; ow_free(d0 = block, a5): the block becomes free again (blocks outside the partition, already free blocks, or no
+; bitmap: ignored).
 ow_free:
         tst.l   OW_BMST(a5)
         ble.s   .fr_ret
@@ -656,15 +855,21 @@ ow_free:
         beq.s   .fr_ret
         move.l  d0,-(sp)
         bsr     ow_bmbit
+        beq.s   .fr_pop              ; its bitmap block unreadable: the block stays in use
         move.l  (a0),d0
         bset    d1,d0
+        bne.s   .fr_pop              ; already free
         move.l  d0,(a0)
-        st      BME_DIRTY(a1)
+        bsr     ow_bmdirty
+        addq.l  #1,OW_BMFREE(a5)
         move.l  (sp)+,d0
         cmp.l   OW_HINT(a5),d0
         bhs.s   .fr_ret
         move.l  d0,OW_HINT(a5)       ; free again: the next search above the root starts there
 .fr_ret:
+        rts
+.fr_pop:
+        addq.l  #4,sp
         rts
 
 ; ow_parent(a0 = path, d0 = starting directory (0 = root), a5) -> d0 = directory containing the object | 0,
@@ -1338,9 +1543,10 @@ ow_relabel:
         bra     ow_ret
 
 ; ow_diskinfo(a0 = InfoData, a1 = volume node (BPTR), a6) -> d0 = -1: disk state (validated), blocks of the partition
-; but the reserved ones, used blocks counted in the bitmap, 488 bytes per block, type DOS\0.
+; but the reserved ones, used blocks = those blocks less the bitmap's free count, 488 bytes per block (512 on FFS),
+; type DOS\0 whatever the volume's DOS\n (1.3 programs know ID_DOS_DISK only).
 ow_diskinfo:
-        movem.l d2-d7/a2-a5,-(sp)
+        movem.l d6-d7/a2/a5,-(sp)
         move.l  a0,a2
         move.l  a1,d6
         move.l  a2,a0
@@ -1354,6 +1560,10 @@ ow_diskinfo:
         move.l  #ID_VALIDATING,8(a2) ; id_DiskState: validated once the bitmap is in memory
         move.l  d7,12(a2)            ; id_NumBlocks
         move.l  #OFS_DMAX,20(a2)     ; id_BytesPerBlock
+        btst    #GEOB_FFS,GEO_DOSTYPE+3(a0)
+        beq.s   .di_bpb
+        move.l  #OFS_BSIZE,20(a2)
+.di_bpb:
         move.l  #$444F5300,24(a2)    ; id_DiskType "DOS\0"
         move.l  d6,28(a2)            ; id_VolumeNode
         bsr     ow_ctx
@@ -1361,52 +1571,17 @@ ow_diskinfo:
         bsr     ow_bmload
         beq.s   .di_ret              ; not validated: no used/free figures (dos-lvo-partial §1.4)
         move.l  #ID_VALIDATED,8(a2)
-        moveq   #0,d2                ; d2 = free blocks: set bits of the bitmap
-        move.l  d7,d3                ; d3 = bits left to count
-        move.l  OW_BMTAB(a5),a3
-.di_blk:
-        lea     BME_DATA+4(a3),a0
-        moveq   #127-1,d5            ; longs of this bitmap block
-.di_long:
-        tst.l   d3
-        beq.s   .di_done
-        moveq   #32,d4
-        cmp.l   d4,d3
-        bhs.s   .di_n
-        move.l  d3,d4                ; d4 = bits of this long inside the partition
-.di_n:
-        sub.l   d4,d3
-        move.l  (a0)+,d0
-        beq.s   .di_nx
-        cmp.l   #-1,d0
-        bne.s   .di_bits
-        cmp.w   #32,d4
-        bne.s   .di_bits
-        add.l   d4,d2
-        bra.s   .di_nx
-.di_bits:
-        subq.w  #1,d4
-.di_bit:
-        lsr.l   #1,d0
-        bcc.s   .di_used
-        addq.l  #1,d2
-.di_used:
-        dbra    d4,.di_bit
-.di_nx:
-        dbra    d5,.di_long
-        lea     BME_SIZE(a3),a3
-        bra.s   .di_blk
-.di_done:
         move.l  d7,d0
-        sub.l   d2,d0
+        sub.l   OW_BMFREE(a5),d0
         move.l  d0,16(a2)            ; id_NumBlocksUsed
 .di_ret:
         moveq   #-1,d0
-        movem.l (sp)+,d2-d7/a2-a5
+        movem.l (sp)+,d6-d7/a2/a5
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------
-; ws_alloc(a6) -> a3 = cleared write state with its magic | Z = 1: no memory. Clobbers d0/d1/a0/a1.
+; ws_alloc(a6) -> a3 = cleared write state with its magic and the data block layout of the mounted volume | Z = 1:
+; no memory. Clobbers d0/d1/a0/a1.
 ws_alloc:
         move.l  #WS_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -1415,7 +1590,31 @@ ws_alloc:
         tst.l   d0
         beq     .wa_ret
         move.l  #WS_MAGICV,WS_MAGIC(a3)
+        move.l  #OFS_DMAX,WS_BSZ(a3)
+        moveq   #OFSB_DATA,d0
+        move.l  d0,WS_DOFF(a3)
+        bsr     ofs_geo
+        btst    #GEOB_FFS,GEO_DOSTYPE+3(a0)
+        beq.s   .wa_ok
+        moveq   #1,d0
+        move.l  d0,WS_FFS(a3)
+        move.l  #OFS_BSIZE,WS_BSZ(a3)
+        clr.l   WS_DOFF(a3)
+.wa_ok:
+        moveq   #1,d0                ; Z = 0
 .wa_ret:
+        rts
+
+; ws_div(d0 = position, a3) -> d0 = index of its data block, d1 = offset in that block's data. Preserves the rest.
+ws_div:
+        tst.l   WS_FFS(a3)
+        bne.s   .wd_ffs
+        jmp     ofs_div488
+.wd_ffs:
+        move.l  d0,d1
+        and.l   #OFS_BSIZE-1,d1
+        lsr.l   #8,d0
+        lsr.l   #1,d0
         rts
 
 ; ws_open(a0 = path, d0 = start, a6) -> d0 = write state | 0, d1 = error: creates (or replaces) the file.
@@ -1483,8 +1682,9 @@ ws_openold:
         move.l  d6,WS_HDR(a3)
         move.l  OFSB_FIRSTDATA(a0),WS_FIRST(a3)
         move.l  d0,WS_SIZE(a3)
-        add.l   #OFS_DMAX-1,d0
-        bsr     ofs_div488
+        add.l   WS_BSZ(a3),d0
+        subq.l  #1,d0
+        bsr     ws_div
         move.l  d0,WS_NBLK(a3)       ; full blocks but the last
         moveq   #0,d1
         tst.l   d0
@@ -1512,13 +1712,19 @@ ws_discard:
         move.l  #WS_SIZEOF,d0
         jmp     LVO_FREEMEM(a6)
 
-; ws_dflush(a3, a5) -> d0 = 1 ok / 0: DBUF written if modified. Clobbers d1/a0/a1.
+; ws_dflush(a3, a5) -> d0 = 1 ok / 0: DBUF written if modified (OFS: with its checksum; FFS: raw). Clobbers d1/a0/a1.
 ws_dflush:
         tst.b   WS_DDIRTY(a3)
         beq     .df_ok
         move.l  WS_CUR(a3),d0
         lea     WS_DBUF(a3),a0
+        tst.l   WS_FFS(a3)
+        bne.s   .df_ffs
         bsr     ow_wr
+        bra.s   .df_w
+.df_ffs:
+        bsr     ow_wrdata
+.df_w:
         tst.l   d0
         beq     .df_ret
         sf      WS_DDIRTY(a3)
@@ -1694,7 +1900,7 @@ ws_tabadd:
         bra     .ta_ret
 
 ; ws_append(a3, a5) -> d0 = 1/0: a new data block at index WS_NBLK (the position is at the end of a file whose
-; last block is full), linked from the previous last block, entered in the table; DBUF holds it, empty.
+; last block is full), linked from the previous last block (OFS), entered in the table; DBUF holds it, empty.
 ws_append:
         move.l  d2,-(sp)
         bsr     ow_alloc
@@ -1702,6 +1908,17 @@ ws_append:
         beq     .ap_ret
         move.l  WS_NBLK(a3),d0
         beq     .ap_first
+        tst.l   WS_FFS(a3)
+        beq.s   .ap_ofs
+        bsr     ws_dflush            ; FFS: no link to write, only the block DBUF holds
+        tst.l   d0
+        beq     .ap_free
+        move.l  d2,d0
+        bsr     ws_tabadd
+        tst.l   d0
+        beq     .ap_free
+        bra     .ap_init
+.ap_ofs:
         subq.l  #1,d0
         bsr     ws_dload             ; previous last block, linked to the new one
         tst.l   d0
@@ -1725,13 +1942,16 @@ ws_append:
 .ap_init:
         lea     WS_DBUF(a3),a0
         bsr     ow_clear
-        move.l  #OFS_T_DATA,OFSB_TYPE(a0)
-        move.l  WS_HDR(a3),OFSB_KEY(a0)
         move.l  WS_NBLK(a3),d0
         move.l  d0,WS_CURIDX(a3)
         addq.l  #1,d0
-        move.l  d0,OFSB_HIGHSEQ(a0)  ; sequence number
         move.l  d0,WS_NBLK(a3)
+        tst.l   WS_FFS(a3)
+        bne.s   .ap_raw              ; an FFS data block is data only
+        move.l  #OFS_T_DATA,OFSB_TYPE(a0)
+        move.l  WS_HDR(a3),OFSB_KEY(a0)
+        move.l  d0,OFSB_HIGHSEQ(a0)  ; sequence number
+.ap_raw:
         move.l  d2,WS_CUR(a3)
         st      WS_DDIRTY(a3)
         moveq   #1,d0
@@ -1764,7 +1984,7 @@ ws_write:
         bra     .ww_ok
 .ww_lp:
         move.l  WS_POS(a3),d0
-        bsr     ofs_div488           ; d0 = block index
+        bsr     ws_div               ; d0 = block index
         move.l  d1,d5                ; d5 = offset in the block
         cmp.l   WS_NBLK(a3),d0
         blo     .ww_have
@@ -1775,19 +1995,22 @@ ws_write:
 .ww_chk:
         tst.l   d0
         beq     .ww_fail
-        move.l  #OFS_DMAX,d4         ; n = min(room, remaining)
+        move.l  WS_BSZ(a3),d4        ; n = min(room, remaining)
         sub.l   d5,d4
         cmp.l   d7,d4
         bls     .ww_n
         move.l  d7,d4
 .ww_n:
-        lea     WS_DBUF+OFSB_DATA(a3),a1
+        lea     WS_DBUF(a3),a1
+        add.l   WS_DOFF(a3),a1
         add.l   d5,a1
         move.l  a2,a0
         move.l  d4,d0
         jsr     exec_CopyMem         ; a0 = past the bytes taken
         move.l  a0,a2
         add.l   d4,d5                ; end of the bytes in this block
+        tst.l   WS_FFS(a3)
+        bne     .ww_ds               ; FFS: no data_size in the block
         cmp.l   WS_DBUF+OFSB_DSIZE(a3),d5
         bls     .ww_ds
         move.l  d5,WS_DBUF+OFSB_DSIZE(a3)
@@ -1845,18 +2068,19 @@ ws_read:
         beq     ws_rwerr
 .wr_lp:
         move.l  WS_POS(a3),d0
-        bsr     ofs_div488           ; d0 = block index
+        bsr     ws_div               ; d0 = block index
         move.l  d1,d5                ; d5 = offset in the block
         bsr     ws_dload
         tst.l   d0
         beq     ws_rwerr
-        move.l  #OFS_DMAX,d4
+        move.l  WS_BSZ(a3),d4
         sub.l   d5,d4
         cmp.l   d7,d4
         bls     .wr_n
         move.l  d7,d4
 .wr_n:
-        lea     WS_DBUF+OFSB_DATA(a3),a0
+        lea     WS_DBUF(a3),a0
+        add.l   WS_DOFF(a3),a0
         add.l   d5,a0
         move.l  a2,a1
         move.l  d4,d0

@@ -722,14 +722,13 @@ exp_adddosnode:
         move.l  d1,d3
         move.l  a6,a3
         move.l  EB_EXECBASE(a6),a6
+        jsr     LVO_FORBID(a6)       ; dos already there? Not OpenLibrary: at cold start (a driver's init) the
+        lea     EB_LIBLIST(a6),a0    ; ramlib layer would initialise dos's ROM resident, whose init starts the boot
         lea     exp_dosname(pc),a1
-        moveq   #0,d0
-        jsr     LVO_OPENLIBRARY(a6)
-        tst.l   d0
-        beq.s   .ad_boot
+        jsr     LVO_FINDNAME(a6)
         move.l  d0,-(sp)
-        jsr     LVO_FORBID(a6)
-        move.l  (sp),a0
+        beq.s   .ad_nodos
+        move.l  d0,a0
         move.l  DL_ROOT(a0),a0
         move.l  RN_INFO(a0),d0
         lsl.l   #2,d0
@@ -738,9 +737,10 @@ exp_adddosnode:
         move.l  a2,d0
         lsr.l   #2,d0
         move.l  d0,DI_DEVINFO(a0)
+.ad_nodos:
         jsr     LVO_PERMIT(a6)
-        move.l  (sp)+,a1
-        jsr     LVO_CLOSELIBRARY(a6)
+        tst.l   (sp)+
+        beq.s   .ad_boot
         btst    #ADNB_STARTPROC,d3
         beq.s   .ad_boot
         tst.l   DN_TASK(a2)

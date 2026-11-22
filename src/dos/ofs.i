@@ -24,7 +24,12 @@ GEO_POFF        EQU 12            ; LONG: byte offset of the partition on the de
 GEO_PORT        EQU 16            ; APTR: reply port of the handler's I/O requests (devices that queue them) | 0
 GEO_TICKS       EQU 20            ; LONG: write-back countdown, set to 3 on every transfer (rom-filesystem §8.4)
 GEO_WPROT       EQU 24            ; LONG: the disk was write-protected when mounted (TD_PROTSTATUS) | 0
-GEO_SIZE        EQU 28
+GEO_DOSTYPE     EQU 28            ; LONG: last byte of the mounted disk's "DOS\n" (0-3), taken from its first reserved
+                                  ; block at mount time: bit GEOB_FFS = data blocks without header, bit GEOB_INTL =
+                                  ; international name hash and comparison. 0 (OFS) outside a file-handler.
+GEO_SIZE        EQU 32
+GEOB_FFS        EQU 0
+GEOB_INTL       EQU 1
 
 ; LONG offsets (in bytes from the start of the block)
 OFSB_TYPE       EQU 0             ; long[0]: primary type (T_SHORT=2 / T_DATA=8)
@@ -45,6 +50,8 @@ OFSB_TICKS      EQU 428
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)): BCPL name (length byte + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)): hash_chain (next header in the same bucket)
 OFSB_EXTENSION  EQU 504           ; long[126]: extension block (72 more data blocks) | 0
+OFSB_TABEND     EQU OFSB_HASHTAB+71*4 ; header / extension: last table entry = first data block of the group
+OFS_T_LIST      EQU 16            ; primary type of a file extension block
 OFSB_PARENT     EQU 500           ; long[125] (= (128-3)): parent directory block (0 for the root)
 OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)): secondary type (ST_FILE=-3)
 ; allocation bitmap (root block) - disk-validator (#4), offsets checked on the test ADF
@@ -57,24 +64,33 @@ OFSB_CKSUM      EQU 20            ; long[5]: checksum of a header / data / exten
 ; write context of a file-handler (ofswrite.s, allocated on first need; pointer in HC_OWCTX)
 OW_TD           EQU 0             ; APTR: device
 OW_IO           EQU 4             ; IOStdReq
-OW_BMST         EQU OW_IO+IOREQ_SZ ; LONG: bitmap in memory: 0 not read, 1 loaded, -1 validation failed (213)
+OW_BMST         EQU OW_IO+IOREQ_SZ ; LONG: bitmap state: 0 not read, 1 loaded, -1 validation failed (213)
 OW_BMN          EQU OW_BMST+4     ; LONG: bitmap blocks of the partition
-OW_BMTAB        EQU OW_BMN+4      ; APTR: OW_BMN entries (BME_*) | 0
-OW_DIRTY        EQU OW_BMTAB+4    ; LONG: volume modified since the last write-back (root flag 0 on the disk)
+OW_BMKEYS       EQU OW_BMN+4      ; APTR: OW_BMN keys (the bitmap blocks), followed by the OW_BMNS cache entries | 0
+OW_DIRTY        EQU OW_BMKEYS+4   ; LONG: volume modified since the last write-back (root flag 0 on the disk)
 OW_HINT         EQU OW_DIRTY+4    ; LONG: every block in [root + 1, OW_HINT) is in use (allocation starts there)
 OW_ERR          EQU OW_HINT+4     ; LONG: last error (dos code)
-OW_B1           EQU OW_ERR+4      ; two block buffers
+OW_BMNS         EQU OW_ERR+4      ; LONG: cache entries (BME_*): min(OW_BMN, OW_BMCACHE)
+OW_BMSLOT       EQU OW_BMNS+4     ; APTR: the first cache entry
+OW_BMLAST       EQU OW_BMSLOT+4   ; APTR: the entry used last (looked at first)
+OW_BMTICK       EQU OW_BMLAST+4   ; LONG: use counter (BME_AGE: least recently used entry replaced)
+OW_BMFREE       EQU OW_BMTICK+4   ; LONG: free blocks of the partition (counted at load, then kept up to date)
+OW_BMFL         EQU OW_BMFREE+4   ; 25 BYTEs, one per bitmap block of the root's table: bit 0 modified since the last
+                                  ; write-back, bit 1 already moved for the coming one (ow_bmmove). Addressed as
+                                  ; OW_BMFL(a5,Dn): must stay below offset 128 (8-bit displacement)
+OW_B1           EQU OW_BMFL+28    ; two block buffers
 OW_B2           EQU OW_B1+OFS_BSIZE
 OW_PATH         EQU OW_B2+OFS_BSIZE  ; path copy (OW_PATHMAX)
 OW_PATHMAX      EQU 128
 OW_NAME         EQU OW_PATH+OW_PATHMAX   ; final name (32)
 OW_RB           EQU OW_NAME+32    ; the root block, for the bitmap flag (first change, write-back)
 OW_SIZE         EQU OW_RB+OFS_BSIZE
-; one bitmap block in memory
-BME_KEY         EQU 0             ; LONG: its block
-BME_DIRTY       EQU 4             ; BYTE: modified since written
-BME_MOVED       EQU 5             ; BYTE: already given a new block for the coming write-back (ow_bmmove)
-BME_DATA        EQU 8             ; the 512-byte block (checksum at long 0)
+OW_BMCACHE      EQU 8             ; bitmap blocks held in memory at most, whatever the size of the partition
+; one cached bitmap block
+BME_IDX         EQU 0             ; LONG: its index in the bitmap (its key: OW_BMKEYS) | -1 (empty)
+BME_AGE         EQU 4             ; LONG: OW_BMTICK at its last use
+BME_DIRTY       EQU 8             ; BYTE: modified since written
+BME_DATA        EQU 12            ; the 512-byte block (checksum at long 0)
 BME_SIZE        EQU BME_DATA+OFS_BSIZE
 
 OFS_T_SHORT     EQU 2             ; primary type root/header
@@ -121,11 +137,17 @@ SS_LOCK         EQU 32            ; APTR: shared FileLock held while the file is
 SS_BUFBLK       EQU 36            ; LONG: data block held in the block buffer (0 = none): READ does not fetch it again
 SS_WS           EQU 40            ; APTR: write state (ofswrite.s) taken at the first WRITE, which serves the file from
                                   ; then on (rom-filesystem §5.1: a FINDINPUT handle accepts writes) | 0
-SS_IOREQ        EQU 44            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
+SS_TBLK         EQU 44            ; LONG: FFS: header or extension block held in the table buffer | 0
+SS_TGRP         EQU 48            ; LONG: FFS: its group (0 = header, n = n-th extension block)
+SS_FFS          EQU 52            ; LONG: the file was opened on an FFS volume (data blocks found through the tables)
+SS_ASIZE        EQU 56            ; LONG: size of the AllocMem (FFS states end with the table buffer, SS_TBUF)
+SS_IOREQ        EQU 60            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
 WS_HDR          EQU 4             ; LONG: header block of a write state (ofswrite.s)
 WS_VOL          EQU 36            ; BPTR: volume node of a write state (ofswrite.s), like SS_VOL
 WS_LOCK         EQU 64            ; APTR: exclusive FileLock held while a write state is open (handler)
-SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; total AllocMem size of the state
+SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; AllocMem size of an OFS state
+SS_TBUF         EQU SS_ALLOC      ; FFS: table buffer (OFS_BSIZE bytes) after the block buffer
+SS_ALLOCFFS     EQU SS_TBUF+OFS_BSIZE             ; AllocMem size of an FFS state
 
 ; STREAM_CAP32K=1 (RED streaming): ofs_stream_read re-caps the read at 32768 bytes (= the old whole-file cap)
 ; -> a file > 32 KB (BigData, 48000 bytes) is truncated -> "OFS STREAM OK" missing. All files < 32 KB

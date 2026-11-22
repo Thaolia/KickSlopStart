@@ -162,8 +162,8 @@ chip, environ 1,6 Mio avec 2 Mio.
   des cartes accélératrices.
 - La fast RAM d'une carte d'extension ou accélératrice ne peut pas accueillir l'image : cette RAM n'est pas encore
   configurée (autoconfig) quand un reset revient dessus.
-- Sur A1200, seuls les lecteurs de disquette fonctionnent : KickSlopStart, comme la 1.3, ne connaît ni son port IDE
-  ni le PCMCIA. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
+- Le disque dur IDE interne d'un A600/A1200 est monté ([docs/IDE-HARDDISK.fr.md](docs/IDE-HARDDISK.fr.md)) ; le
+  PCMCIA n'est pas pris en charge. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
 
 ### Relokick, MKick, SKick
 

@@ -8,8 +8,10 @@
 ;
 ; ACCEPTED deviations/scope: read-only; traversal of subdirectories via '/'-separated paths (intermediate
 ; USERDIRs -> final file; ht_size of USERDIRs = 72 by default, long[3] not populated = measured on the ADF);
-; names case-insensitive for ASCII a-z (non-international OFS); hash-chain/data loops are CAPPED
-; (anti-hang on a corrupted disk). FFS (no data block header) not supported (1.3 boots from OFS).
+; names case-insensitive for ASCII a-z, plus Latin-1 224-254 but 247 on an international volume (DOS\2, DOS\3);
+; hash-chain/data loops are CAPPED (anti-hang on a corrupted disk). In a file-handler the volume may also be FFS
+; (DOS\1, DOS\3, beyond what 1.3 reads, GEO_DOSTYPE): its data blocks are raw 512-byte blocks found only through the
+; header's table and its extension blocks (ADF FAQ); OFS files still follow their next_data chain.
 
                 include "exec.i"
                 include "disk.i"
@@ -215,8 +217,11 @@ ofs_split:
 ; ofs_read_block(d0=block num, a2=device, a3=ioreq, a6=SysBase) -> d0 = 1 OK / 0 failed; fills a3+IOREQ_SZ.
 ; In a file-handler: device, unit, reply port and partition offset of its context (a2 unused), write-back countdown
 ; re-armed; elsewhere unit 0 of the device a2 (trackdisk: DF0). Only uses d0/d1/a0/a1 as scratch (DoIO preserves
-; d2-d7/a2-a5) -> the caller's loop state survives.
+; d2-d7/a2-a5) -> the caller's loop state survives. ofs_read_into: the same into the 512-byte buffer a1.
 ofs_read_block:
+                lea     IOREQ_SZ(a3),a1
+ofs_read_into:
+                move.l  a1,IO_DATA(a3)
                 lsl.l   #8,d0
                 add.l   d0,d0                        ; byte offset in the partition = block * 512
                 move.l  EB_THISTASK(a6),a0
@@ -236,8 +241,6 @@ ofs_read_block:
 .rb_go:
                 move.w  #CMD_READ,IO_COMMAND(a3)
                 move.l  #OFS_BSIZE,IO_LENGTH(a3)
-                lea     IOREQ_SZ(a3),a0
-                move.l  a0,IO_DATA(a3)
                 move.l  d0,IO_OFFSET(a3)
                 clr.l   IO_ACTUAL(a3)
                 move.l  a3,a1
@@ -292,9 +295,11 @@ ofs_dev:
                 tst.l   d0
                 rts
 
-; ofs_hash(a4=NUL-terminated name, d3=ht_size) -> d1 = idx. Clobbers d0/d1/a0. h=len; h=(h*13+toupper(c))&$7FF;
-; idx = h mod ht_size. toupper = ASCII a-z only (non-international OFS DOS\0).
+; ofs_hash(a4=NUL-terminated name, d3=ht_size, a6) -> d1 = idx. Clobbers d0/d1/a0. h=len; h=(h*13+toupper(c))&$7FF;
+; idx = h mod ht_size. toupper: ofs_upper (ASCII a-z, plus Latin-1 on an international volume).
 ofs_hash:
+                move.l  d4,-(sp)
+                bsr     ofs_intl                     ; d4 = international flag
                 move.l  a4,a0
                 moveq   #0,d1                        ; d1 = h (initialised to the length)
 .hlen:
@@ -308,12 +313,7 @@ ofs_hash:
                 moveq   #0,d0
                 move.b  (a0)+,d0
                 beq.s   .hdone
-                cmp.b   #'a',d0
-                blo.s   .hnoup
-                cmp.b   #'z',d0
-                bhi.s   .hnoup
-                sub.b   #$20,d0                      ; toupper
-.hnoup:
+                bsr.s   ofs_upper
                 mulu    #13,d1                       ; h*13 (h<=$7FF -> <26624, fits in a word)
                 add.l   d0,d1
                 and.l   #$7FF,d1
@@ -322,12 +322,43 @@ ofs_hash:
                 divu.w  d3,d1                        ; d1 / ht_size -> remainder in the high word
                 clr.w   d1
                 swap    d1                           ; d1 = remainder = idx
+                move.l  (sp)+,d4
                 rts
 
-; ofs_namecmp(a0=NUL-terminated query, a1=BCPL name [length byte + chars]) -> Z=1 if equal (ASCII case-insensitive).
-; Preserves d2/a0/a1 (movem does not touch the CCR -> the Z of the last moveq survives the rts).
+; ofs_upper(d0.b = character, d4.b = international flag) -> d0.b in upper case: a-z, and with the flag the Latin-1
+; letters 224-254 but 247 (ADF FAQ, international mode). Preserves the rest.
+ofs_upper:
+                cmp.b   #'a',d0
+                blo.s   .up_ret
+                cmp.b   #'z',d0
+                bls.s   .up_sub
+                tst.b   d4
+                beq.s   .up_ret
+                cmp.b   #224,d0
+                blo.s   .up_ret
+                cmp.b   #254,d0
+                bhi.s   .up_ret
+                cmp.b   #247,d0
+                beq.s   .up_ret
+.up_sub:
+                sub.b   #$20,d0
+.up_ret:
+                rts
+
+; ofs_intl(a6) -> d4.b = $FF on an international volume (GEOB_INTL), else 0. Preserves the rest.
+ofs_intl:
+                move.l  a0,-(sp)
+                bsr     ofs_geo
+                btst    #GEOB_INTL,GEO_DOSTYPE+3(a0)
+                sne     d4
+                move.l  (sp)+,a0
+                rts
+
+; ofs_namecmp(a0=NUL-terminated query, a1=BCPL name [length byte + chars], a6) -> Z=1 if equal ignoring case
+; (ofs_upper). Preserves d2/d4/a0/a1 (movem does not touch the CCR -> the Z of the last moveq survives the rts).
 ofs_namecmp:
-                movem.l d2/a0/a1,-(sp)
+                movem.l d2/d4/a0/a1,-(sp)
+                bsr.s   ofs_intl
                 moveq   #0,d1
                 move.b  (a1)+,d1                     ; d1 = stored length
 .nc_loop:
@@ -336,20 +367,10 @@ ofs_namecmp:
                 moveq   #0,d0
                 move.b  (a0)+,d0                     ; query char
                 beq.s   .nc_ne                       ; query shorter -> different
-                cmp.b   #'a',d0
-                blo.s   .nc_u0
-                cmp.b   #'z',d0
-                bhi.s   .nc_u0
-                sub.b   #$20,d0
-.nc_u0:
-                moveq   #0,d2
-                move.b  (a1)+,d2                     ; stored char
-                cmp.b   #'a',d2
-                blo.s   .nc_u1
-                cmp.b   #'z',d2
-                bhi.s   .nc_u1
-                sub.b   #$20,d2
-.nc_u1:
+                bsr.s   ofs_upper
+                move.b  d0,d2
+                move.b  (a1)+,d0                     ; stored char
+                bsr.s   ofs_upper
                 cmp.b   d0,d2
                 bne.s   .nc_ne
                 subq.l  #1,d1
@@ -362,14 +383,15 @@ ofs_namecmp:
 .nc_ne:
                 moveq   #1,d0                        ; different -> set Z=0
 .nc_ret:
-                movem.l (sp)+,d2/a0/a1               ; movem does not modify the CCR
+                movem.l (sp)+,d2/d4/a0/a1            ; movem does not modify the CCR
                 rts
 
 ; ofs_fib_fill(d0=header block, a1=fib; block ALREADY read into IOREQ_SZ(a3)): fills the FileInfoBlock like a packet
 ; handler: DiskKey = block; DirEntryType = EntryType = -3 file / 2 directory (root included); FileName and Comment
 ; as BSTRs (length byte + chars + NUL; dos.library converts them to C strings for Examine/ExNext, BCPL clients
 ; that send the packet themselves read the BSTR); Protection, DateStamp; file: Size = byte_size and
-; NumBlocks = OFS data blocks. The root (ST_ROOT) has neither protection nor comment at these offsets (bm_pages).
+; NumBlocks = data blocks (488 bytes each on OFS, 512 on FFS). The root (ST_ROOT) has neither protection nor comment
+; at these offsets (bm_pages).
 ; Names capped (30 / 79 chars, anti-corruption bound). Clobbers d0/d1/a0/a1.
 ofs_fib_fill:
                 move.l  d2,-(sp)
@@ -403,8 +425,19 @@ ofs_fib_fill:
                 bpl.s   .ff_name                     ; directory: size 0
                 move.l  OFSB_FILESIZE(a0),d0
                 move.l  d0,FIB_SIZE(a1)
+                move.l  a0,-(sp)
+                bsr     ofs_geo
+                btst    #GEOB_FFS,GEO_DOSTYPE+3(a0)
+                move.l  (sp)+,a0
+                bne.s   .ff_ffs
                 add.l   #OFS_DMAX-1,d0               ; data blocks = ceil(size / 488)
                 bsr     ofs_div488
+                bra.s   .ff_nb
+.ff_ffs:
+                add.l   #OFS_BSIZE-1,d0              ; FFS: ceil(size / 512), the carry of the add shifted back in
+                roxr.l  #1,d0
+                lsr.l   #8,d0
+.ff_nb:
                 move.l  d0,FIB_NUMBLOCKS(a1)
 .ff_name:
                 lea     OFSB_NAME(a0),a0
@@ -685,24 +718,25 @@ ofs_dir_next:
 ; ofs_stream_open(a0=NUL-terminated path, a1=SS_* state, d0=starting directory (0 = root), a6=SysBase) -> d0 = 1 OK /
 ; 0 failed, d1 = its error (205, 212). Resolves the path -> header block
 ; (must be a FILE), FindName trackdisk -> SS_TRACKDISK, reads the header via the state's ioreq, stores SS_SIZE
-; (byte_size) + SS_FIRSTDATA, initialises the cursor (POS=0, CURBLK=first_data, BLKBASE=0). Allocates NOTHING (the
-; state, ioreq + block buffer included, is allocated by the caller = the handler).
+; (byte_size) + SS_FIRSTDATA, initialises the cursor (POS=0, CURBLK=first_data, BLKBASE=0). On an FFS volume the
+; state must have its table buffer (SS_ASIZE = SS_ALLOCFFS): the header goes there as table group 0. Allocates NOTHING
+; (the state, ioreq + block buffer included, is allocated by the caller = the handler).
 ofs_stream_open:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                        ; a5 = state
                 bsr     ofs_name_to_block            ; (a0=path, d0=start) -> d0 = block | 0, d1 = error
                 tst.l   d0
-                beq.s   .so_ret
+                beq     .so_ret
                 move.l  d0,d4                         ; d4 = header block
                 bsr     ofs_dev
-                beq.s   .so_fail
+                beq     .so_fail
                 move.l  d0,SS_TRACKDISK(a5)
                 move.l  d0,a2                         ; a2 = device
                 lea     SS_IOREQ(a5),a3               ; a3 = ioreq of the state (block buffer at +IOREQ_SZ)
                 move.l  d4,d0
                 bsr     ofs_read_block
                 tst.l   d0
-                beq.s   .so_fail
+                beq     .so_fail
                 lea     IOREQ_SZ(a3),a0
                 cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
                 bne.s   .so_fail                      ; not a header
@@ -716,6 +750,21 @@ ofs_stream_open:
                 clr.l   SS_POS(a5)
                 clr.l   SS_BLKBASE(a5)
                 clr.l   SS_BUFBLK(a5)                 ; the buffer holds the header
+                clr.l   SS_FFS(a5)
+                bsr     ofs_geo
+                btst    #GEOB_FFS,GEO_DOSTYPE+3(a0)
+                beq.s   .so_ok
+                cmp.l   #SS_ALLOCFFS,SS_ASIZE(a5)
+                blo.s   .so_fail                      ; no table buffer
+                moveq   #1,d0
+                move.l  d0,SS_FFS(a5)
+                lea     IOREQ_SZ(a3),a0               ; the header is table group 0
+                lea     SS_TBUF(a5),a1
+                move.l  #OFS_BSIZE,d0
+                jsr     exec_CopyMem
+                move.l  d4,SS_TBLK(a5)
+                clr.l   SS_TGRP(a5)
+.so_ok:
                 moveq   #1,d0
                 bra.s   .so_ret
 .so_dir:
@@ -733,8 +782,10 @@ ofs_stream_open:
 ; the current data block (512 bytes), advances block by block via next_data when the block is exhausted, copies
 ; min(rest of block, rest requested, rest up to EOF). Keeps the cursor (POS/CURBLK/BLKBASE) in the state between calls;
 ; the block already in the buffer (SS_BUFBLK) is not fetched again: the file is held by a shared lock, so no writer
-; can change it while it is open.
-; Preserves d2-d7/a2-a5 (dest reassigned to a4); a single 512-byte buffer, NEVER a whole-file buffer.
+; can change it while it is open. FFS: block pos / 512 comes from the tables (ofs_ffsblk), each block holds 512 bytes
+; of the file up to byte_size, no header and no checksum.
+; Preserves d2-d7/a2-a5 (dest reassigned to a4); one 512-byte buffer (plus the table buffer on FFS), NEVER a
+; whole-file buffer.
 ofs_stream_read:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                         ; a5 = state
@@ -750,6 +801,8 @@ ofs_stream_read:
                 endc
                 move.l  SS_TRACKDISK(a5),a2           ; a2 = device
                 lea     SS_IOREQ(a5),a3               ; a3 = ioreq (buffer at +IOREQ_SZ)
+                tst.l   SS_FFS(a5)
+                bne     .sr_ffs
 .sr_loop:
                 tst.l   d6
                 beq     .sr_done                      ; nothing more requested
@@ -826,6 +879,51 @@ ofs_stream_read:
                 lea     IOREQ_SZ(a3),a0
                 move.l  OFSB_NEXT(a0),SS_CURBLK(a5)
                 bra     .sr_loop                      ; (loop top also advances after a seek: within >= data_size)
+.sr_ffs:
+                tst.l   d6
+                beq.s   .sr_done
+                move.l  SS_POS(a5),d0
+                cmp.l   d7,d0
+                bhs.s   .sr_done
+                moveq   #9,d1
+                lsr.l   d1,d0                         ; d0 = pos / 512 = index of the data block
+                bsr     ofs_ffsblk
+                move.l  d0,d2
+                bsr     ofs_blk_valid
+                beq.s   .sr_done                      ; hole in the tables (corrupt file) -> end
+                cmp.l   SS_BUFBLK(a5),d2
+                beq.s   .sf_inbuf
+                clr.l   SS_BUFBLK(a5)
+                move.l  d2,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .sr_done
+                move.l  d2,SS_BUFBLK(a5)
+.sf_inbuf:
+                move.l  SS_POS(a5),d0
+                and.l   #OFS_BSIZE-1,d0               ; d0 = offset in the block
+                move.l  #OFS_BSIZE,d4
+                sub.l   d0,d4                         ; n = min(rest of the block, rest requested, rest to EOF)
+                cmp.l   d6,d4
+                bls.s   .sf_n1
+                move.l  d6,d4
+.sf_n1:
+                move.l  d7,d1
+                sub.l   SS_POS(a5),d1
+                cmp.l   d1,d4
+                bls.s   .sf_n2
+                move.l  d1,d4
+.sf_n2:
+                lea     IOREQ_SZ(a3),a0
+                add.l   d0,a0
+                move.l  a4,a1
+                move.l  d4,d0
+                jsr     exec_CopyMem                  ; a1 = past the n bytes
+                move.l  a1,a4
+                add.l   d4,SS_POS(a5)
+                add.l   d4,d5
+                sub.l   d4,d6
+                bra.s   .sr_ffs
 .sr_rwerr:
                 moveq   #-1,d5                        ; the whole call fails (DOS_ERR_RW in the handler)
 .sr_done:
@@ -837,11 +935,14 @@ ofs_stream_read:
 ; block, data block number pos/488 is taken directly from the header table (72 blocks) then from extension blocks, like
 ; the filesystem: a few reads instead of following the chain block by block (a game that reads its data file
 ; through Seek + Read used to re-read hundreds of blocks per Seek). Unreadable table: back to the first data block,
-; the forward walk happening on the next Read. Clamping to [0, SS_SIZE] is up to the caller (handler). Clobbers a0/a1.
+; the forward walk happening on the next Read. FFS: the position alone (reads find their block from it). Clamping to
+; [0, SS_SIZE] is up to the caller (handler). Clobbers a0/a1.
 ofs_stream_seek:
                 movem.l d2-d4/a2-a3/a5,-(sp)
                 move.l  a1,a5
                 move.l  d0,SS_POS(a5)
+                tst.l   SS_FFS(a5)
+                bne.s   .sk_ret
                 move.l  d0,d1
                 sub.l   SS_BLKBASE(a5),d1
                 bcs.s   .sk_direct
@@ -889,23 +990,80 @@ ofs_stream_seek:
                 rts
 OFS_TABLE       EQU 72                        ; data block numbers per header / extension
 
-; ofs_div488(d0 = n) -> d0 = n / 488, d1 = n mod 488, in two divu steps so that the quotient may pass 65535 (a file
-; of more than 65535 data blocks on a hard disk partition). Preserves the rest.
+; ofs_ffsblk(d0 = index k of a data block, a5 = FFS read state, a3 = its ioreq, a6) -> d0 = key of the block | 0:
+; entry k mod 72 (from the end) of table group k / 72: the header, then the extension blocks (type T_LIST) along
+; their chain. The group is read into SS_TBUF unless it is there; a later group walks on from the one held, an
+; earlier one starts again from the header. Clobbers d1/a0/a1.
+ofs_ffsblk:
+                movem.l d2-d4,-(sp)
+                moveq   #OFS_TABLE,d1
+                bsr     ofs_divw
+                move.l  d0,d3                         ; d3 = group, d4 = entry
+                move.l  d1,d4
+                tst.l   SS_TBLK(a5)
+                beq.s   .fb_hdr
+                cmp.l   SS_TGRP(a5),d3
+                bhs.s   .fb_walk
+.fb_hdr:
+                clr.l   SS_TBLK(a5)
+                move.l  SS_HEADER(a5),d0
+                lea     SS_TBUF(a5),a1
+                bsr     ofs_read_into
+                tst.l   d0
+                beq.s   .fb_none
+                move.l  SS_HEADER(a5),SS_TBLK(a5)
+                clr.l   SS_TGRP(a5)
+.fb_walk:
+                cmp.l   SS_TGRP(a5),d3
+                beq.s   .fb_have
+                move.l  SS_TBUF+OFSB_EXTENSION(a5),d2
+                bsr     ofs_blk_valid
+                beq.s   .fb_none                      ; chain shorter than the size says
+                clr.l   SS_TBLK(a5)
+                move.l  d2,d0
+                lea     SS_TBUF(a5),a1
+                bsr     ofs_read_into
+                tst.l   d0
+                beq.s   .fb_none
+                cmp.l   #OFS_T_LIST,SS_TBUF+OFSB_TYPE(a5)
+                bne.s   .fb_none
+                move.l  d2,SS_TBLK(a5)
+                addq.l  #1,SS_TGRP(a5)
+                bra.s   .fb_walk
+.fb_have:
+                moveq   #OFS_TABLE-1,d0               ; reversed table: the 1st block is the last long
+                sub.l   d4,d0
+                lsl.l   #2,d0
+                lea     SS_TBUF+OFSB_HASHTAB(a5),a0
+                move.l  0(a0,d0.l),d0
+                bra.s   .fb_ret
+.fb_none:
+                moveq   #0,d0
+.fb_ret:
+                movem.l (sp)+,d2-d4
+                rts
+
+; ofs_div488(d0 = n) -> d0 = n / 488, d1 = n mod 488. ofs_divw(d0 = n, d1.w = divisor) -> d0 = n / divisor, d1 = the
+; remainder, in two divu steps so that the quotient may pass 65535 (a file of more than 65535 data blocks on a hard
+; disk partition). Both preserve the rest.
 ofs_div488:
-                move.l  d2,-(sp)
+                move.w  #OFS_DMAX,d1
+ofs_divw:
+                movem.l d2-d3,-(sp)
+                move.w  d1,d3                         ; d3.w = divisor
                 move.l  d0,d1
                 clr.w   d1
                 swap    d1                            ; d1 = high word of n
-                divu    #OFS_DMAX,d1                  ; remainder : high word of the quotient
+                divu    d3,d1                         ; remainder : high word of the quotient
                 move.w  d1,d2
-                move.w  d0,d1                         ; remainder : low word of n (< 488 * 65536)
-                divu    #OFS_DMAX,d1
+                move.w  d0,d1                         ; remainder : low word of n (< divisor * 65536)
+                divu    d3,d1
                 swap    d2
                 move.w  d1,d2                         ; d2 = quotient
                 clr.w   d1
                 swap    d1                            ; d1 = remainder
                 move.l  d2,d0
-                move.l  (sp)+,d2
+                movem.l (sp)+,d2-d3
                 rts
 ; ofs_mul488(d0 = k) -> d0 = k * 488 (= k * 512 - k * 16 - k * 8) on 32 bits. Clobbers d1.
 ofs_mul488:
@@ -922,4 +1080,4 @@ ofs_td_name:
                 dc.b    "trackdisk.device",0
                 even
 ofs_geodef:                                   ; DD floppy: root, blocks, reserved, offset, no reply port
-                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0,0
+                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0,0,0

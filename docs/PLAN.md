@@ -1066,6 +1066,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     A1200 default). Coldstart now puts both CIAs back to their power-up state (ICR off, CRA/CRB stopped, flags
     read away) before anything else. The keyboard power-up wait is bounded in frames (75) instead of poll
     iterations, which took 14 s on a cycle-exact A600 with no power-up stream.
+    A600/A1200 IDE hard disk (2026-11-22, plan in docs/ide-a600-plan.md): scsi.device
+    for the Gayle IDE port (src/exec/ide.s, only when the Gayle ID answers), RDB partitions mounted but never
+    booted from (the boot stays on the floppy), and the ROM filesystem reads and writes DOS\0-DOS\3 (FFS and the
+    international modes) on floppies and partitions, with a bounded bitmap cache (memory no longer grows with the
+    partition). AddDosNode no longer opens dos.library at cold start. User doc: docs/IDE-HARDDISK.md.
     Chip RAM sized up to 2 MB as on 1.3 (was a fixed 512 KB): Caesar loads with 2 MB chip and no fast RAM.
     SCREENBEHIND honoured by OpenScreen: SimCity's title screen stays hidden while it is drawn.
     gameport.device units 0/1 with every GPD_* command (joysticks on port 2); exec raw serial as in 1.3.
