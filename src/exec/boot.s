@@ -4339,7 +4339,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         ; (inline load) remains the baseline independent of the layer below -> RED LOADSEG_LVO_UNWIRED isolates d3e.
         lea     d3e_cname(pc),a0
         lea     d3e_client(pc),a1
-        moveq   #5,d0                ; pri 5: ABOVE the shell (Initial CLI pri 2) -> d3e loads+emits EARLY, outside
+        moveq   #5,d0                ; pri 5: ABOVE the shell (Initial CLI pri 0) -> d3e loads+emits EARLY, outside
                                      ; the late startup-sequence window (otherwise its marker interleaves "E3 CMD RAN OK")
         move.l  #D3_STK,d1
         jsr     proc_create
