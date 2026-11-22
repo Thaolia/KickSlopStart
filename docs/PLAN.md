@@ -1060,6 +1060,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     block (relocation table from two links of the same objects, src/softkick/mkreloc.py); the image keeps its
     256 KB out of the chip free list (2026-11-21). Zorro/accelerator fast RAM is not usable: it is unconfigured
     after a reset, when ColdCapture runs. Not covered: 68040/060, accelerator MapROM.
+    Soft-kick from the A600 (2.05) and A1200 (3.0) Kickstarts (issue #47, 2026-11-22): the image froze on a purple
+    coldstart colour. The host leaves CIA-A timer B running with its interrupt on; its stale flag held INT2 as soon
+    as a source was enabled, before cia_server is on the PORTS chain (non-cycle-exact WinUAE/Amiberry, WinUAE's
+    A1200 default). Coldstart now puts both CIAs back to their power-up state (ICR off, CRA/CRB stopped, flags
+    read away) before anything else. The keyboard power-up wait is bounded in frames (75) instead of poll
+    iterations, which took 14 s on a cycle-exact A600 with no power-up stream.
     Chip RAM sized up to 2 MB as on 1.3 (was a fixed 512 KB): Caesar loads with 2 MB chip and no fast RAM.
     SCREENBEHIND honoured by OpenScreen: SimCity's title screen stays hidden while it is drawn.
     gameport.device units 0/1 with every GPD_* command (joysticks on port 2); exec raw serial as in 1.3.

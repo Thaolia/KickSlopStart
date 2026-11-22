@@ -149,8 +149,9 @@ lower). This covers an A500 with a 1 MiB Agnus and an A1200, which never has slo
 chip memory programs can use: about 600 KiB stay free at the Workbench with 1 MiB of chip RAM, about 1.6 MiB with
 2 MiB.
 
-- Tested under emulation with a real Kickstart 1.3 (1 MiB chip, 68000) and a 3.1 Kickstart (68020, 2 MiB chip, AGA);
-  not tried yet on a real A1200, feedback is welcome.
+- Tested under emulation (Amiberry, WinUAE, cycle-exact or not) with a real Kickstart 1.3 (1 MiB chip, 68000), the
+  A600 Kickstart 2.05 (68000, 1 MiB chip, ECS) and the A1200 Kickstart 3.0 (68EC020, 2 MiB chip, AGA), and a 3.1
+  Kickstart; not tried yet on a real A600 or A1200, feedback is welcome.
 - 68030 untested; 68040/060 are not supported (their caches and MMU are not handled), nor accelerator MapROM.
 - Fast RAM on an expansion or accelerator board cannot hold the image: that RAM is not configured yet (autoconfig)
   when a reset comes back to it.

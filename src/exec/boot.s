@@ -250,6 +250,19 @@ ar_reentry:
         move.l  #$48454C50,($0).w    ; 'HELP'
         movem.l d6-d7,($100).w
 vec_filled:
+        ; CIAs back to their power-up state (sources off, timers stopped), then their flags read away and PORTS/
+        ; EXTER cleared: a soft-kick starts on the host Kickstart's CIA state (3.x leaves CIA-A timer B running
+        ; with its interrupt on), and a stale flag holds INT2 as soon as a source is enabled again, before
+        ; cia_server is on the PORTS chain (issue #47). Not in phase 1: no room before VEC_FILL_AT.
+        move.b  #$7F,CIAA_HW+$D00    ; ICR
+        move.b  #$7F,CIAB_HW+$D00
+        move.b  #0,CIAA_HW+$E00      ; CRA
+        move.b  #0,CIAA_HW+$F00      ; CRB
+        move.b  #0,CIAB_HW+$E00
+        move.b  #0,CIAB_HW+$F00
+        tst.b   CIAA_HW+$D00
+        tst.b   CIAB_HW+$D00
+        move.w  #(INTF_PORTS|INTF_EXTER),INTREQ
         ; ColdCapture of an ExecBase that survived the reset (docs/analysis/coldstart-hardware-v34.md §5.1):
         ; *(4) even, ChkBase, word sum of +$22..+$52 = $FFFF; the vector is cleared, then called with the return
         ; address in a5. This is how the soft-kick image in slow RAM survives a reset.

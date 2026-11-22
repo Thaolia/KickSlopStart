@@ -59,5 +59,9 @@ globs: ["src/**/*.s", "src/**/*.i", "tests/**/*.s"]
 - A blitter channel used as a constant (DMA off, BLTxDAT set) gets a shift of 0: shifted, it mixes with the
   channel's previous word, which is not the constant (seen under emulation).
 - Restore every register a boot self-test touched (CIA latches, DMACON) to its power-up value.
+- A soft-kick starts on the host's hardware state: a 2.x/3.x Kickstart leaves CIA timers running with interrupts
+  on, so coldstart resets the CIAs before any source is enabled. Test the soft-kick ADF both cycle-exact and not:
+  the stale-flag hang showed only without cycle-exact (issue #47).
+- Bound a boot wait in frames (beam counter), never in poll iterations: their duration follows the bus timing.
 - Clear the low-RAM variables at coldstart: only FS-UAE starts with zeroed RAM.
 - Drawing calls preserve RastPort state (pens, draw mode) and the registers the 1.3 call leaves intact.

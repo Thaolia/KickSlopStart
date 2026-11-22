@@ -155,8 +155,9 @@ général 64 Kio plus bas). Ça couvre un A500 avec un Agnus 1 Mio et un A1200, 
 prend 256 Kio de la chip utilisable par les programmes : il reste environ 600 Kio libres au Workbench avec 1 Mio de
 chip, environ 1,6 Mio avec 2 Mio.
 
-- Testée en émulation avec un vrai Kickstart 1.3 (1 Mio de chip, 68000) et un Kickstart 3.1 (68020, 2 Mio de chip,
-  AGA) ; pas encore essayée sur un vrai A1200, les retours sont bienvenus.
+- Testée en émulation (Amiberry, WinUAE, cycle-exact ou non) avec un vrai Kickstart 1.3 (1 Mio de chip, 68000), le
+  Kickstart 2.05 de l'A600 (68000, 1 Mio de chip, ECS), le Kickstart 3.0 de l'A1200 (68EC020, 2 Mio de chip, AGA)
+  et un Kickstart 3.1 ; pas encore essayée sur un vrai A600 ou A1200, les retours sont bienvenus.
 - 68030 non testé ; 68040/060 non pris en charge (leurs caches et leur MMU ne sont pas gérés), pas plus que le MapROM
   des cartes accélératrices.
 - La fast RAM d'une carte d'extension ou accélératrice ne peut pas accueillir l'image : cette RAM n'est pas encore

@@ -28,8 +28,10 @@ CIAA_ICR     EQU $BFED01          ; CIA-A reg $D: interrupt control (read = pend
 CIAA_CRA     EQU $BFEE01          ; CIA-A reg $E: control A (bit 6 = SPMODE: 0 = input, 1 = output)
 
 KBD_MAXBYTES EQU 32               ; bound: max number of bytes read (the power-up stream is short; bounds the resends)
-KBD_BUDGET   EQU $00100000        ; TOTAL bound of poll iterations (~1.5 s of CIA reads): bounds the wall time
-                                  ; even if the keyboard is slow/absent/stalled (no pathological boot delay)
+KBD_FRAMES   EQU 75               ; TOTAL bound in video frames (1.5 s PAL, 1.25 s NTSC), counted on the beam
+                                  ; counter: a bound in poll iterations depends on the CIA access time, and took
+                                  ; 14 s on a cycle-exact A600 soft-kick, where no power-up stream ever comes
+VPOSR        EQU $DFF004          ; long read at VPOSR: bits 16..8 = vertical beam position V8..V0
 KBD_HSDELAY  EQU $0100            ; handshake: iterations of the SPMODE pulse (~> 75 us at 7 MHz)
 
 KBF_FD       EQU 0                ; flag: $FD (initiate power-up) seen
@@ -42,12 +44,20 @@ kbd_selftest:
                 and.b   #$BF,d1
                 move.b  d1,CIAA_CRA
                 moveq   #KBD_MAXBYTES-1,d4    ; d4 = max byte counter (bound on the resends)
-                move.l  #KBD_BUDGET,d2        ; TOTAL poll iteration budget (bounds the wall time, slow/absent keyboard)
+                moveq   #KBD_FRAMES,d2        ; d2 = frames left (bounds the wall time, slow/absent keyboard)
+                move.l  VPOSR,d1
+                and.l   #$1FF00,d1
+                move.l  d1,a0                 ; a0 = beam line of the previous poll
 .poll:
                 move.b  CIAA_ICR,d1           ; read ICR (ACK); bit 3 = SP
                 btst    #3,d1
                 bne.s   .got
-                subq.l  #1,d2
+                move.l  VPOSR,d1
+                and.l   #$1FF00,d1
+                cmp.l   a0,d1
+                move.l  d1,a0
+                bhs.s   .poll                 ; the line went back: a new frame began
+                subq.w  #1,d2
                 bne.s   .poll
                 bra.s   .done                 ; budget exhausted -> end (no byte / keyboard absent)
 .got:

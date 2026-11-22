@@ -348,6 +348,11 @@ differs.
    when it does not end the chip), MaxLocMem staying the real chip size; the cold path clears chip RAM only up to
    `MAXCHIP`, below the image; the diagnostic's halt reboots through `alert_reboot` (the Kickstart in ROM, then
    ColdCapture), since the overlay that RESET turns back on may hide chip RAM.
+   Common path (every ROM): right after the vector fill, coldstart puts both CIAs back to their power-up state
+   (ICR sources off, CRA/CRB stopped, flags read away, INTREQ PORTS/EXTER cleared): a 2.x/3.x host leaves CIA-A
+   timer B running with its interrupt on, and the stale flag held INT2 once timer.device enabled bit 1, before
+   cia_server is on the PORTS chain (issue #47). `kbd_selftest` waits at most 75 frames (beam counter) for the
+   keyboard's power-up stream, which never comes after a soft-kick.
    `src/softkick/mkadf.py` writes the ADF: bootblock, image in blocks 2..513, relocation table in blocks 514..521,
    empty OFS volume "KickSlopStart" whose bitmap marks those blocks as used. The release workflow publishes the ADF
    with the ROM.
