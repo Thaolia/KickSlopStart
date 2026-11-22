@@ -37,7 +37,7 @@ that the published files are the ones it validated.
    Gate: every command exits 0, the three romtool checks are ok, and
    `strings build/kick13-prod.rom | grep -F "KickSlopStart <tag>"` finds the ID (proof the image was rebuilt for
    this tag). Record `sha256sum build/kick13-prod.rom build/KickSlopStart.adf`.
-3. Regression, dev ROM — `PP_IDE=1 .claude/skills/amiberry/scripts/prepush-check` (about 15 min with the IDE run;
+3. Regression, dev ROM — `PP_IDE=1 .claude/skills/amiberry/scripts/prepush-check` (about 10 min with the IDE run;
    set `PP_PREFIX` if another session runs it).
    Gate: exit 0, no `FAIL` line in its logs (count `FAIL`, not only `FAILED`), and you have looked at the
    Lemmings menu screenshot; the `ppide` line says `ide_rdb_probe OK`.

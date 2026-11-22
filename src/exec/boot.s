@@ -6295,7 +6295,9 @@ coper_int_name:
 ;   - otherwise VBL_INBODY set -> INT6 preempted the BODY of vbl -> VBL_PREEMPT_COUNT++ (must be > 0: proof that vbl
 ;     runs at native IPL3; == 0 = RED2).
 ; Then M7d: stress of the SHARED PORT on the interrupt side (race against task_port). ICR vector convention: preserves
-; d2/d3/a2 (loop variables of cia_dispatch).
+; d2/d3/a2 (loop variables of cia_dispatch). Once "M7D PORTS OK" and "M7E IPL OK" are out, the one-shot is no longer
+; re-armed: the ~2.8 kHz level 6 stream otherwise took about half the CPU of any polled workload for good (the IDE
+; RDB run went from 554 s on the production ROM to 1173 s on the dev ROM, 685 s without this source).
         EVEN
 m7_int6_probe:
         tst.b   VBL_INSURG          ; is vbl_handler in the middle of list SURGERY?
@@ -6336,7 +6338,13 @@ m7_int6_probe:
 .ip_pfail:
         st      WP_PORTFAIL
 .ip_ret:
+        btst    #0,M7D_STAT
+        beq.s   .ip_rearm
+        btst    #0,M7E_STAT
+        bne.s   .ip_done             ; both proofs out: the source stops here
+.ip_rearm:
         move.b  #$19,CIAB_HW+CIA_CRA ; re-arms the one-shot (LOAD: latch 255)
+.ip_done:
         movem.l (sp)+,d0-d1/a0-a1
         rts
         EVEN

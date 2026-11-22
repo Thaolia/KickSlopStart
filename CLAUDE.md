@@ -162,7 +162,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
   `make kick-ram` → image linked at `$C00000` · `make adf` → soft-kick disk ·
   `make hello` → smoke ROM · `make verify` (size, `is_kick`, checksum).
 - Pre-push regression: `.claude/skills/amiberry/scripts/prepush-check [rom]` (3 parallel Amiberry sessions;
-  `PP_IDE=1` adds the IDE RDB run, ~15 min).
+  `PP_IDE=1` adds the IDE RDB run, ~10 min).
 - Targeted runs: `/amiberry` skill (headless sessions, serial log, gdb, screenshots, scripted input);
   `/vamigaweb` skill for what vAmigaWeb users see (live site in headless Chromium, RetroShell debugger);
   `tests/boot_test.sh` (FS-UAE boot) for the older harnesses.

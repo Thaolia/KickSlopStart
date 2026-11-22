@@ -376,7 +376,10 @@ differs.
    gates of `boot.s` remove the **RUNTIME harness** from the boot path: M7 demo tasks
    (`task_h/l/s/timer/port/fa/fb`, spinners), D3 test clients/drivers (echo `d3a`, fs-driver `d3b`,
    `d3c_client`, `d3d..d3j` — they read test files absent from a real disk), proof probes
-   (VERTB tail server `vbl_tail`, COPER source), M7d port stress (neutralised via `ifne PROD`).
+   (VERTB tail server `vbl_tail`, COPER source), M7d port stress (neutralised via `ifne PROD`). The dev ROM's
+   level 6 proof source (CIA-B timer A one-shot re-armed by `m7_int6_probe`, ~2.8 kHz) stops once "M7D PORTS OK"
+   and "M7E IPL OK" are out (2026-11-22): left running, it took about half the CPU of polled work (the IDE RDB run
+   took 1173 s on the dev ROM against 554 s on the production ROM; 533 s since).
    **Kept**: the whole real OS — `build_reslist`+`InitCode` mounts ALL the real modules (the "M4 scan"
    covers the whole ROM, not only demo residents), CIA-B/MICROHZ timer, live gameport, DF0: mounting
    (OFS handler + DeviceNode), con_handler, the keyboard feeder (run by the intuition input task), strap (floppy

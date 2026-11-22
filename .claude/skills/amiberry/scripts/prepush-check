@@ -5,8 +5,8 @@
 #   pplem       : assets/lemmings_flt.adf (slow 512) -> waits for the FAIRLIGHT intro, left-clicks (again while the
 #                 intro stays), waits up to 5 min for the game menu, screenshot to look at
 #   ppide       : only with PP_IDE=1 (changes to IDE or the filesystem, releases): tests/ide_rdb_probe.sh on the A600
-#                 profile (RDB partitions DOS\0-DOS\3 read and written, host checks), about 15 min on the dev ROM
-#                 (6 on the production ROM), so it is not part of every push
+#                 profile (RDB partitions DOS\0-DOS\3 read and written, host checks), about 10 min, so it is not
+#                 part of every push
 # Usage (repository root): .claude/skills/amiberry/scripts/prepush-check [rom]   (default build/kick13.rom)
 # Exit 0 when both serial runs pass, the Lemmings menu is detected and, with PP_IDE=1, ide_rdb_probe exits 0; still
 # look at the Lemmings screenshot.

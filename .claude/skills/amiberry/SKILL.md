@@ -22,7 +22,7 @@ $A stop s1
 `$A` alone prints the usage. Command reference for the GDB monitor and IPC: [reference.md](reference.md).
 Since 2026-11-02 validation runs here: `scripts/prepush-check` before a push, then targeted sessions on the ADFs a
 change touches (the WinUAE ADF suite is no longer run). `prepush-check` names its sessions `pp512`, `pp0`, `pplem`
-(plus `ppide` with `PP_IDE=1`: `tests/ide_rdb_probe.sh` on the A600 profile, about 15 min on the dev ROM, for
+(plus `ppide` with `PP_IDE=1`: `tests/ide_rdb_probe.sh` on the A600 profile, about 10 min, for
 changes to IDE or the filesystem and for releases; log `build/amiberry/sessions/ppide.result`) and starts by
 stopping and deleting them: when another Claude session may run it too, give yours a prefix of its own
 (`PP_PREFIX=cx prepush-check …` -> `cx512`, `cx0`, `cxlem`, `cxide`), or each run stops the other's ("session pplem
