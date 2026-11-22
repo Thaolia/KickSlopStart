@@ -110,6 +110,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
   write: bisect by padding/layout and look at the stuck state, not at the diff.
 - Slow is not stuck: check DMACONR (blitter busy), give it time, compare with HEAD and with the real ROM (through
   the analysis agent) before reporting a regression. Measure performance on `make kick-prod` only.
+- Before building on an error path, check that its source sets a real error code (an IoErr of 0 proves nothing).
 
 ### Concurrent sessions and emulators
 
@@ -120,6 +121,16 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - Test on **copies** of ADFs (scratchpad or session directory); FS-UAE ties its write overlay to the ADF file name,
   so use a fresh name per run.
 
+### Commits and releases
+
+- Before any commit on `main`: `git fetch`, then `git pull --ff-only`; the user pushes too. Never force-push and
+  never rewrite published history unless the user asks.
+- Write commit messages in English, with no Co-Authored-By line.
+- For shared docs (ARCHITECTURE, PLAN, coverage), reread `git diff --cached` right before committing and stage only
+  your own hunks: another session may have written into the same file between `git status` and `git add`.
+- Add skill scripts with `git add --chmod=+x` (`core.filemode=false`). Never force-add a ROM or an ADF.
+- Create and push a release tag only when the user explicitly asks for that release; otherwise they run it with `!`.
+
 ## Coding Standards
 
 - Assembly in **vasm Motorola** syntax, **strict 68000** (no instruction above 68000: no 060-only `RESET`, no 020+
@@ -128,7 +139,8 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 - Check every LVO offset against the `.fd`/AROS `.conf`, never against memory or a web summary.
 - Build probes and executables for KS 1.x with `vasmm68k_mot -Fhunkexe -kick1hunks`.
 - Check the exit code of `vasmm68k_mot`/`vlink` and that the ROM md5 changed: a branch-range error (2029) or a link
-  failure can leave a stale or truncated ROM behind.
+  failure can leave a stale or truncated ROM behind. Never pipe a build to `/dev/null`; before interpreting a run,
+  confirm the new serial marker is in the ROM (`strings <rom> | grep <marker>`).
 - `correctness > maintainability > performance > brevity`. No dead code, no unused variable.
 - No comment unless the WHY is non-obvious.
 
@@ -160,7 +172,10 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
   at**, never "assumed". A harness "OK", an `ls` of the capture or identical colour counts prove nothing.
 - Before a push: `prepush-check` passes; count `FAIL` (not only `FAILED`) in its logs and look at the Lemmings
   menu capture. Then run targeted Amiberry sessions on the ADFs the change touches. The WinUAE ADF suite is no
-  longer run (user decision, 2026-11-02).
+  longer run (user decision, 2026-11-02), unless the user asks for it explicitly (then use the dev ROM).
+- The Lemmings capture is taken 90 s after the click; if it shows the AmigaSlopDOS window, measure the delay before
+  calling it a regression. Late markers (E3) can need 75-110 s of headless boot.
+- Keep an independent baseline proof next to a new one: never refactor a test onto the code it is meant to check.
 - Performance claims: measured on `make kick-prod`, compared with HEAD on the same harness.
 - Record the result (command + output) in the `.superpowers/sdd/` ledger.
 
@@ -187,5 +202,6 @@ Plain links, no `@`: these files are long and are read when the question comes u
   (`.claude/rules/`), or into memory if it is a one-off; keep this file for instructions, not facts.
 - When a user decision makes a harness or procedure obsolete, remove it here and in the amiberry skill in the same
   session.
-- Personal preferences (local paths, aliases, tooling) go into `CLAUDE.local.md` (add it to `.gitignore`
-  first, it is not ignored yet), never into this file.
+- When the "What works" state changes, update `README.md` and `README.fr.md` together.
+- Personal preferences (local paths, aliases, tooling) go into `CLAUDE.local.md` (already git-ignored), never into
+  this file.

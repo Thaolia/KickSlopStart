@@ -53,6 +53,10 @@ globs: ["src/**/*.s", "src/**/*.i", "tests/**/*.s"]
 - The preemptive exit of an interrupt must honour Forbid/Disable nesting; voluntary yields (Wait, Permit) still run.
 - No fast periodic interrupt source left running at boot; arm CIA timers one-shot.
 - Around the trackdisk seek step pulses only, Disable when a timer of the same CIA can interrupt.
+- Never put a long wait under Disable: masking a whole seek delayed VBlank past one frame and garbled a game's
+  display. Mask only the critical pulse.
+- Serial markers from processes go out early (priority above the shell) or under a respected Forbid; never a
+  concurrent `ser_puts` inside the startup-sequence window, or two markers interleave byte by byte.
 - Any copper list shown at boot goes through COP1LC; keep a copinit that jumps to COP2LC for programs that only
   write COP2LC.
 - Write POTGO through potgo.resource, or the right/middle button reads as held.
