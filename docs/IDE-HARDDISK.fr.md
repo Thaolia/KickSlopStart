@@ -28,7 +28,8 @@ Kickstart lit son disque dur ou sa carte CF.
   quelques minutes.
 - Testé en émulation (Amiberry, profils A600 et A1200) avec notre ROM comme hôte et avec un Kickstart 3.1 comme hôte
   du soft-kick, sur des partitions de 8 Mo à 3,9 Go ; pas encore essayé sur une vraie machine, les retours sont
-  bienvenus.
+  bienvenus. Les tests de non-régression sont `tests/ide_rdb_probe.sh` (partitions RDB, lecture et écriture) et
+  `tests/fatfs_probe.sh` (FAT).
 
 Le même système de fichiers lit et écrit aussi les disquettes FFS (formatées sous 2.x/3.x), sur n'importe quelle
 machine, et lit un hardfile UAE qui contient un système de fichiers FAT. Les disquettes PC (720 Ko) ne sont pas lues :

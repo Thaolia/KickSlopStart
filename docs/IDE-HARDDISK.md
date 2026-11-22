@@ -23,7 +23,8 @@ and in the soft-kick image, so an A600 or A1200 soft-kicked from its own Kicksta
 - Memory does not grow with the partition: about 4 bytes per bitmap block plus a cache of 8 blocks (a 1.1 GB
   partition costs about 6 KB). Rebuilding the bitmap of a big partition after a crash takes a few minutes.
 - Tested under emulation (Amiberry, A600 and A1200 profiles) with our ROM as host and with a 3.1 Kickstart as
-  soft-kick host, on partitions from 8 MB to 3.9 GB; not tried yet on real hardware, feedback is welcome.
+  soft-kick host, on partitions from 8 MB to 3.9 GB; not tried yet on real hardware, feedback is welcome. The
+  regression tests are `tests/ide_rdb_probe.sh` (RDB partitions, read and write) and `tests/fatfs_probe.sh` (FAT).
 
 The same filesystem also reads and writes FFS floppies (formatted under 2.x/3.x), on any machine, and reads a UAE
 hardfile that holds a FAT filesystem. PC floppies (720 KB) are not read: their tracks have another format.

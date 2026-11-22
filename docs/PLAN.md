@@ -1071,6 +1071,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     booted from (the boot stays on the floppy), and the ROM filesystem reads and writes DOS\0-DOS\3 (FFS and the
     international modes) on floppies and partitions, with a bounded bitmap cache (memory no longer grows with the
     partition). AddDosNode no longer opens dos.library at cold start. User doc: docs/IDE-HARDDISK.md.
+    Test: tests/ide_rdb_probe.sh (a600, a1200), added after v0.2.71, which passes it on both profiles.
     FAT volumes, read-only (2026-11-22, user decision: no writing, no PC floppies): the ROM filesystem recognises
     a FAT12/16/32 boot sector in a partition's first block (src/dos/fat.s, fatgen103), with VFAT long names (shown
     up to 30 characters, otherwise the 8.3 name) and every write refused with 214. The IDE driver mounts the FAT

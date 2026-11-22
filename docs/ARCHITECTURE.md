@@ -59,6 +59,9 @@ User-facing description and limits: [IDE-HARDDISK.md](IDE-HARDDISK.md); plan: [i
   the write-back writes the dirty ones before the root goes valid again, so the bm_flag protocol is unchanged. The
   validator clears then marks through the cache (slow on big partitions, bounded memory). Measured on a 1 MB-chip
   A600 profile: 836,112 bytes free with a 1.2 GB disk (535,056 when the whole bitmap was in memory).
+- Test: `tests/ide_rdb_probe.sh <rom> <name> [a600|a1200]` builds an RDB disk with amitools (DOS\0-DOS\3, the OFS
+  one flagged bootable), runs Workbench commands that read and write each partition, then compares the files and
+  checks each partition with `tests/ofs_check.py` and `xdfscan` on the host. A ROM without the driver times out.
 
 ## Tall narrow bitmap copies (2026-11-16)
 
