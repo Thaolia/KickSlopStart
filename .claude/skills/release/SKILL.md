@@ -43,8 +43,10 @@ that the published files are the ones it validated.
    Lemmings menu screenshot.
 4. Regression, released ROM — `prepush-check` cannot judge `build/kick13-prod.rom`: the production ROM does not copy
    console output to the serial port, so its markers never arrive. Invoke `/amiberry` instead: boot the Workbench
-   1.3.3 boot disk on `build/kick13-prod.rom` (the skill's example: `wait-serial … "Incorrect Revision" 150`, then
-   a screenshot of the opened disk window), plus the ADFs the changes since `<last>` touch.
+   1.3.3 boot disk on `build/kick13-prod.rom`, wait until a screenshot shows the Workbench disk icon (do not
+   `wait-serial` for "Incorrect Revision": on the prod ROM that line never reaches the serial log, checked for
+   v0.2.71), then run the amiberry skill's "open the boot disk's window" input script and look at its screenshot;
+   plus the ADFs the changes since `<last>` touch.
    Gate: each run reaches its end state on a screenshot you have looked at.
 5. Soft-kick hosts — only when `git diff <last>..$SHA --stat` touches coldstart, `src/softkick/`, CIA or memory
    setup; otherwise record "skipped: no soft-kick change". The host Kickstarts are Commodore ROMs: the main
