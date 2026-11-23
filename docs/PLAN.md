@@ -1058,8 +1058,21 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     reset comes back to the image. Without slow RAM, from 1 MB of chip RAM up (A500 with a 1 MB Agnus, A1200 as a
     Relokick-style use), the disk relocates the image into chip RAM above 512 KB, in the highest free 64 KB-aligned
     block (relocation table from two links of the same objects, src/softkick/mkreloc.py); the image keeps its
-    256 KB out of the chip free list (2026-11-21). Zorro/accelerator fast RAM is not usable: it is unconfigured
-    after a reset, when ColdCapture runs. Not covered: 68040/060, accelerator MapROM.
+    256 KB out of the chip free list (2026-11-21). Zorro II fast RAM first (2026-11-23, issue "ReKick-style
+    $200000"): the disk puts the image in the highest free 64 KB-aligned block of $200000-$9FFFFF and records the
+    host's boards in low chip RAM ($C00-$FFF, src/exec/relay.i); ColdCapture points at a relay there that gives the
+    boards their addresses again after a reset, checks the image and enters it; expansion.library rebuilds those
+    ConfigDevs and keeps the image out of the board's memory. Tested under Amiberry with KickSlopStart as the host:
+    A500 (2 MB fast, with and without slow RAM), A600 (1 MB chip + 2 MB fast), A1200 with 68020, 68030 and 68040
+    (2 MB chip + 4 MB fast): first boot, hardware reset back through the relay, Workbench 1.3.3. The analysis track
+    ran the same matrix with Commodore 1.3, 2.05, 3.0 and 3.1 as the host, all passing
+    (docs/analysis/softkick-fast-real-host.md). Several Zorro II boards (2-3 RAM boards, RAM + A2065, a
+    board shut up behind an 8 MB one) pass on our ROM and on 1.3/2.05/3.1 hosts. 68060 boots (3.0/3.1 hosts; exec
+    sees a 68020 without FPU). With a Zorro III board the disk falls back to chip RAM; the host's Zorro II boards are
+    now recorded for every placement (fast, slow, chip), so the image keeps them from its first boot. Open: a Zorro III board left pending at $E80000 after a reset hides the boards behind it. Not yet tried on
+    real hardware. ReloKick 1.4a studied by the analysis track
+    (docs/analysis/relokick-v34.md): it never re-configures autoconfig RAM, hence its chip/slow placement. Not
+    covered: Zorro III, 68060, accelerator MapROM, the ReKick file format.
     Soft-kick from the A600 (2.05) and A1200 (3.0) Kickstarts (issue #47, 2026-11-22): the image froze on a purple
     coldstart colour. The host leaves CIA-A timer B running with its interrupt on; its stale flag held INT2 as soon
     as a source was enabled, before cia_server is on the PORTS chain (non-cycle-exact WinUAE/Amiberry, WinUAE's

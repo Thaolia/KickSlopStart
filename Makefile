@@ -90,8 +90,8 @@ kick-ram:
 adf: kick-ram $(BUILD)/bootblock.bin
 	$(PYTHON) src/softkick/mkadf.py --boot $(BUILD)/bootblock.bin --image build/kick13-ram.bin \
 	  --reloc build/kick13-ram.rel --out $(BUILD)/KickSlopStart.adf
-$(BUILD)/bootblock.bin: src/softkick/bootblock.s | $(BUILD)
-	$(VASM) -Fbin -m68000 -o $@ $<
+$(BUILD)/bootblock.bin: src/softkick/bootblock.s $(EXEC_DIR)/relay.i | $(BUILD)
+	$(VASM) -Fbin -m68000 -I $(EXEC_DIR) -o $@ $<
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -133,7 +133,7 @@ $(BUILD)/kss_version: FORCE | $(BUILD)
 FORCE:
 
 $(BUILD)/hello.bin: $(HELLO_SRC) | $(BUILD)
-	$(VASM) -Fbin -m68000 -o $@ $<
+	$(VASM) -Fbin -m68000 -I $(EXEC_DIR) -o $@ $<
 $(HELLO_ROM): $(BUILD)/hello.bin $(MKROM)
 	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
 
