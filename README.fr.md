@@ -127,7 +127,7 @@ de la release, avec les commits depuis la release précédente.
 
 ## Disquette de soft-kick (sans changer de ROM)
 
-**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM, ou 1 Mio de chip RAM.** La disquette de soft-kick démarre
+**Minimum : 512 Kio de chip RAM plus 512 Kio de slow RAM, ou 1 Mio de fast RAM Zorro II, ou 1 Mio de chip RAM.** La disquette de soft-kick démarre
 KickSlopStart sur une machine qui garde son propre Kickstart en ROM (1.3, ou 2.x/3.x). Chaque release fournit
 `KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
 [`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Pour la
@@ -138,8 +138,27 @@ construire : `make adf` (`build/KickSlopStart.adf`).
 Bootez la disquette sur le Kickstart de la machine : son bootblock charge KickSlopStart (256 Kio) et le démarre.
 KickSlopStart affiche alors son écran d'insertion : retirez la disquette de soft-kick, insérez celle que vous voulez,
 et il la boote. Un reset (Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart
-en ROM appelle au reset ; éteindre la machine ramène au Kickstart en ROM. Sans assez de slow RAM ni 1 Mio de chip, la
-disquette boote normalement sur le Kickstart en ROM.
+en ROM appelle au reset ; éteindre la machine ramène au Kickstart en ROM. Sans assez de fast RAM, de slow RAM ni de
+chip RAM, la disquette boote normalement sur le Kickstart en ROM.
+
+### Fast RAM Zorro II (premier choix)
+
+Quand une carte autoconfig fournit de la fast RAM Zorro II (`$200000`-`$9FFFFF` : une carte mémoire d'A500/A2000,
+une carte de trappe d'A600 ou d'A1200), la disquette y installe KickSlopStart, tout en haut. Un reset déconfigure ces
+cartes : la disquette les enregistre donc aussi en bas de la chip RAM, et un petit relais à cet endroit leur rend
+leurs adresses avant d'entrer dans KickSlopStart. L'image prend 256 Kio de la carte ; la chip et la slow RAM restent
+libres pour les programmes.
+
+- Testée en émulation (Amiberry) sur un A500 (2 Mio de fast, avec et sans slow RAM), un A600 (1 Mio de chip, 2 Mio
+  de fast) et un A1200 en 68020, 68030 et 68040 (2 Mio de chip, 4 Mio de fast) : premier démarrage, reset
+  Ctrl+Amiga+Amiga qui revient dans KickSlopStart, Workbench 1.3.3, avec KickSlopStart lui-même et avec des
+  Kickstart Commodore comme hôte (1.3 sur l'A500, 2.05 sur l'A600, 3.0 et 3.1 sur l'A1200,
+  [docs/analysis/softkick-fast-real-host.md](docs/analysis/softkick-fast-real-host.md)). Pas encore essayée sur du
+  vrai matériel, les retours sont bienvenus.
+- Cartes Zorro II seulement, 8 au plus. Avec une carte Zorro III (configurée par un Kickstart 2.x/3.x), la
+  disquette se rabat sur la slow ou la chip RAM ; les cartes Zorro II restent utilisables, mais après un reset la
+  carte Zorro III reste non configurée et cache toute carte placée derrière elle. Testée avec jusqu'à trois cartes de RAM, une carte de RAM avec une carte Ethernet, et une carte mise hors
+  bus faute de place.
 
 ### A500 avec slow RAM
 
@@ -158,10 +177,9 @@ chip, environ 1,6 Mio avec 2 Mio.
 - Testée en émulation (Amiberry, WinUAE, cycle-exact ou non) avec un vrai Kickstart 1.3 (1 Mio de chip, 68000), le
   Kickstart 2.05 de l'A600 (68000, 1 Mio de chip, ECS), le Kickstart 3.0 de l'A1200 (68EC020, 2 Mio de chip, AGA)
   et un Kickstart 3.1 ; pas encore essayée sur un vrai A600 ou A1200, les retours sont bienvenus.
-- 68030 non testé ; 68040/060 non pris en charge (leurs caches et leur MMU ne sont pas gérés), pas plus que le MapROM
-  des cartes accélératrices.
-- La fast RAM d'une carte d'extension ou accélératrice ne peut pas accueillir l'image : cette RAM n'est pas encore
-  configurée (autoconfig) quand un reset revient dessus.
+- 68060 : démarre en émulation (Kickstart 3.0/3.1 et KickSlopStart comme hôte), vu par exec comme un 68020 sans
+  FPU. MapROM des cartes accélératrices non pris en charge. Sur un 68040, la disquette coupe les caches et la MMU
+  qu'un Kickstart 2.x/3.x a pu laisser actifs.
 - Le disque dur IDE interne d'un A600/A1200 est monté ([docs/IDE-HARDDISK.fr.md](docs/IDE-HARDDISK.fr.md)) : les
   partitions RDB en lecture et en écriture, les cartes FAT12/16/32 formatées sur PC en lecture seule ; le PCMCIA
   n'est pas pris en charge. Les machines AGA tournent en mode OCS, comme sous une vraie 1.3.
@@ -172,7 +190,9 @@ Ces outils de soft-kick ne peuvent pas démarrer KickSlopStart : ils sont faits 
 Commodore avec des données de patch ou de relocation construites pour chaque ROM Commodore exacte (SKick compare la
 somme de contrôle de la ROM à ses propres tables, MKick ne démarre pas de Kickstart 1.3, Relokick fournit sa propre
 1.3 patchée). Utilisez plutôt la disquette de soft-kick : elle porte sa propre table de relocation, construite depuis
-nos sources (`src/softkick/mkreloc.py`).
+nos sources (`src/softkick/mkreloc.py`). Relokick lui-même ne reconfigure jamais la RAM autoconfig après un reset,
+c'est pourquoi il place sa copie en chip ou en slow RAM
+([docs/analysis/relokick-v34.md](docs/analysis/relokick-v34.md)).
 
 ## Signaler un problème
 

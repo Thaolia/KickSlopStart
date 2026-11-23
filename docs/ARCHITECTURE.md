@@ -388,29 +388,58 @@ differs.
    `$C00000` (`src/exec/kick-ram.ld`, objects in `build/ram/`, image `build/kick13-ram.bin`). In that image
    `ROMBASE`/`ROM_BASE` (ROMTag scan range, EXEC_SVC test of `priv_handler`, the diagnostic's ROM sum) is
    `kick_base`, a symbol of the linker script rather than an `EQU`, so the assembler never folds or shortens an
-   instruction for one base; `SLOW_RSV` is 256 KB: `add_slow_memory` probes and declares the slow RAM above the
-   image. `make kick-ram` then links the same objects at `$100000` (`build/kick13-ram2.bin`) and
+   instruction for one base; `SLOW_RSV` is 256 KB, reserved only when the image lies at `$C00000` (`SLOWLO`, a
+   boot-time test since `kick_base` is a link symbol): `slow_probe`, the slow ExecBase and the cold-path clear then
+   start above the image, and an image in chip or Zorro II RAM leaves the whole slow RAM to the system. `make kick-ram` then links the same objects at `$100000` (`build/kick13-ram2.bin`) and
    `src/softkick/mkreloc.py` diffs the two: every difference must be a longword holding an image address moved by
    the base delta (the footer checksum aside), otherwise the build stops; it writes the offsets as word gaps
    (`build/kick13-ram.rel`, about 1200 entries) and checks that applying them to the first image gives the second.
-   At each boot the image sets `ExecBase->ColdCapture` to its `coldstart`. `src/softkick/bootblock.s` (boot code,
-   run by the Kickstart in the machine):
+   At each boot the image sets `ExecBase->ColdCapture` to its `coldstart`, or to the relay when it lies in Zorro II
+   fast RAM (below). `src/softkick/bootblock.s` (boot code, run by the Kickstart in the machine):
+   - first, Zorro II fast RAM (`place`, `$200000-$9FFFFF`): `AllocAbs` of 256 KB from `$9C0000` down in 64 KB steps;
+     the relay area (`RELAY_LO-RELAY_HI`, `$C00-$FFF`, `src/exec/relay.i`) is taken first when free, so that the 64 KB
+     chip buffer cannot lie there; the image is read through that buffer (`CopyMem` into fast RAM), the table read,
+     the image checked as linked and relocated; then `record` writes the host's Zorro II boards (expansion.library
+     `FindConfigDev`, chain order, at most 8: `cd_Rom`, slot, `cd_Flags`) into the buffer, with no record when the
+     boot code itself lies in the relay area; in Zorro II space a board left out (Zorro III, more than 8) or no
+     record refuses the placement. `go`, in supervisor mode with interrupts and DMA off, pushes and
+     switches off a 68040's caches, MMU and transparent translation (a 2.x/3.x host may leave them on), copies the
+     record (when there is one) to `RELAY_LO`, clears `$4` (the image starts cold) and jumps to the reset PC;
    - with slow RAM covering `$C00000-$C3FFFF` (`TypeOfMem`): reads blocks 2..513 into a chip buffer, checks the
-     `$1111` header, the reset PC and the Kickstart sum, then a stub placed after the image copies it to `$C00000`
-     with interrupts and DMA off and jumps to its reset PC (unchanged path);
-   - otherwise, with `MaxLocMem` >= 1 MB: `AllocAbs` of 256 KB at `MaxLocMem - 256 KB` rounded down to 64 KB, then
-     64 KB lower each time down to `$80000` (a 2.x/3.x Kickstart with chip RAM only keeps its supervisor stack at
-     the top); reads the table (blocks 514..521) and the image straight into the block, checks the image as linked,
-     adds `load address - $C00000` to each listed longword, rewrites the footer checksum, calls `CacheClearU` on
-     V36+, and jumps in supervisor mode with interrupts and DMA off;
+     `$1111` header, the reset PC and the Kickstart sum, writes the board record after the image (Zorro III boards
+     left out) and a copy of `go` after the record; that copy (slow RAM may hold the running system and the boot
+     code) copies the image to `$C00000` with interrupts and DMA off, the record to the relay area, and jumps to the
+     reset PC (`go` tells the two cases apart by the reset PC: at `$C00000` or above, the image is still in the
+     buffer);
+   - otherwise, with `MaxLocMem` >= 1 MB: the same `place` from `MaxLocMem - 256 KB` rounded down to 64 KB down to
+     `$80000` (a 2.x/3.x Kickstart with chip RAM only keeps its supervisor stack at the top), with the record too,
+     which then skips non-Zorro II boards: the image's expansion.library rebuilds the host's boards on this first
+     boot, then clears the record's magic (after a reset its own ConfigChain finds them);
+     relocation adds `load address - $C00000` to each listed longword and rewrites the footer checksum; `CacheClearU`
+     on V36+ before `go`;
    - otherwise it boots the disk normally.
-   When the image already runs (ColdCapture is the reset PC of a `$1111` image at ColdCapture - `$D2`) the boot
-   code fails with `KSS_RESIDENT`: the strap shows the insert-disk screen and boots the next disk inserted.
+   When the image already runs (ColdCapture is the reset PC of a `$1111` image at ColdCapture - `$D2`, or the relay
+   entry `RELAY_LO+$100` with the record's magic) the boot code fails with `KSS_RESIDENT`: the strap shows the insert-disk screen and boots the next disk inserted.
    Image side (`if RAMKICK` only, dev/prod ROMs byte-identical): `init_memory` skips the image when sizing chip RAM
    (the probe would write into it) and leaves its 256 KB out of the chip free list (a chunk below, a chunk above
    when it does not end the chip), MaxLocMem staying the real chip size; the cold path clears chip RAM only up to
    `MAXCHIP`, below the image; the diagnostic's halt reboots through `alert_reboot` (the Kickstart in ROM, then
    ColdCapture), since the overlay that RESET turns back on may hide chip RAM.
+   Image in Zorro II fast RAM (`relay_arm`, `relay`, `exp_replay`): a reset de-configures the autoconfig boards, so
+   the RAM holding the image is gone when the Kickstart in ROM calls ColdCapture. `relay_arm` copies the relay code
+   to `RELAY_LO+$100` when the bootblock's record names this image, and ColdCapture points there. The relay (no
+   stack) gives each recorded board its slot again (`ec_BaseAddress`, low nibble then high; shut-up boards shut up
+   again), after checking `er_Type` and `er_Product` at `$E80000`; then checks the image's `$1111` header and
+   Kickstart sum, rewrites `ExecBase->ChkSum` for the cleared ColdCapture (the image keeps the warm path) and jumps
+   to its reset PC; any mismatch restarts the Kickstart in ROM from the reset PC at `$F80004`. Coldstart's low-RAM
+   clear stops at `RELAY_LO`, and its ChkSum check accepts a sum already right before counting a cleared coldstart
+   vector back in. expansion.library's `exp_replay` rebuilds the recorded boards' ConfigDevs (those boards no longer
+   answer at `$E80000`), takes their slots and runs the usual post-configuration (RAM, DiagArea); `exp_addram`
+   leaves the image's 256 KB out of the board's memory (the part below and the part above are added). Limits: Zorro
+   II autoconfig boards only (a Zorro III board makes the disk fall back to slow or chip RAM; a Zorro III board left pending
+   after a reset is neither configured nor shut up and hides any board behind it), at most 8 boards; the
+   relay area must survive a reset (a program that overwrites `$C00-$FFF` loses the reset path, as one that
+   overwrites the image).
    Common path (every ROM): right after the vector fill, coldstart puts both CIAs back to their power-up state
    (ICR sources off, CRA/CRB stopped, flags read away, INTREQ PORTS/EXTER cleared): a 2.x/3.x host leaves CIA-A
    timer B running with its interrupt on, and the stale flag held INT2 once timer.device enabled bit 1, before

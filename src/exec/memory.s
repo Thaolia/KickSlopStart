@@ -622,15 +622,15 @@ init_memory:                         ; a6 = SysBase (jump table already built)
 ; ($DFF000, partial decoding): each probe is at offset $1FE/$3FE of a block (= NO-OP register if mirrored ->
 ; harmless write). Two crossed patterns written to TWO addresses before reading back: a floating bus that retains
 ; the last written value does not pass. Following blocks: rejected if alias of block 0 (incomplete decoding).
-; RAMKICK: the image occupies the first SLOW_RSV bytes, so the probes start above it.
+; RAMKICK: an image in slow RAM occupies its first SLOW_RSV bytes, so the probes start above it (SLOWLO).
 ; Returns d0 = end of the slow RAM (the MaxExtMem value), 0 = none. Clobbers d1/a0/a1.
 slow_probe:
         movem.l d2-d4,-(sp)
         moveq   #0,d0                ; d0 = detected size
 .sp_blk:
         cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d0
-        beq.s   .sp_end
-        lea     SLOW_BASE+SLOW_RSV,a0
+        beq     .sp_end
+        SLOWLO  a0
         add.l   d0,a0                ; a0 = candidate block (+ reserved image area)
         move.w  $1FE(a0),d2          ; probed words put back: a warm reset keeps the slow RAM, ExecBase and the
         move.w  $3FE(a0),d3          ; KickMem modules included (coldstart-hardware-v34 §5.2)
@@ -646,7 +646,7 @@ slow_probe:
         moveq   #0,d1
         tst.l   d0                   ; block 0: no alias possible
         beq.s   .sp_rest
-        lea     SLOW_BASE+SLOW_RSV,a1
+        SLOWLO  a1
         move.w  $1FE(a1),d4
         move.w  #$1234,$1FE(a1)      ; mark block 0...
         move.w  #$4321,$1FE(a0)      ; ...write the current block...
@@ -659,7 +659,7 @@ slow_probe:
         tst.b   d1
         bne.s   .sp_end
         add.l   #SLOW_STEP,d0
-        bra.s   .sp_blk
+        bra     .sp_blk
 .sp_end:
         tst.l   d0
         beq.s   .sp_ret

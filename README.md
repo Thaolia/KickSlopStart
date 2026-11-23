@@ -123,7 +123,7 @@ commits since the previous release.
 
 ## Soft-kick disk (no ROM swap)
 
-**Minimum: 512 KiB chip RAM + 512 KiB slow RAM, or 1 MiB of chip RAM.** The soft-kick disk starts KickSlopStart on a
+**Minimum: 512 KiB chip RAM plus 512 KiB of slow RAM, or 1 MiB of Zorro II fast RAM, or 1 MiB of chip RAM.** The soft-kick disk starts KickSlopStart on a
 machine that keeps its own Kickstart in ROM (1.3, or 2.x/3.x). Each release comes with `KickSlopStart-<version>.adf`,
 and the `rom` branch carries the latest one as
 [`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Build it with
@@ -134,8 +134,26 @@ and the `rom` branch carries the latest one as
 Boot the disk on the Kickstart in the machine: its bootblock loads KickSlopStart (256 KiB) and starts it.
 KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want, and it
 boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
-in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. With neither enough slow RAM nor
-1 MiB of chip RAM, the disk boots normally on the Kickstart in ROM.
+in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. Without enough fast RAM, slow RAM
+or chip RAM, the disk boots normally on the Kickstart in ROM.
+
+### Zorro II fast RAM (first choice)
+
+When an autoconfig board offers Zorro II fast RAM (`$200000`-`$9FFFFF`: an A500/A2000 memory board, an A600 or
+A1200 trapdoor board), the disk puts KickSlopStart at the top of it. A reset de-configures such boards, so the disk
+also records them in low chip RAM, and a small relay there gives them their addresses again before entering
+KickSlopStart. The image takes 256 KiB of the board; chip RAM and slow RAM stay free for programs.
+
+- Tested under emulation (Amiberry) on an A500 (2 MiB fast, with and without slow RAM), an A600 (1 MiB chip, 2 MiB
+  fast) and an A1200 with a 68020, 68030 and 68040 (2 MiB chip, 4 MiB fast): first boot, Ctrl+Amiga+Amiga reset back
+  into KickSlopStart, Workbench 1.3.3, with KickSlopStart itself and with Commodore Kickstarts as the host (1.3 on
+  the A500, 2.05 on the A600, 3.0 and 3.1 on the A1200,
+  [docs/analysis/softkick-fast-real-host.md](docs/analysis/softkick-fast-real-host.md)). Not tried yet on real
+  hardware, feedback is welcome.
+- Zorro II boards only, at most 8. With a Zorro III board (configured by a 2.x/3.x Kickstart) the disk falls back
+  to slow or chip RAM; the Zorro II boards stay usable, but after a reset the Zorro III board is left unconfigured
+  and hides any board behind it. Tested
+  with up to three RAM boards, a RAM board with an Ethernet board, and a board shut up for lack of space.
 
 ### A500 with slow RAM
 
@@ -153,9 +171,9 @@ chip memory programs can use: about 600 KiB stay free at the Workbench with 1 Mi
 - Tested under emulation (Amiberry, WinUAE, cycle-exact or not) with a real Kickstart 1.3 (1 MiB chip, 68000), the
   A600 Kickstart 2.05 (68000, 1 MiB chip, ECS) and the A1200 Kickstart 3.0 (68EC020, 2 MiB chip, AGA), and a 3.1
   Kickstart; not tried yet on a real A600 or A1200, feedback is welcome.
-- 68030 untested; 68040/060 are not supported (their caches and MMU are not handled), nor accelerator MapROM.
-- Fast RAM on an expansion or accelerator board cannot hold the image: that RAM is not configured yet (autoconfig)
-  when a reset comes back to it.
+- 68060: boots under emulation (3.0/3.1 Kickstarts and KickSlopStart as the host), seen by exec as a 68020 without
+  FPU. Accelerator MapROM is not supported. On a 68040 the disk switches off the caches and the MMU that a 2.x/3.x
+  Kickstart may have left on.
 - The built-in IDE hard disk of an A600/A1200 is mounted ([docs/IDE-HARDDISK.md](docs/IDE-HARDDISK.md)), RDB
   partitions read and write, PC-formatted FAT12/16/32 cards read-only; PCMCIA is not supported. AGA machines run in
   OCS mode, as under a real 1.3.
@@ -165,7 +183,9 @@ chip memory programs can use: about 600 KiB stay free at the Workbench with 1 Mi
 These soft-kick tools cannot start KickSlopStart: they are made to load Commodore Kickstart files together with patch
 or relocation data built for each exact Commodore ROM (SKick checks the ROM's checksum against its own tables, MKick
 does not start a 1.3 Kickstart, Relokick ships its own patched 1.3). Use the soft-kick disk instead; it carries its
-own relocation table, built from our sources (`src/softkick/mkreloc.py`).
+own relocation table, built from our sources (`src/softkick/mkreloc.py`). Relokick itself never re-configures
+autoconfig RAM after a reset, which is why it places its copy in chip or slow RAM
+([docs/analysis/relokick-v34.md](docs/analysis/relokick-v34.md)).
 
 ## Reporting a problem
 

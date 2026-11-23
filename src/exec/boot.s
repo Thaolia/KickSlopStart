@@ -15,6 +15,7 @@
                 include "dospkt.i"       ; D3: Process/packet constants for the proof scaffold
                 include "dos.i"          ; D3c: DL_ROOT/RN_INFO/DI_DEVINFO (DeviceNode mount)
                 include "expansion.i"    ; expansion.library: EXP_LVO_*/ConfigDev (round-trip proof)
+                include "relay.i"        ; soft-kick relay of an image in Zorro II fast RAM
 
                 xref    newlist          ; lists.s
                 xref    diag_vectors     ; diag.s (exception screen before exec's vectors)
@@ -289,6 +290,9 @@ vec_filled:
         add.w   (a0)+,d1
         dbra    d0,.cc_sum
         if      RAMKICK
+        move.w  d1,d2                ; the relay of an image in fast RAM already fixed ChkSum for the cleared vector
+        not.w   d2
+        beq.s   .cc_chk
         tst.l   EB_COLDCAPTURE(a6)   ; the Kickstart in ROM cleared our ColdCapture (= coldstart) before calling it,
         bne.s   .cc_chk              ; without fixing ChkSum: count the cleared vector back in
         move.l  #coldstart,d0
@@ -318,7 +322,11 @@ vec_filled:
         jsr     diag_vectors         ; a CPU exception before exec's vectors shows the diagnostic screen
         move.l  d6,-(sp)             ; popped in phase 3
         lea     LOWVARS_LO,a0        ; low-RAM variables and the cushion up to LOWHEAP_LO zeroed: RAM is not null at
-        move.w  #(LOWHEAP_LO-LOWVARS_LO)/4-1,d0 ; power-on on a real machine nor under WinUAE (an odd keyboard buffer
+        if      RAMKICK              ; power-on on a real machine nor under WinUAE (an odd keyboard buffer
+        move.w  #(RELAY_LO-LOWVARS_LO)/4-1,d0 ; (RAMKICK: the relay area at the top of the cushion is kept)
+        else
+        move.w  #(LOWHEAP_LO-LOWVARS_LO)/4-1,d0
+        endif
 .lv_clr:                             ; index caused an address error at the 1st key press; L:Shell-Seg reads $9D8 as a
                                      ; name and frees a bogus node if it matches); FS-UAE clears RAM
         clr.l   (a0)+
@@ -344,7 +352,12 @@ vec_filled:
         lea     EXECBASE,a6          ; a6 = SysBase (library base convention): low chip without slow RAM,
         tst.l   d0
         beq.s   .eb_at
-        lea     SLOW_BASE+SLOW_RSV+EXEC_NEGSIZE,a6 ; bottom of the slow RAM with it (coldstart-hardware-v34 §4.1)
+        if      RAMKICK              ; bottom of the slow RAM with it (coldstart-hardware-v34 §4.1)
+        SLOWLO  a6
+        lea     EXEC_NEGSIZE(a6),a6
+        else
+        lea     SLOW_BASE+EXEC_NEGSIZE,a6
+        endif
 .eb_at:
         ; Warm path (coldstart-hardware-v34 §5.1-5.2): the old ExecBase passed the checks above, sits where this
         ; boot puts it, is version 34.2, and its memory bounds are those of an A500 (chip <= 512 KB, slow RAM on a
@@ -378,7 +391,7 @@ vec_filled:
         ; Cold path: chip RAM from $108 and the slow RAM are zeroed, as 1.3 zeroes them from $C0 (coldstart-hardware
         ; §6). $100/$104 (a dead-end alert's numbers) stay for alert_boothook, which reads them once intuition is up
         ; (1.3 reads them before clearing); the low-RAM variables were zeroed above and are in use. The boot stack is
-        ; empty and nothing is called, so its area is cleared too. RAMKICK: the image below SLOW_RSV is kept.
+        ; empty and nothing is called, so its area is cleared too. RAMKICK: an image in slow RAM is kept (SLOWLO).
         ; The power-on diagnostic runs first (src/exec/diag.s): what it writes in low chip RAM is cleared here.
         jsr     diag_run
         moveq   #0,d1
@@ -393,7 +406,12 @@ vec_filled:
         CLRMEM  LOWHEAP_LO,#MAXCHIP
         tst.l   d0
         beq.s   .eb_noslow
-        CLRMEM  SLOW_BASE+SLOW_RSV,d0
+        if      RAMKICK
+        SLOWLO  a1
+        CLRMEM  (a1),d0
+        else
+        CLRMEM  SLOW_BASE,d0
+        endif
 .eb_noslow:
         moveq   #5-1,d1
 .eb_none:
@@ -503,7 +521,8 @@ vec_filled:
         jsr     kick_reserve         ; KickMem areas reserved as soon as all the RAM is listed, before any boot
         move.l  d0,-(sp)             ; allocation can land on them; the KickTag table is popped by the resident scan
         if      RAMKICK
-        move.l  #coldstart,EB_COLDCAPTURE(a6) ; a reset comes back to the image in slow RAM
+        bsr     relay_arm            ; a reset comes back to the image: d0 = coldstart, or the relay in chip RAM
+        move.l  d0,EB_COLDCAPTURE(a6)
         endif
         lea     EB_SOFTVER(a6),a0    ; ChkSum: the fields +$22..+$4E are final from here on
         moveq   #0,d1
@@ -3602,6 +3621,112 @@ cpu_detect:
 .cd_ill:
         move.l  a2,sp
         bra.s   .cd_done
+
+        if      RAMKICK
+; relay_arm(a6 = SysBase) -> d0 = the ColdCapture vector of this image: coldstart, unless the image lies in Zorro II
+; fast RAM, which a reset de-configures (src/exec/relay.i). There, with the bootblock's record of this image, the
+; relay code goes to the relay area and d0 = its address; without one, d0 = 0 and a reset boots the ROM Kickstart.
+relay_arm:
+        movem.l d1/a0-a1,-(sp)
+        move.l  #coldstart,d0
+        move.l  #ROM_BASE,d1
+        cmp.l   #RL_ZBASE,d1
+        blo.s   .ra_ret
+        cmp.l   #RL_ZEND,d1
+        bhs.s   .ra_ret
+        moveq   #0,d0
+        lea     RELAY_LO,a1
+        cmp.l   #RL_MAGIC_V,RL_MAGIC(a1)
+        bne.s   .ra_ret
+        cmp.l   RL_IMAGE(a1),d1
+        bne.s   .ra_ret
+        lea     relay(pc),a0
+        lea     RL_CODE(a1),a1
+        moveq   #(relay_end-relay)/2-1,d1
+.ra_cp:
+        move.w  (a0)+,(a1)+
+        dbra    d1,.ra_cp
+        move.l  #RELAY_LO+RL_CODE,d0
+.ra_ret:
+        movem.l (sp)+,d1/a0-a1
+        rts
+
+; relay: copied to RELAY_LO+RL_CODE and run from there, through ColdCapture, by the Kickstart in ROM (supervisor,
+; interrupts masked, overlay off, ColdCapture already cleared). No stack is used. Each recorded board gets its
+; address again in chain order (a shut-up board is shut up again); then the image must carry its header and a
+; good Kickstart sum, ExecBase->ChkSum is fixed for the cleared ColdCapture (so the image keeps the warm path) and
+; the image starts at its reset PC. A board that does not answer as recorded, or a bad image: the Kickstart in ROM
+; starts over from its reset PC and, with ColdCapture cleared, boots by itself.
+relay:
+        lea     RELAY_LO,a2
+        lea     RL_ENTRIES(a2),a3
+        lea     $E80000,a0
+        move.w  RL_COUNT(a2),d2
+        bra.s   .rl_next
+.rl_board:
+        move.b  (a0),d0              ; er_Type: high nibble at +0, low nibble at +2, not inverted
+        and.b   #$F0,d0
+        move.b  2(a0),d1
+        lsr.b   #4,d1
+        or.b    d1,d0
+        cmp.b   RE_ROM(a3),d0
+        bne.w   .rl_rom
+        move.b  4(a0),d0             ; er_Product, inverted
+        and.b   #$F0,d0
+        move.b  6(a0),d1
+        lsr.b   #4,d1
+        or.b    d1,d0
+        not.b   d0
+        cmp.b   RE_ROM+1(a3),d0
+        bne.w   .rl_rom
+        btst    #0,RE_FLAGS+1(a3)    ; CDB_SHUTUP
+        bne.s   .rl_shut
+        move.w  RE_SLOT(a3),d0
+        move.b  d0,d1
+        lsl.b   #4,d1
+        move.b  d1,$4A(a0)           ; ec_BaseAddress: low nibble first; the high nibble write configures the board
+        move.b  d0,$48(a0)
+        bra.s   .rl_adv
+.rl_shut:
+        clr.b   $4E(a0)
+        clr.b   $4C(a0)              ; ec_Shutup
+.rl_adv:
+        lea     RE_SIZE(a3),a3
+.rl_next:
+        dbra    d2,.rl_board
+        move.l  RL_IMAGE(a2),a3
+        cmp.w   #$1111,(a3)
+        bne.w   .rl_rom
+        move.l  a3,a0
+        move.w  #$40000/4-1,d0
+        moveq   #0,d1
+.rl_sum:
+        add.l   (a0)+,d1
+        bcc.s   .rl_nc
+        addq.l  #1,d1
+.rl_nc:
+        dbra    d0,.rl_sum
+        not.l   d1
+        bne.w   .rl_rom
+        move.l  ($4).w,a0
+        lea     EB_SOFTVER(a0),a1
+        moveq   #0,d1
+        moveq   #(EB_CHKSUM-EB_SOFTVER)/2-2,d0
+.rl_ck:
+        add.w   (a1)+,d1
+        dbra    d0,.rl_ck
+        not.w   d1
+        move.w  d1,EB_CHKSUM(a0)
+        move.l  4(a3),a0
+        jmp     (a0)
+.rl_rom:
+        move.l  $F80004,a0
+        jmp     (a0)
+relay_end:
+                ifgt    relay_end-relay-RL_CODEMAX
+                fail    "relay does not fit in the relay area"
+                endif
+        endif
 
 eb_fail:
         move.w  #C_FAIL,COLOR00

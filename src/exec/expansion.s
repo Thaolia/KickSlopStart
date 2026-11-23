@@ -13,6 +13,7 @@
                 include "expansion.i"
                 include "dos.i"
                 include "dospkt.i"
+                include "relay.i"
 
                 xref    newlist          ; lists.s
                 xref    bcpl_starthandler ; dos/bcpl.s (ADNF_STARTPROC)
@@ -466,7 +467,42 @@ cb_post:
         rts
 
 ; (LVO -36, private) (size d0, attributes d1, base a0): AddMemList(size, attributes, pri 0, base, "expansion ram").
+; RAMKICK: a soft-kicked image inside that RAM stays out of it (the part below and the part above are added). The
+; bootblock places it 64 KB aligned inside one board, so it never straddles a board's end.
 exp_addram:
+        if      RAMKICK
+        movem.l d3-d4/a2,-(sp)
+        move.l  a0,a2
+        move.l  d0,d3
+        move.l  d1,d4
+        move.l  #ROM_BASE,d0
+        sub.l   a2,d0                ; d0 = bytes below the image (unsigned: huge when the image lies below)
+        cmp.l   d3,d0
+        bhs.s   .ar_whole
+        tst.l   d0
+        beq.s   .ar_above
+        move.l  d4,d1
+        move.l  a2,a0
+        bsr.s   ar_add
+.ar_above:
+        move.l  a2,d0
+        add.l   d3,d0
+        sub.l   #ROM_BASE+$40000,d0  ; d0 = bytes above the image
+        bls.s   .ar_done
+        move.l  d4,d1
+        lea     ROM_BASE+$40000,a0
+        bsr.s   ar_add
+        bra.s   .ar_done
+.ar_whole:
+        move.l  d3,d0
+        move.l  d4,d1
+        move.l  a2,a0
+        bsr.s   ar_add
+.ar_done:
+        movem.l (sp)+,d3-d4/a2
+        rts
+        endif
+ar_add:
         movem.l d2/a6,-(sp)
         moveq   #0,d2
         lea     exp_ramname(pc),a1
@@ -804,12 +840,83 @@ expansion_coldinit:
         move.l  #E_IOSLOT_LO+1,d0
         moveq   #E_IOSLOT_HI-E_IOSLOT_LO-1,d1
         bsr     exp_freeexpmem
+        if      RAMKICK
+        bsr     exp_replay
+        endif
         lea     $E80000,a0
         bsr     exp_configchain
         move.l  a6,d0
 .ci_ret:
         movem.l (sp)+,d2/a2/a6
         rts
+        if      RAMKICK
+; exp_replay(a6 = ExpansionBase): soft-kicked image (src/exec/relay.i). The boards in the bootblock's record were
+; configured before it ran (by the host Kickstart, or after a reset by the relay) and no longer answer at $E80000:
+; their ConfigDevs are rebuilt from the record in chain order, their slots taken, then each one gets the same
+; post-configuration as a board configured here (RAM added, DiagArea run). A shut-up board gets a ConfigDev too.
+; Outside Zorro II space there is no relay: after a reset the boards answer again and ConfigChain finds them, so
+; the record serves this first boot only and its magic is cleared.
+exp_replay:
+        movem.l d2-d4/a2-a3,-(sp)
+        lea     RELAY_LO,a2
+        cmp.l   #RL_MAGIC_V,RL_MAGIC(a2)
+        bne.w   .rp_ret
+        cmp.l   #ROM_BASE,RL_IMAGE(a2)
+        bne.w   .rp_ret
+        move.w  RL_COUNT(a2),d3
+        lea     RL_ENTRIES(a2),a2
+        bra.s   .rp_next
+.rp_lp:
+        bsr     exp_allocconfigdev
+        tst.l   d0
+        beq.s   .rp_ret
+        move.l  d0,a3
+        move.l  a2,a0
+        lea     CD_ROM(a3),a1
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
+        clr.l   ER_RESERVED0C(a3)    ; the host's copy of the DiagArea is not ours
+        btst    #CDB_SHUTUP,RE_FLAGS+1(a2)
+        beq.s   .rp_cfg
+        bset    #CDB_SHUTUP,CD_FLAGS(a3)
+        bra.s   .rp_add
+.rp_cfg:
+        moveq   #7,d2
+        and.b   ER_TYPE(a3),d2
+        moveq   #0,d0
+        move.w  RE_SLOT(a2),d0
+        lea     sz_slots(pc),a0
+        moveq   #0,d4
+        move.b  0(a0,d2.w),d4
+        lea     EB_ALLOCTABLE(a6,d0.l),a0
+        bra.s   .rp_te
+.rp_take:
+        clr.b   (a0)+
+.rp_te:
+        dbra    d4,.rp_take
+        bsr     cb_fill
+        bset    #CDB_CONFIGME,CD_FLAGS(a3)
+        bsr     cb_post
+.rp_add:
+        move.l  a3,a0
+        bsr     exp_addconfigdev
+        lea     RE_SIZE(a2),a2
+.rp_next:
+        dbra    d3,.rp_lp
+        move.l  #ROM_BASE,d0
+        cmp.l   #RL_ZBASE,d0
+        blo.s   .rp_once
+        cmp.l   #RL_ZEND,d0
+        blo.s   .rp_ret
+.rp_once:
+        clr.l   RELAY_LO+RL_MAGIC
+.rp_ret:
+        movem.l (sp)+,d2-d4/a2-a3
+        rts
+        endif
+
 ; expansion_initfunc(d0 = base, a0 = segList, a6 = ExecBase) -> d0 = base: name, ExecBase, segList, binding semaphore,
 ; empty board and mount lists.
 expansion_initfunc:

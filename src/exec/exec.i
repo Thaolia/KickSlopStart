@@ -51,6 +51,7 @@ SSP_SIZE     EQU STACKTOP-SSP_LOWER ; with slow RAM the shared supervisor stack 
                                ; 1.3 (memory-budget-v34): ExecBase SysStkLower/SysStkUpper hold the bounds in use
 HEAP_LOWER   EQU $00003500     ; chip heap at init_memory; with slow RAM add_low_chip extends it down to LOWHEAP_LO
 LOWHEAP_LO   EQU $00001000     ; bottom of that extension: LOWVARS_HI..LOWHEAP_LO is a cushion (memory.s add_low_chip)
+                               ; whose top (relay.i RELAY_LO..) holds the soft-kick relay in RAMKICK images
 
 ; --- Phases (12-bit RGB) ---
 ; Coldstart colours (README "Power-on diagnostic"). Progress: shades of the KickSlopStart purple, so that none can be
@@ -74,7 +75,8 @@ DIAG_FAKE       EQU 0
 
 SERPER_RAW      EQU 372          ; RawIOInit value (custom-chips-v34 §4.3): 9509 Bd PAL, 9597 Bd NTSC, 8 bits
 ; RAMKICK=1 (make kick-ram): image linked at $C00000, loaded into slow RAM by the soft-kick disk (src/softkick/).
-; The first SLOW_RSV bytes of slow RAM hold the image and stay out of the free memory. Default 0 = ROM image.
+; When the image lies at $C00000 (slow RAM), the first SLOW_RSV bytes of slow RAM hold it and stay out of the free
+; memory (SLOWLO). Default 0 = ROM image.
 ; In that image ROMBASE is kick_base, a symbol of the linker script (src/exec/kick-ram.ld), not a number: the
 ; assembler cannot then fold or shorten an instruction for one particular base, so linking the same objects at
 ; another base moves nothing but addresses, and src/softkick/mkreloc.py turns the difference into the relocation
@@ -93,6 +95,18 @@ SLOW_RSV EQU 0
 SLOW_BASE   EQU $00C00000      ; A500 "slow" RAM (trapdoor)
 SLOW_STEP   EQU $00080000      ; 512 KB granularity
 SLOW_MAXBLK EQU 3              ; up to 1.5 MB ($C00000-$D7FFFF)
+
+; SLOWLO An: An = first slow-RAM byte the image does not hold. A RAMKICK image placed elsewhere (chip or Zorro II
+; RAM) leaves the whole slow RAM to the system; kick_base is a link symbol, so the test runs at boot.
+SLOWLO          macro
+        lea     SLOW_BASE,\1
+        if      RAMKICK
+        cmp.l   #ROM_BASE,\1
+        bne.s   .slo\@
+        add.l   #SLOW_RSV,\1
+.slo\@:
+        endif
+                endm
 
 ; --- Interrupts (hardware/intbits.i + 68000 autovectors) ---
 INTF_SETCLR  EQU $8000        ; INTENA/INTREQ: 1 = sets the bits, 0 = clears them
