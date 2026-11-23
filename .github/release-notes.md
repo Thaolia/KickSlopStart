@@ -10,12 +10,13 @@ for the measured evidence. It is released under the MIT License.
 - **Emulators:** select the `.rom` file as the Kickstart ROM in FS-UAE (`kickstart_file`) or WinUAE, with an A500
   configuration (68000, OCS, 512 KiB chip RAM; 512 KiB slow RAM recommended). It boots Workbench 1.3.3 and a number
   of games and tools; see the README for what works.
-- **Soft-kick disk:** boot the `.adf` from the Kickstart already in the machine. It loads KickSlopStart into slow RAM
-  at `$C00000` when there is some, otherwise into chip RAM above 512 KiB (at least 1 MiB of chip RAM: A500 with a
-  1 MiB Agnus, A1200; 256 KiB of chip RAM are taken), then waits on its insert-disk screen for the disk to boot. A
-  reset comes back to KickSlopStart; switching off returns to the Kickstart in ROM. Tested under emulation from
-  Kickstart 1.3, 2.05 (A600), 3.0 (A1200) and 3.1 hosts, 68000 and 68020, cycle-exact or not; 68040/060 are not
-  supported. On an A600/A1200 the built-in IDE hard disk or CF card is mounted (RDB partitions read and write,
+- **Soft-kick disk:** boot the `.adf` from the Kickstart already in the machine. It loads KickSlopStart into Zorro II
+  fast RAM (`$200000`-`$9FFFFF`, an A500/A2000 memory board or an A600/A1200 trapdoor board) when there is some,
+  otherwise into slow RAM at `$C00000`, otherwise into chip RAM above 512 KiB (at least 1 MiB of chip RAM: A500 with
+  a 1 MiB Agnus, A1200; 256 KiB of chip RAM are taken), then waits on its insert-disk screen for the disk to boot. A
+  reset comes back to KickSlopStart (a small relay in low chip RAM configures the fast RAM boards again first);
+  switching off returns to the Kickstart in ROM. Tested under emulation from Kickstart 1.3, 2.05 (A600), 3.0 (A1200)
+  and 3.1 hosts, 68000 to 68060, cycle-exact or not; fast RAM placement is not tried yet on real hardware. On an A600/A1200 the built-in IDE hard disk or CF card is mounted (RDB partitions read and write,
   FAT12/16/32 read-only), the machine still boots from a floppy; PCMCIA is not supported. See
   [IDE-HARDDISK.md](https://github.com/Thaolia/KickSlopStart/blob/main/docs/IDE-HARDDISK.md).
 - **Real hardware:** the soft-kick disk boots on a real A500 (512 KiB chip + 512 KiB slow RAM). The `.rom`
